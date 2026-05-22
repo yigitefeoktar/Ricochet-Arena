@@ -1,0 +1,8 @@
+{
+  "name": "the Ricochet Arena",
+  "description": "A 2D top-down shooter game with indefinitely bouncing bullets and large, varied maps.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
