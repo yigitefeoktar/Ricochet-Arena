@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 
 const MAP_WIDTH = 3000;
 const MAP_HEIGHT = 3000;
@@ -2171,159 +2172,204 @@ export default function GameCanvas() {
       <canvas ref={canvasRef} className="w-full h-full block cursor-crosshair touch-none mix-blend-screen" />
       
       {/* Absolute HUD Layers */}
-      {uiState.status === 'MENU' && (
-        <div className="absolute inset-0 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm z-10 transition-opacity">
-          {!isMapSelectOpen ? (
-            <div className="max-w-md w-full max-h-[90vh] bg-[#0d0f1b]/95 border-2 border-[#00f0ff] p-4 sm:p-6 shadow-[10px_10px_0_#00f0ff] flex flex-col justify-center text-center pointer-events-auto overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-              <h1 className="text-4xl sm:text-5xl md:text-6xl font-black text-white mb-2 sm:mb-3 tracking-tighter shrink-0 leading-none" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>
-                RICOCHET <br/> <span className="text-[#00f0ff]">ARENA</span>
-              </h1>
-              <p className="text-[#00f0ff]/80 font-mono mb-3 sm:mb-6 whitespace-pre-wrap leading-snug sm:leading-relaxed text-[9px] sm:text-xs uppercase tracking-widest border-t border-b border-[#00f0ff]/30 py-2 sm:py-3 shrink-0">
-                Bullets bounce endlessly.{"\n"}Dodge the chaos you and the enemies create.
-                {"\n\n"}
-                Desktop: WASD + Mouse.{"\n"}Mobile: Dual Joysticks.
-              </p>
-
-              <div className="flex gap-2 mb-3 items-stretch shrink-0">
-                <button 
-                  onClick={() => setIsMapSelectOpen(true)}
-                  className="flex-1 py-2 sm:py-3 bg-transparent text-[#00f0ff] border-2 border-[#00f0ff]/50 hover:bg-[#00f0ff]/10 hover:border-[#00f0ff] font-bold tracking-[0.2em] transition-all duration-200 uppercase text-[10px] sm:text-xs"
+      <AnimatePresence>
+        {uiState.status === 'MENU' && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            className="absolute inset-0 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm z-10 pointer-events-auto"
+          >
+            <AnimatePresence mode="wait">
+              {!isMapSelectOpen ? (
+                <motion.div 
+                  key="main-menu"
+                  initial={{ opacity: 0, scale: 0.96, y: 15 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.96, y: -15 }}
+                  transition={{ duration: 0.2, ease: "easeOut" }}
+                  className="max-w-md w-full max-h-[90vh] bg-[#0d0f1b]/95 border-2 border-[#00f0ff] p-4 sm:p-6 shadow-[10px_10px_0_#00f0ff] flex flex-col justify-center text-center overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
                 >
-                  CHANGE MAP: {MAPS[uiState.mapId]?.name || 'UNKNOWN'}
-                </button>
-                <button
-                  onClick={() => setUiState(prev => ({ ...prev, hardMode: !prev.hardMode }))}
-                  className={`flex items-center justify-center gap-1.5 py-2 sm:py-3 px-3 sm:px-4 border-2 font-bold tracking-[0.1em] transition-all duration-200 uppercase text-[10px] sm:text-xs cursor-pointer select-none
-                    ${uiState.hardMode 
-                      ? 'bg-[#ff3300]/10 text-[#ff3300] border-[#ff3300] shadow-[0_0_10px_rgba(255,51,0,0.2)]' 
-                      : 'bg-transparent text-[#00ffff]/60 border-[#00ffff]/20 hover:border-[#00ffff]/40 hover:text-[#00ffff]'
-                    }`}
-                >
-                  <div className={`w-3.5 h-3.5 border flex items-center justify-center text-[9px] font-black rounded-sm
-                    ${uiState.hardMode 
-                      ? 'border-[#ff3300] bg-[#ff3300] text-black' 
-                      : 'border-[#00ffff]/40 bg-transparent'
-                    }`}
-                  >
-                    {uiState.hardMode && "✓"}
-                  </div>
-                  <span>HARD</span>
-                </button>
-              </div>
+                  <h1 className="text-4xl sm:text-5xl md:text-6xl font-black text-white mb-2 sm:mb-3 tracking-tighter shrink-0 leading-none" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>
+                    RICOCHET <br/> <span className="text-[#00f0ff]">ARENA</span>
+                  </h1>
+                  <p className="text-[#00f0ff]/80 font-mono mb-3 sm:mb-6 whitespace-pre-wrap leading-snug sm:leading-relaxed text-[9px] sm:text-xs uppercase tracking-widest border-t border-b border-[#00f0ff]/30 py-2 sm:py-3 shrink-0">
+                    Bullets bounce endlessly.{"\n"}Dodge the chaos you and the enemies create.
+                    {"\n\n"}
+                    Desktop: WASD + Mouse.{"\n"}Mobile: Dual Joysticks.
+                  </p>
 
-              <button 
-                onTouchStart={() => { isMobileRef.current = true; }}
-                onClick={() => {
-                  resetGame(isMobileRef.current ? 'mobile' : 'desktop');
-                  isMobileRef.current = false;
-                }}
-                className="w-full py-3 sm:py-4 bg-[#00f0ff] hover:bg-white text-black border-2 border-[#00f0ff] font-black tracking-[0.2em] transition-all duration-200 uppercase text-base sm:text-lg active:translate-x-1 active:translate-y-1 active:shadow-none hover:shadow-[5px_5px_0_#fff] shrink-0"
-              >
-                ENTER ARENA
-              </button>
-            </div>
-          ) : (
-            <div className="w-full max-w-4xl max-h-[90vh] flex flex-col bg-[#0d0f1b]/95 border-2 border-[#00f0ff] shadow-[0_0_30px_rgba(0,240,255,0.15)] ring-1 ring-black pointer-events-auto">
-              {/* Header */}
-              <div className="shrink-0 p-3 md:p-5 flex justify-between items-center border-b border-[#00f0ff]/30 bg-gradient-to-b from-[#00f0ff]/10 to-transparent">
-                <h2 className="text-2xl md:text-4xl font-black text-white tracking-tighter leading-none" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>
-                  SELECT <span className="text-[#00f0ff]">ARENA</span>
-                </h2>
-                <button 
-                  onClick={() => setIsMapSelectOpen(false)}
-                  className="text-[#00f0ff]/80 hover:text-[#00f0ff] font-bold tracking-[0.2em] uppercase text-xs md:text-sm border border-[#00f0ff]/30 hover:border-[#00f0ff]/80 px-3 py-1.5 md:px-4 md:py-2 bg-[#00f0ff]/10 transition-colors"
-                >
-                  CLOSE [X]
-                </button>
-              </div>
-
-              {/* Content Body */}
-              <div className="flex-1 min-h-[0] flex flex-col md:flex-row p-3 md:p-5 gap-3 md:gap-5 overflow-hidden">
-                
-                {/* Map List Area */}
-                <div className="flex-1 flex flex-col min-h-0 border border-[#00f0ff]/30 bg-black/40 overflow-hidden">
-                  <div className="flex-1 overflow-y-auto p-2 grid grid-cols-2 gap-2 content-start [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-                    {Object.entries(MAPS).map(([id, mapDef]) => (
-                      <button
-                        key={id}
-                        onClick={() => setUiState(prev => ({...prev, mapId: id}))}
-                        className={`flex flex-col items-center justify-center p-2 md:p-3 font-bold uppercase transition-all border-2
-                          ${uiState.mapId === id 
-                             ? 'bg-[#00f0ff] text-black border-[#00f0ff] shadow-[0_0_15px_rgba(0,240,255,0.3)]' 
-                             : 'bg-[#0d0f1b] text-[#00f0ff]/60 border-[#00f0ff]/30 hover:border-[#00f0ff]/80 hover:text-[#00f0ff] hover:bg-[#00f0ff]/5'
-                          }`}
+                  <div className="flex gap-2 mb-3 items-stretch shrink-0">
+                    <button 
+                      onClick={() => setIsMapSelectOpen(true)}
+                      className="flex-1 py-2 sm:py-3 bg-transparent text-[#00f0ff] border-2 border-[#00f0ff]/50 hover:bg-[#00f0ff]/10 hover:border-[#00f0ff] font-bold tracking-[0.2em] transition-all duration-200 uppercase text-[10px] sm:text-xs"
+                    >
+                      CHANGE MAP: {MAPS[uiState.mapId]?.name || 'UNKNOWN'}
+                    </button>
+                    <button
+                      onClick={() => setUiState(prev => ({ ...prev, hardMode: !prev.hardMode }))}
+                      className={`flex items-center justify-center gap-1.5 py-2 sm:py-3 px-3 sm:px-4 border-2 font-bold tracking-[0.1em] transition-all duration-200 uppercase text-[10px] sm:text-xs cursor-pointer select-none
+                        ${uiState.hardMode 
+                          ? 'bg-[#ff3300]/10 text-[#ff3300] border-[#ff3300] shadow-[0_0_10px_rgba(255,51,0,0.2)]' 
+                          : 'bg-transparent text-[#00ffff]/60 border-[#00ffff]/20 hover:border-[#00ffff]/40 hover:text-[#00ffff]'
+                        }`}
+                    >
+                      <div className={`w-3.5 h-3.5 border flex items-center justify-center text-[9px] font-black rounded-sm
+                        ${uiState.hardMode 
+                          ? 'border-[#ff3300] bg-[#ff3300] text-black' 
+                          : 'border-[#00ffff]/40 bg-transparent'
+                        }`}
                       >
-                        <div className="text-[10px] sm:text-xs md:text-sm tracking-[0.1em] text-center leading-tight">{mapDef.name}</div>
-                        <div className={`text-[8px] sm:text-[9px] md:text-[10px] mt-1 tracking-widest ${uiState.mapId === id ? 'text-black/80' : 'text-[#ff00a0]/60'}`}>
-                           {mapDef.difficulty}
-                        </div>
-                      </button>
-                    ))}
+                        {uiState.hardMode && "✓"}
+                      </div>
+                      <span>HARD</span>
+                    </button>
                   </div>
-                </div>
 
-                {/* Map Preview Area */}
-                <div className="w-full md:w-80 lg:w-[22rem] shrink-0 flex flex-col min-h-[30vh] md:min-h-0 border border-[#00f0ff]/30 bg-black/40 p-3 overflow-hidden">
-                  {(() => {
-                      const selMap = MAPS[uiState.mapId] || MAPS.medium;
-                      return (
-                        <div className="flex flex-col h-full overflow-hidden">
-                           <h3 className="text-base md:text-lg lg:text-xl font-black text-white uppercase tracking-wider mb-1 mt-1 shrink-0 px-1">{selMap.name}</h3>
-                           <div className={`text-[10px] md:text-xs font-bold mb-2 shrink-0 px-1 ${
-                             selMap.difficulty === 'EASY' ? 'text-green-400' :
-                             selMap.difficulty === 'MEDIUM' ? 'text-yellow-400' :
-                             selMap.difficulty === 'HARD' ? 'text-red-400' :
-                             'text-[#b500ff]'
-                           }`}>{selMap.difficulty}</div>
-                           <p className="text-[#00f0ff]/80 font-mono text-[9px] md:text-[10px] leading-relaxed mb-3 shrink-0 text-left line-clamp-3 px-1">
-                             {selMap.description}
-                           </p>
-                           
-                           {/* Responsive map container */}
-                           <div className="flex-1 w-full min-h-[120px] flex items-center justify-center p-1 md:p-2 relative overflow-hidden shrink mt-1 mb-1">
-                             <div className="bg-[#050508] border border-[#00f0ff]/40 relative overflow-hidden ring-1 ring-black/50 shadow-[0_0_20px_rgba(0,240,255,0.1)] shrink w-full aspect-square max-w-[160px] md:max-w-[220px]">
-                               {selMap.walls.map((w, i) => (
-                                 <div key={i} className="absolute bg-[#00f0ff]/30 border border-[#00f0ff]/80 shadow-[0_0_8px_rgba(0,240,255,0.3)]" 
-                                   style={{
-                                     left: `${(w.x / 3000) * 100}%`,
-                                     top: `${(w.y / 3000) * 100}%`,
-                                     width: `${(w.w / 3000) * 100}%`,
-                                     height: `${(w.h / 3000) * 100}%`,
-                                   }}
-                                 />
-                               ))}
-                               {selMap.spawners.map((s, i) => (
-                                 <div key={i} className="absolute bg-[#ff00ff] rounded-full shadow-[0_0_5px_rgba(255,0,255,0.5)] border border-white/20" 
-                                   style={{
-                                     left: `${((s.x - s.radius) / 3000) * 100}%`,
-                                     top: `${((s.y - s.radius) / 3000) * 100}%`,
-                                     width: `${(s.radius * 2 / 3000) * 100}%`,
-                                     height: `${(s.radius * 2 / 3000) * 100}%`,
-                                   }}
-                                 />
-                               ))}
-                             </div>
-                           </div>
-                        </div>
-                      )
-                   })()}
-                </div>
-
-              </div>
-
-              {/* Footer / Action */}
-              <div className="shrink-0 p-3 md:p-4 border-t border-[#00f0ff]/30 bg-[#0d0f1b] backdrop-blur-sm">
-                <button 
-                  onClick={() => setIsMapSelectOpen(false)}
-                  className="w-full py-3 md:py-4 bg-[#00f0ff]/20 hover:bg-[#00f0ff]/40 text-[#00f0ff] border border-[#00f0ff]/50 font-black tracking-[0.2em] transition-all duration-200 uppercase text-sm md:text-base lg:text-lg"
+                  <button 
+                    onTouchStart={() => { isMobileRef.current = true; }}
+                    onClick={() => {
+                      resetGame(isMobileRef.current ? 'mobile' : 'desktop');
+                      isMobileRef.current = false;
+                    }}
+                    className="w-full py-3 sm:py-4 bg-[#00f0ff] hover:bg-white text-black border-2 border-[#00f0ff] font-black tracking-[0.2em] transition-all duration-200 uppercase text-base sm:text-lg active:translate-x-1 active:translate-y-1 active:shadow-none hover:shadow-[5px_5px_0_#fff] shrink-0"
+                  >
+                    ENTER ARENA
+                  </button>
+                </motion.div>
+              ) : (
+                <motion.div 
+                  key="map-select"
+                  initial={{ opacity: 0, scale: 0.96, y: 15 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.96, y: -15 }}
+                  transition={{ duration: 0.2, ease: "easeOut" }}
+                  className="w-full max-w-4xl max-h-[90vh] flex flex-col bg-[#0d0f1b]/95 border-2 border-[#00f0ff] shadow-[0_0_30px_rgba(0,240,255,0.15)] ring-1 ring-black pointer-events-auto overflow-hidden"
                 >
-                  CONFIRM SELECTION
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      )}
+                  {/* Header */}
+                  <div className="shrink-0 p-3 md:p-5 flex justify-between items-center border-b border-[#00f0ff]/30 bg-gradient-to-b from-[#00f0ff]/10 to-transparent">
+                    <h2 className="text-2xl md:text-4xl font-black text-white tracking-tighter leading-none" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>
+                      SELECT <span className="text-[#00f0ff]">ARENA</span>
+                    </h2>
+                    <button 
+                      onClick={() => setIsMapSelectOpen(false)}
+                      className="text-[#00f0ff]/80 hover:text-[#00f0ff] font-bold tracking-[0.2em] uppercase text-xs md:text-sm border border-[#00f0ff]/30 hover:border-[#00f0ff]/80 px-3 py-1.5 md:px-4 md:py-2 bg-[#00f0ff]/10 transition-colors"
+                    >
+                      CLOSE [X]
+                    </button>
+                  </div>
+
+                  {/* Content Body */}
+                  <div className="flex-1 min-h-[0] flex flex-col md:flex-row p-3 md:p-5 gap-3 md:gap-5 overflow-hidden">
+                    
+                    {/* Map List Area */}
+                    <div className="flex-1 flex flex-col min-h-0 border border-[#00f0ff]/30 bg-black/40 overflow-hidden">
+                      <div className="flex-1 overflow-y-auto p-2 grid grid-cols-2 gap-2 content-start [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
+                        {Object.entries(MAPS).map(([id, mapDef]) => (
+                          <button
+                            key={id}
+                            onClick={() => setUiState(prev => ({...prev, mapId: id}))}
+                            className={`flex flex-col items-center justify-center p-2 md:p-3 font-bold uppercase transition-all border-2
+                              ${uiState.mapId === id 
+                                 ? 'bg-[#00f0ff] text-black border-[#00f0ff] shadow-[0_0_15px_rgba(0,240,255,0.3)]' 
+                                 : 'bg-[#0d0f1b] text-[#00f0ff]/60 border-[#00f0ff]/30 hover:border-[#00f0ff]/80 hover:text-[#00f0ff] hover:bg-[#00f0ff]/5'
+                              }`}
+                          >
+                            <div className="text-[10px] sm:text-xs md:text-sm tracking-[0.1em] text-center leading-tight">{mapDef.name}</div>
+                            <div className={`text-[8px] sm:text-[9px] md:text-[10px] mt-1 tracking-widest ${uiState.mapId === id ? 'text-black/80' : 'text-[#ff00a0]/60'}`}>
+                               {mapDef.difficulty}
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Map Preview Area */}
+                    <div className="w-full md:w-80 lg:w-[22rem] shrink-0 flex flex-col min-h-[240px] md:min-h-0 border border-[#00f0ff]/30 bg-black/40 p-3 overflow-hidden">
+                      {(() => {
+                          const selMap = MAPS[uiState.mapId] || MAPS.medium;
+                          return (
+                            <div className="flex flex-col h-full overflow-hidden">
+                               <h3 className="text-base md:text-lg lg:text-xl font-black text-white uppercase tracking-wider mb-1 mt-1 shrink-0 px-1">{selMap.name}</h3>
+                               <div className={`text-[10px] md:text-xs font-bold mb-2 shrink-0 px-1 ${
+                                 selMap.difficulty === 'EASY' ? 'text-green-400' :
+                                 selMap.difficulty === 'MEDIUM' ? 'text-yellow-400' :
+                                 selMap.difficulty === 'HARD' ? 'text-red-400' :
+                                 'text-[#b500ff]'
+                               }`}>{selMap.difficulty}</div>
+                               <p className="text-[#00f0ff]/80 font-mono text-[9px] md:text-[10px] leading-relaxed mb-3 shrink-0 text-left line-clamp-3 px-1">
+                                 {selMap.description}
+                               </p>
+                               
+                               {/* Responsive map container */}
+                               <div className="flex-1 w-full min-h-[120px] flex items-center justify-center p-1 md:p-2 relative overflow-hidden shrink mt-1 mb-1">
+                                 <svg 
+                                   viewBox="0 0 3000 3000" 
+                                   className="w-full h-full aspect-square max-w-[130px] max-h-[130px] sm:max-w-[145px] sm:max-h-[145px] md:max-w-[220px] md:max-h-[220px]"
+                                   preserveAspectRatio="xMidYMid meet"
+                                 >
+                                   {/* Base Map Square Background & Outer Border inside the coordinate system */}
+                                    <rect width="3000" height="3000" fill="#050508" stroke="rgba(0, 240, 255, 0.4)" strokeWidth="15" />
+
+                                    {/* Grid lines inside preview */}
+                                   <defs>
+                                     <pattern id="preview-grid" width="150" height="150" patternUnits="userSpaceOnUse">
+                                       <path d="M 150 0 L 0 0 0 150" fill="none" stroke="rgba(0, 240, 255, 0.05)" strokeWidth="4" />
+                                     </pattern>
+                                   </defs>
+                                   <rect width="3000" height="3000" fill="url(#preview-grid)" />
+
+                                   {/* Render Walls */}
+                                   {selMap.walls.map((w, i) => (
+                                     <rect 
+                                       key={`wall-${i}`}
+                                       x={w.x}
+                                       y={w.y}
+                                       width={w.w}
+                                       height={w.h}
+                                       fill="rgba(0, 240, 255, 0.25)"
+                                       stroke="#00f0ff"
+                                       strokeWidth="15"
+                                     />
+                                   ))}
+
+                                   {/* Render Spawners */}
+                                   {selMap.spawners.map((s, i) => (
+                                     <circle 
+                                       key={`spawner-${i}`}
+                                       cx={s.x}
+                                       cy={s.y}
+                                       r={s.radius}
+                                       fill="#ff00ff"
+                                       stroke="rgba(255, 255, 255, 0.5)"
+                                       strokeWidth="8"
+                                     />
+                                   ))}
+                                 </svg>
+                               </div>
+                            </div>
+                          )
+                       })()}
+                    </div>
+
+                  </div>
+
+                  {/* Footer / Action */}
+                  <div className="shrink-0 p-3 md:p-4 border-t border-[#00f0ff]/30 bg-[#0d0f1b] backdrop-blur-sm">
+                    <button 
+                      onClick={() => setIsMapSelectOpen(false)}
+                      className="w-full py-3 md:py-4 bg-[#00f0ff]/20 hover:bg-[#00f0ff]/40 text-[#00f0ff] border border-[#00f0ff]/50 font-black tracking-[0.2em] transition-all duration-200 uppercase text-sm md:text-base lg:text-lg cursor-pointer"
+                    >
+                      CONFIRM SELECTION
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {(uiState.status === 'PLAYING' || uiState.status === 'PAUSED') && (() => {
         const toolsData = {
