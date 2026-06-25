@@ -1,5 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
+import { io, Socket } from 'socket.io-client';
+import { Copy, Check, Play } from 'lucide-react';
 
 const MAP_WIDTH = 3000;
 const MAP_HEIGHT = 3000;
@@ -12,6 +14,7 @@ const FIRE_RATE = 800; // ms between shots (slow shooting)
 const ENEMY_FIRE_RATE = 2500;
 const ENEMY_SPEED = 60;
 const DASH_COOLDOWN = 30000;
+const BUILD_COOLDOWN = 30000;
 
 const WALLS = [
   // Outer boundaries
@@ -468,24 +471,171 @@ const DashStatus = ({ stateRef }: { stateRef: any }) => {
 export default function GameCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [uiState, setUiState] = useState<{ status: 'MENU' | 'PLAYING' | 'PAUSED' | 'GAME_OVER' | 'VICTORY'; score: number; deviceType: 'desktop' | 'mobile'; activeTool: 'weapon' | 'special' | 'build'; blocks: number; spawnersLeft: number; mapId: string; hardMode: boolean }>({ status: 'MENU', score: 0, deviceType: 'desktop', activeTool: 'weapon', blocks: 50, spawnersLeft: 5, mapId: 'medium', hardMode: false });
+  const PLAYER_COLORS = [
+    { n: '#00f0ff', g: 'rgba(0, 240, 255, 0.4)', name: 'CYAN' },
+    { n: '#00ff88', g: 'rgba(0, 255, 136, 0.4)', name: 'GREEN' },
+    { n: '#ffcc00', g: 'rgba(255, 204, 0, 0.4)', name: 'YELLOW' },
+    { n: '#b500ff', g: 'rgba(181, 0, 255, 0.4)', name: 'PURPLE' },
+    { n: '#ff6600', g: 'rgba(255, 102, 0, 0.4)', name: 'ORANGE' }
+  ];
+
+  const [playerProfile, setPlayerProfile] = useState<{name: string, colorIdx: number}>({ name: 'PLAYER', colorIdx: 0 });
+  const [containerSize, setContainerSize] = useState({ width: 1200, height: 800 });
+  const [copyFeedback, setCopyFeedback] = useState(false);
+  const [copyLinkFeedback, setCopyLinkFeedback] = useState(false);
+  const [showQrCode, setShowQrCode] = useState(false);
+  const [activeLobbyTab, setActiveLobbyTab] = useState<'invite' | 'players'>('invite');
+  const [lobbyPlayers, setLobbyPlayers] = useState<Record<string, { name: string, colorIdx: number, isHost: boolean }>>({});
+
+  const [uiState, setUiState] = useState<{ status: 'MENU' | 'PLAYING' | 'PAUSED' | 'GAME_OVER' | 'VICTORY' | 'LOBBY'; score: number; deviceType: 'desktop' | 'mobile'; activeTool: 'weapon' | 'special' | 'build'; blocks: number; spawnersLeft: number; mapId: string; hardMode: boolean; buttonCounters: { special: number; build: number } }>({ status: 'MENU', score: 0, deviceType: 'desktop', activeTool: 'special', blocks: 50, spawnersLeft: 5, mapId: 'medium', hardMode: false, buttonCounters: { special: 0, build: 0 } });
   const uiRef = useRef(uiState);
   uiRef.current = uiState;
+  
+  const playerProfileRef = useRef(playerProfile);
+  playerProfileRef.current = playerProfile;
 
-  const isMobileRef = useRef(false);
+  const [mpState, setMpState] = useState<{ isConnected: boolean, roomId: string | null, isHost: boolean, joinCode: string, error: string }>({ isConnected: false, roomId: null, isHost: false, joinCode: '', error: '' });
+  const mpRef = useRef(mpState);
+  mpRef.current = mpState;
+  const socketRef = useRef<Socket | null>(null);
+  const lastReceivedGameStateTimeRef = useRef<number>(0);
+  const triggerEliminationRef = useRef<((x: number, y: number, colorIdx: number, label: string) => void) | null>(null);
+  const bannerShowingRef = useRef(false);
+
+  const isMobileRef = useRef(typeof window !== 'undefined' && /Mobi|Android|iPhone|iPad|iPod|Windows Phone/i.test(navigator.userAgent));
   const [confirmResign, setConfirmResign] = useState(false);
   const [isMapSelectOpen, setIsMapSelectOpen] = useState(false);
+  const [mpTick, setMpTick] = useState(0);
+  const [confirmLeaveMatches, setConfirmLeaveMatches] = useState(false);
+
+  const [bannerState, setBannerState] = useState<{ show: boolean; isLeaving: boolean; mode: 'single' | 'multi' | null }>({
+    show: false,
+    isLeaving: false,
+    mode: null,
+  });
+  const [bannerCountdown, setBannerCountdown] = useState(3);
+  const [flashSpawner, setFlashSpawner] = useState(false);
+  const [flashScore, setFlashScore] = useState(false);
+
+  useEffect(() => {
+    if (uiState.status === 'PLAYING') {
+      const mode = mpState.roomId ? 'multi' : 'single';
+      
+      // Easy toggle switch for the objective banner pop-up. Change to true to re-enable!
+      const enableObjectiveBanner = false;
+
+      if (!enableObjectiveBanner) {
+        setBannerState({ show: false, isLeaving: false, mode: null });
+        bannerShowingRef.current = false;
+        setFlashSpawner(false);
+        setFlashScore(false);
+        return;
+      }
+
+      setBannerState({ show: true, isLeaving: false, mode });
+      bannerShowingRef.current = true;
+      setBannerCountdown(3);
+      setFlashSpawner(false);
+      setFlashScore(false);
+
+      const interval = setInterval(() => {
+        setBannerCountdown(prev => {
+          if (prev <= 1) {
+            clearInterval(interval);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+
+      const hideTimeout = setTimeout(() => {
+        setBannerState({ show: false, isLeaving: false, mode: null });
+        bannerShowingRef.current = false;
+        if (mode === 'single') {
+          setFlashSpawner(true);
+          setTimeout(() => setFlashSpawner(false), 2000);
+        } else {
+          setFlashScore(true);
+          setTimeout(() => setFlashScore(false), 2000);
+        }
+      }, 3000);
+
+      return () => {
+        clearInterval(interval);
+        clearTimeout(hideTimeout);
+      };
+    } else {
+      setBannerState({ show: false, isLeaving: false, mode: null });
+      bannerShowingRef.current = false;
+      setFlashSpawner(false);
+      setFlashScore(false);
+    }
+  }, [uiState.status, mpState.roomId]);
+
+  const getMultiplayerStandings = () => {
+    const list = [];
+    const myId = socketRef.current?.id || 'local';
+
+    // Local player
+    list.push({
+      id: myId,
+      name: playerProfileRef.current.name || 'PLAYER 1',
+      score: uiRef.current.score || 0,
+      isDead: uiRef.current.status === 'GAME_OVER',
+      colorIdx: playerProfileRef.current.colorIdx || 0,
+      isLocal: true,
+    });
+
+    // Remote players
+    const mpPlayers = stateRef.current?.multiplayerPlayers || {};
+    for (const pid in mpPlayers) {
+      if (mpPlayers[pid]) {
+        list.push({
+          id: pid,
+          name: mpPlayers[pid].name || 'PLAYER',
+          score: mpPlayers[pid].score || 0,
+          isDead: !!mpPlayers[pid].isDead,
+          colorIdx: mpPlayers[pid].colorIdx || 0,
+          isLocal: false,
+        });
+      }
+    }
+
+    list.sort((a, b) => b.score - a.score);
+    const isWholeGameEnded = list.every(p => p.isDead);
+    return { list, isWholeGameEnded };
+  };
+
+  const getPlayerRank = () => {
+    const { list } = getMultiplayerStandings();
+    const myId = socketRef.current?.id || 'local';
+    const idx = list.findIndex(p => p.id === myId);
+    return idx === -1 ? 1 : idx + 1;
+  };
+
+  const handleMultiplayerRestart = () => {
+    socketRef.current?.emit('start_game', mpRef.current.roomId, {
+      mapId: uiState.mapId,
+      hardMode: true
+    });
+    resetGame(isMobileRef.current ? 'mobile' : 'desktop', uiState.mapId, uiState.hardMode);
+    setUiState(prev => ({ ...prev, status: 'PLAYING' }));
+  };
 
   // We use a ref for the entire game state to avoid stale closures
   const initialSpawn = useRef(getSafeSpawn(100)).current;
   const stateRef = useRef({
-    player: { x: initialSpawn.x, y: initialSpawn.y, vx: 0, vy: 0, radius: PLAYER_RADIUS, lastShoot: 0, dash: { active: false, targetX: 0, targetY: 0, shieldRadius: 60, lastTime: -DASH_COOLDOWN, wasReady: true } },
-    blocks: [] as { x: number; y: number; size: number; createdAt: number }[],
+    player: { x: initialSpawn.x, y: initialSpawn.y, vx: 0, vy: 0, radius: PLAYER_RADIUS, lastShoot: 0, dash: { active: false, targetX: 0, targetY: 0, shieldRadius: 60, lastTime: performance.now() - DASH_COOLDOWN, wasReady: true }, build: { active: false, endTime: 0, lastBlockX: 0, lastBlockY: 0, lastTime: performance.now() - BUILD_COOLDOWN } },
+    multiplayerPlayers: {} as Record<string, { x: number, y: number, radius: number, isDash: boolean, name?: string, colorIdx?: number }>,
+    blocks: [] as { x: number; y: number; size: number; createdAt: number, colorIdx?: number }[],
     nextBlockScore: 100,
-    bullets: [] as { x: number; y: number; dx: number; dy: number; radius: number, isPlayer: boolean, bounceCount: number, spawnTime: number, isNeutral: boolean }[],
-    enemies: [] as { x: number; y: number; radius: number; lastShoot: number, speed: number }[],
-    bouncers: [] as { x: number; y: number; dx: number; dy: number; size: number; radius: number; speed: number; lastDirChange: number; lastMultiply: number }[],
+    bullets: [] as { id?: string; x: number; y: number; dx: number; dy: number; radius: number, isPlayer: boolean, bounceCount: number, spawnTime: number, isNeutral: boolean, ownerId?: string, colorIdx?: number, targetX?: number, targetY?: number }[],
+    enemies: [] as { id?: string; x: number; y: number; radius: number; lastShoot: number, speed: number, targetX?: number, targetY?: number }[],
+    bouncers: [] as { id?: string; x: number; y: number; dx: number; dy: number; size: number; radius: number; speed: number; lastDirChange: number; lastMultiply: number, targetX?: number, targetY?: number }[],
+    zones: [] as { x: number; y: number; innerRadius: number; outerRadius: number; duration: number; spawnTime: number; ownerId: string; colorIdx?: number }[],
+    nextEntityId: 1,
     bouncerCapacity: 2,
     spawners: [
       { x: 800, y: 800, radius: 40, hp: 100, maxHp: 100 },
@@ -495,16 +645,18 @@ export default function GameCanvas() {
       { x: 1500, y: 600, radius: 40, hp: 100, maxHp: 100 }
     ],
     keys: { w: false, a: false, s: false, d: false },
-    mouse: { x: 0, y: 0, down: false, justDown: false },
+    mouse: { x: 0, y: 0, worldX: 0, worldY: 0, down: false, justDown: false, rightDown: false, rightJustDown: false },
     touches: {
       left: { active: false, id: -1, startX: 0, startY: 0, currentX: 0, currentY: 0, dirX: 0, dirY: 0 },
       right: { active: false, id: -1, startX: 0, startY: 0, currentX: 0, currentY: 0, dirX: 0, dirY: 0, justReleased: false, releaseDx: 0, releaseDy: 0, aimLength: 0, startTime: 0 },
       tap: { active: false, x: 0, y: 0 }
     },
-    camera: { x: 0, y: 0, width: 0, height: 0 },
+    camera: { x: 0, y: 0, width: 0, height: 0, z: 1 },
+    lastBroadcastTime: 0,
     particles: [] as { x: number; y: number; vx: number; vy: number; life: number; maxLife: number; color: string; radius: number }[],
     trails: [] as { x: number; y: number; age: number; color: string; radius: number }[],
     shockwaves: [] as { x: number; y: number; color: string; maxRadius: number; age: number; maxAge: number; thickness: number }[],
+    floatingTexts: [] as { x: number; y: number; text: string; age: number; maxAge: number; color: string; vy: number }[],
     shake: 0,
     lastTime: performance.now(),
     lastEnemySpawn: 0,
@@ -512,37 +664,179 @@ export default function GameCanvas() {
     hardMode: false,
   });
 
-  const resetGame = (deviceType?: 'desktop' | 'mobile', mapId?: string) => {
+  const handleCopyCode = () => {
+    if (mpState.roomId) {
+      navigator.clipboard.writeText(mpState.roomId);
+      setCopyFeedback(true);
+      setTimeout(() => setCopyFeedback(false), 2000);
+    }
+  };
+
+  const handleCopyInviteLink = () => {
+    if (mpState.roomId) {
+      const inviteLink = `${window.location.protocol}//${window.location.host}${window.location.pathname}?room=${mpState.roomId}`;
+      navigator.clipboard.writeText(inviteLink);
+      setCopyLinkFeedback(true);
+      setTimeout(() => setCopyLinkFeedback(false), 2000);
+    }
+  };
+
+  const updateProfile = (name: string, colorIdx: number) => {
+    setPlayerProfile({ name, colorIdx });
+    if (mpRef.current.roomId) {
+      socketRef.current?.emit('update_profile', mpRef.current.roomId, {
+        name,
+        colorIdx
+      });
+      socketRef.current?.emit('client_action', mpRef.current.roomId, {
+        type: 'lobby_update',
+        name,
+        colorIdx,
+        isHost: mpRef.current.isHost
+      });
+    }
+  };
+
+  const downloadQrCode = async () => {
+    if (!mpState.roomId) return;
+    try {
+      const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(`${window.location.protocol}//${window.location.host}${window.location.pathname}?room=${mpState.roomId}`)}`;
+      const response = await fetch(qrUrl);
+      const blob = await response.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = blobUrl;
+      link.download = `match-${mpState.roomId}-qr.png`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(blobUrl);
+    } catch (err) {
+      console.error("Failed to download QR code blob:", err);
+      const link = document.createElement('a');
+      link.href = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(`${window.location.protocol}//${window.location.host}${window.location.pathname}?room=${mpState.roomId}`)}`;
+      link.target = "_blank";
+      link.download = `match-${mpState.roomId}-qr.png`;
+      link.click();
+    }
+  };
+
+  const handleSaveMatch = () => {
+    setUiState(prev => ({ ...prev, status: 'PAUSED' }));
+    const saveData = {
+        ui: uiRef.current,
+        state: stateRef.current
+    };
+    const blob = new Blob([JSON.stringify(saveData)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `ricochet_save_${Date.now()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleLoadMatch = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const data = JSON.parse(event.target?.result as string);
+        if (data && data.ui && data.state) {
+            setUiState({ ...data.ui, status: 'PAUSED' });
+            stateRef.current = data.state;
+        }
+      } catch (err) {
+        alert("Failed to load save file. Corrupt or wrong format.");
+      }
+    };
+    reader.readAsText(file);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const createRoom = () => {
+    socketRef.current?.emit('create_room', { name: playerProfileRef.current.name }, (res: any) => {
+       if (res.roomId) {
+           setMpState(prev => ({ ...prev, roomId: res.roomId, isHost: true }));
+           setActiveLobbyTab('invite');
+           setUiState(prev => ({ ...prev, status: 'LOBBY' }));
+       }
+    });
+  };
+
+  const joinRoom = () => {
+    if (!mpRef.current.joinCode) {
+      setMpState(prev => ({ ...prev, error: 'Enter a valid code!' }));
+      return;
+    }
+    const cleanRoom = mpRef.current.joinCode.toUpperCase();
+    socketRef.current?.emit('join_room', cleanRoom, { name: playerProfileRef.current.name }, (res: any) => {
+       if (res.success) {
+           setMpState(prev => ({ ...prev, roomId: cleanRoom, isHost: false, error: '' }));
+           setActiveLobbyTab('players');
+           setUiState(prev => ({ ...prev, status: 'LOBBY' }));
+
+           if (res.colorIdx !== undefined) {
+             setPlayerProfile(prev => ({ ...prev, colorIdx: res.colorIdx }));
+           }
+
+           // Inform existing players of our profile and ask for theirs
+           setTimeout(() => {
+             socketRef.current?.emit('client_action', cleanRoom, {
+               type: 'lobby_update',
+               name: playerProfileRef.current.name,
+               colorIdx: res.colorIdx !== undefined ? res.colorIdx : playerProfileRef.current.colorIdx,
+               isHost: false
+             });
+             socketRef.current?.emit('client_action', cleanRoom, {
+               type: 'lobby_request_sync'
+             });
+           }, 200);
+       } else {
+           setMpState(prev => ({ ...prev, error: res.error || 'Failed to join' }));
+       }
+    });
+  };
+
+  const resetGame = (deviceType?: 'desktop' | 'mobile', mapId?: string, hardMode?: boolean) => {
     const dType = deviceType || uiRef.current.deviceType;
     const selectedMapId = mapId || uiRef.current.mapId;
-    const isHardMode = uiRef.current.hardMode;
+    const isMultiplayer = !!mpRef.current.roomId;
+    const isHardMode = isMultiplayer ? true : (hardMode !== undefined ? hardMode : uiRef.current.hardMode);
     const mapDef = MAPS[selectedMapId] || MAPS.classic_arena;
     activeWalls = mapDef.walls;
     
     const state = stateRef.current;
     state.hardMode = isHardMode;
+    state.nextEntityId = 1;
     const spawn = getSafeSpawn(100);
     state.player.x = spawn.x;
     state.player.y = spawn.y;
     state.player.vx = 0;
     state.player.vy = 0;
     state.player.lastShoot = performance.now();
-    state.player.dash = { active: false, targetX: 0, targetY: 0, shieldRadius: 60, lastTime: -DASH_COOLDOWN, wasReady: true };
+    state.player.dash = { active: false, targetX: 0, targetY: 0, shieldRadius: 60, lastTime: performance.now() - DASH_COOLDOWN, wasReady: true };
+    state.player.build = { active: false, endTime: 0, lastBlockX: 0, lastBlockY: 0, lastTime: performance.now() - BUILD_COOLDOWN };
     state.blocks = [];
     state.nextBlockScore = 100;
     state.bullets = [];
     state.enemies = [];
     state.bouncers = [];
+    state.zones = [];
     for (let i = 0; i < 2; i++) {
       const spawn = getSafeSpawn(60);
       const angle = Math.random() * Math.PI * 2;
-      state.bouncers.push({ x: spawn.x, y: spawn.y, dx: Math.cos(angle), dy: Math.sin(angle), size: 1, radius: 24, speed: ENEMY_SPEED + Math.random() * 20, lastDirChange: performance.now(), lastMultiply: performance.now() });
+      state.bouncers.push({ id: 'b_' + state.nextEntityId++, x: spawn.x, y: spawn.y, dx: Math.cos(angle), dy: Math.sin(angle), size: 1, radius: 24, speed: ENEMY_SPEED + Math.random() * 20, lastDirChange: performance.now(), lastMultiply: performance.now() });
     }
     state.bouncerCapacity = 2;
     state.spawners = mapDef.spawners.map((s: any) => ({ ...s }));
     state.particles = [];
     state.trails = [];
     state.shockwaves = [];
+    state.floatingTexts = [];
     state.shake = 0;
     state.lastTime = performance.now();
     state.lastEnemySpawn = performance.now();
@@ -554,10 +848,388 @@ export default function GameCanvas() {
     state.touches.right.active = false;
     state.touches.tap.active = false;
     
-    const newUi = { status: 'PLAYING' as const, score: 0, deviceType: dType, activeTool: 'weapon' as const, blocks: 50, spawnersLeft: state.spawners.length, mapId: selectedMapId, hardMode: isHardMode };
+    const uiHardMode = isMultiplayer ? uiRef.current.hardMode : isHardMode;
+    const newUi = { status: 'PLAYING' as const, score: 0, deviceType: dType, activeTool: 'special' as const, blocks: 50, spawnersLeft: state.spawners.length, mapId: selectedMapId, hardMode: uiHardMode, buttonCounters: { special: 0, build: 0 } };
     uiRef.current = newUi;
     setUiState(newUi);
   };
+
+  useEffect(() => {
+    const socket = io();
+    socketRef.current = socket;
+
+    const spawnParticlesDirect = (x: number, y: number, color: string, count: number) => {
+      for (let i = 0; i < count; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = Math.random() * 150 + 50;
+        stateRef.current.particles.push({
+          x, y,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed,
+          life: 0,
+          maxLife: Math.random() * 0.4 + 0.2,
+          color,
+          radius: Math.random() * 3 + 1
+        });
+      }
+    };
+
+    socket.on('connect', () => {
+      setMpState(prev => ({ ...prev, isConnected: true }));
+    });
+
+    socket.on('player_joined', (id) => {
+      stateRef.current.multiplayerPlayers[id] = { x: stateRef.current.player.x, y: stateRef.current.player.y, radius: PLAYER_RADIUS, isDash: false };
+      
+      setLobbyPlayers(prev => ({
+        ...prev,
+        [id]: { name: 'CONNECTING...', colorIdx: 0, isHost: false }
+      }));
+
+      socketRef.current?.emit('client_action', mpRef.current.roomId, {
+        type: 'lobby_update',
+        name: playerProfileRef.current.name,
+        colorIdx: playerProfileRef.current.colorIdx,
+        isHost: mpRef.current.isHost
+      });
+    });
+
+    socket.on('player_left', (id) => {
+      delete stateRef.current.multiplayerPlayers[id];
+      setLobbyPlayers(prev => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+    });
+
+    socket.on('lobby_players', (playersList: any[]) => {
+      const otherPlayers: Record<string, { name: string, colorIdx: number, isHost: boolean }> = {};
+      playersList.forEach((p) => {
+        if (p.id === socket.id) {
+          // Sync our local profile if changed/assigned by server
+          setPlayerProfile(prev => {
+            const currentName = prev.name.trim().toUpperCase();
+            const shouldUpdateName = !currentName || currentName === 'PLAYER' || currentName === 'HOST';
+            return {
+              ...prev,
+              name: shouldUpdateName ? p.name : prev.name,
+              colorIdx: p.colorIdx
+            };
+          });
+          // Also set our local host status directly from server-authoritative list!
+          const hostAssigned = p.isHost;
+          if (mpRef.current.isHost !== hostAssigned) {
+            setMpState(prev => ({ ...prev, isHost: hostAssigned }));
+            mpRef.current.isHost = hostAssigned;
+          }
+        } else {
+          otherPlayers[p.id] = {
+            name: p.name,
+            colorIdx: p.colorIdx,
+            isHost: p.isHost
+          };
+        }
+      });
+      setLobbyPlayers(otherPlayers);
+    });
+
+    socket.on('start_game', (config) => {
+      lastReceivedGameStateTimeRef.current = performance.now();
+      if (!mpRef.current.isHost) {
+        const mapId = config?.mapId || 'medium';
+        const hardMode = !!config?.hardMode;
+        resetGame(isMobileRef.current ? 'mobile' : 'desktop', mapId, hardMode);
+        // setUiState is mostly handled by resetGame, but let's ensure it's PLAYING
+        setUiState(prev => ({ ...prev, status: 'PLAYING', mapId, hardMode: prev.hardMode }));
+      }
+    });
+
+    socket.on('game_state', (state) => {
+      lastReceivedGameStateTimeRef.current = performance.now();
+      if (!mpRef.current.isHost) {
+        // Delta tracking for client-side visual particle effects on death
+        const prevEnemies = stateRef.current.enemies || [];
+        const prevSpawners = stateRef.current.spawners || [];
+        const prevBlocks = stateRef.current.blocks || [];
+
+        stateRef.current.blocks = state.blocks;
+        stateRef.current.spawners = state.spawners;
+
+        // Compare and spawn particles local to the client
+        const newEnemies = state.enemies || [];
+        if (prevEnemies.length > newEnemies.length) {
+          for (const oldEnemy of prevEnemies) {
+            const stillAlive = newEnemies.some((e: any) => Math.abs(e.x - oldEnemy.x) < 5 && Math.abs(e.y - oldEnemy.y) < 5);
+            if (!stillAlive) {
+              spawnParticlesDirect(oldEnemy.x, oldEnemy.y, '#ff3333', 25);
+            }
+          }
+        }
+
+        const newSpawners = state.spawners || [];
+        if (prevSpawners.length > newSpawners.length) {
+          for (const oldSpawner of prevSpawners) {
+            const stillAlive = newSpawners.some((s: any) => Math.abs(s.x - oldSpawner.x) < 5 && Math.abs(s.y - oldSpawner.y) < 5);
+            if (!stillAlive) {
+              const spawnerColor = uiRef.current.hardMode ? '#ff3300' : '#ff00ff';
+              spawnParticlesDirect(oldSpawner.x, oldSpawner.y, spawnerColor, 80);
+              stateRef.current.shockwaves.push({ x: oldSpawner.x, y: oldSpawner.y, color: spawnerColor, maxRadius: 200, age: 0, maxAge: 0.5, thickness: 20 });
+            }
+          }
+        }
+
+        const newBlocks = state.blocks || [];
+        if (prevBlocks.length > newBlocks.length) {
+          for (const oldBlock of prevBlocks) {
+            const stillAlive = newBlocks.some((b: any) => Math.abs(b.x - oldBlock.x) < 5 && Math.abs(b.y - oldBlock.y) < 5);
+            if (!stillAlive) {
+              spawnParticlesDirect(oldBlock.x, oldBlock.y, '#ffcc00', 15);
+            }
+          }
+        }
+
+        // Client-side smooth coordinates interpolation
+        const receivedPlayers = { ...state.multiplayerPlayers, [state.hostId]: state.hostPlayer };
+        delete receivedPlayers[socket.id];
+        
+        const mergedPlayers: Record<string, any> = {};
+        for (const pid in receivedPlayers) {
+          const incoming = receivedPlayers[pid];
+          if (!incoming) continue;
+          
+          const prev = stateRef.current.multiplayerPlayers[pid];
+          if (prev) {
+            if (!prev.isDead && incoming.isDead) {
+              triggerEliminationRef.current?.(incoming.x, incoming.y, incoming.colorIdx !== undefined ? incoming.colorIdx : 0, incoming.name || 'PLAYER');
+            }
+            mergedPlayers[pid] = {
+              ...incoming,
+              x: prev.x,
+              y: prev.y,
+              targetX: incoming.x,
+              targetY: incoming.y
+            };
+          } else {
+            mergedPlayers[pid] = {
+              ...incoming,
+              targetX: incoming.x,
+              targetY: incoming.y
+            };
+          }
+        }
+        stateRef.current.multiplayerPlayers = mergedPlayers;
+
+        // Direct dead-reckoned synchronization for enemies, bouncers, and bullets
+        stateRef.current.enemies = state.enemies || [];
+        stateRef.current.bouncers = state.bouncers || [];
+        stateRef.current.zones = state.zones || [];
+
+        // High-fidelity synchronized & reconciled bullet tracking
+        const now = performance.now();
+        const hostTime = state.hostTime || now;
+        const myId = socket.id || socketRef.current?.id || 'local';
+        const prevBullets = stateRef.current.bullets || [];
+
+        // Track which local bullets successfully matched an incoming packet
+        const matchedLocalIds = new Set<string>();
+
+        const incomingBullets = (state.bullets || []).map((ib: any) => {
+          // Calculate the relative age of the bullet on the host
+          const age = Math.max(0, hostTime - ib.spawnTime);
+          // Map to local timeline so that timeAlive aligns perfectly with local performance.now()
+          const mappedSpawnTime = now - age;
+
+          // Reconcile client's own local pre-spawns, or any already active/predicted bullet, to prevent snapping or micro-jitters
+          const matchedLocal = prevBullets.find((pb: any) => 
+            pb.id && (
+              (pb.id === ib.id && Math.sqrt((pb.x - ib.x) ** 2 + (pb.y - ib.y) ** 2) < 150) ||
+              (ib.ownerId === myId && pb.id.toString().startsWith('local_') &&
+               Math.abs(pb.dx - ib.dx) < 1 &&
+               Math.abs(pb.dy - ib.dy) < 1 &&
+               Math.sqrt((pb.x - ib.x) ** 2 + (pb.y - ib.y) ** 2) < 250)
+            )
+          );
+
+          if (matchedLocal && matchedLocal.id) {
+            matchedLocalIds.add(matchedLocal.id);
+            return {
+              ...ib,
+              x: matchedLocal.x,
+              y: matchedLocal.y,
+              spawnTime: matchedLocal.spawnTime
+            };
+          }
+
+          return {
+            ...ib,
+            spawnTime: mappedSpawnTime
+          };
+        });
+
+        // Retain fresh unmatched local-only bullets so they fly smoothly until acknowledged
+        const unmatchedLocals = prevBullets.filter((pb: any) => 
+          pb.id && pb.id.toString().startsWith('local_') && 
+          (now - pb.spawnTime < 500) &&
+          !matchedLocalIds.has(pb.id)
+        );
+
+        stateRef.current.bullets = [...incomingBullets, ...unmatchedLocals];
+        
+        if (uiRef.current.status === 'PLAYING') {
+          const myId = socketRef.current?.id;
+          const targetScore = (myId && state.multiplayerPlayers[myId] !== undefined)
+            ? (state.multiplayerPlayers[myId].score || 0)
+            : uiRef.current.score;
+
+          if (state.spawnersLeft === 0) {
+            uiRef.current.status = 'VICTORY';
+            uiRef.current.score = targetScore;
+            setUiState(prev => ({ ...prev, status: 'VICTORY', score: targetScore, spawnersLeft: 0 }));
+          } else if (uiRef.current.score !== targetScore || uiRef.current.spawnersLeft !== state.spawnersLeft || uiRef.current.blocks !== state.blocksLeft) {
+             uiRef.current.score = targetScore;
+             uiRef.current.spawnersLeft = state.spawnersLeft;
+             uiRef.current.blocks = state.blocksLeft;
+             setUiState(prev => ({ ...prev, score: targetScore, spawnersLeft: state.spawnersLeft, blocks: state.blocksLeft }));
+          }
+        }
+        setMpTick(t => t + 1);
+      }
+    });
+
+    socket.on('client_input', (clientId, input) => {
+      if (mpRef.current.isHost) {
+        const prev = stateRef.current.multiplayerPlayers[clientId];
+        if (prev && !prev.isDead && input.isDead) {
+          triggerEliminationRef.current?.(input.x, input.y, input.colorIdx !== undefined ? input.colorIdx : 0, input.name || 'PLAYER');
+        }
+        const mergedInput = { ...input };
+        if (prev && prev.score > (input.score || 0)) {
+          mergedInput.score = prev.score;
+        }
+        stateRef.current.multiplayerPlayers[clientId] = mergedInput;
+        setMpTick(t => t + 1);
+      }
+    });
+
+    socket.on('client_action', (clientId, action) => {
+       if (action.type === 'lobby_update') {
+         setLobbyPlayers(prev => ({
+           ...prev,
+           [clientId]: {
+             name: action.name,
+             colorIdx: action.colorIdx,
+             isHost: action.isHost || false
+           }
+         }));
+       } else if (action.type === 'lobby_request_sync') {
+         socketRef.current?.emit('client_action', mpRef.current.roomId, {
+           type: 'lobby_update',
+           name: playerProfileRef.current.name,
+           colorIdx: playerProfileRef.current.colorIdx,
+           isHost: mpRef.current.isHost
+         });
+       } else if (mpRef.current.isHost) {
+         if (action.type === 'shoot') {
+              stateRef.current.bullets.push({
+                id: 'bl_' + stateRef.current.nextEntityId++,
+                x: action.x,
+                y: action.y,
+                dx: action.dx,
+                dy: action.dy,
+                radius: BULLET_RADIUS,
+                isPlayer: true,
+                bounceCount: 0,
+                spawnTime: performance.now(),
+                isNeutral: false,
+                ownerId: clientId,
+                colorIdx: action.colorIdx
+              });
+         } else if (action.type === 'special') {
+             stateRef.current.zones.push({
+                 x: action.x,
+                 y: action.y,
+                 innerRadius: 100,
+                 outerRadius: 250,
+                 duration: 3000,
+                 spawnTime: performance.now(),
+                 ownerId: clientId,
+                 colorIdx: action.colorIdx
+             });
+             const pDef = PLAYER_COLORS[action.colorIdx !== undefined ? action.colorIdx : 0] || PLAYER_COLORS[0];
+             stateRef.current.shockwaves.push({ x: action.x, y: action.y, color: pDef.n, maxRadius: 250, age: 0, maxAge: 0.5, thickness: 15 });
+         } else if (action.type === 'build') {
+             stateRef.current.blocks.push({
+                 x: action.x,
+                 y: action.y,
+                 size: 40,
+                 createdAt: performance.now(),
+                 colorIdx: action.colorIdx
+             });
+         } else if (action.type === 'build_remove') {
+             const idx = stateRef.current.blocks.findIndex(b => b.x === action.x && b.y === action.y);
+             if (idx !== -1) {
+                 stateRef.current.blocks.splice(idx, 1);
+             }
+         }
+       }
+    });
+
+    return () => {
+
+      socket.disconnect();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (mpState.isConnected) {
+      const params = new URLSearchParams(window.location.search);
+      const roomParam = params.get('room') || params.get('join');
+      if (roomParam) {
+        const cleanRoom = roomParam.trim().toUpperCase();
+        
+        // Show status LOBBY immediately and set state to show join attempt
+        setUiState(prev => ({ ...prev, status: 'LOBBY' }));
+        setMpState(prev => ({ 
+          ...prev, 
+          joinCode: cleanRoom, 
+          error: 'Autoconnecting to room...' 
+        }));
+
+        // Clean up URL query parameters so manual refresh doesn't force re-joining
+        if (window.history.replaceState) {
+          window.history.replaceState({}, document.title, window.location.pathname);
+        }
+
+        // Emit room join to server
+        socketRef.current?.emit('join_room', cleanRoom, { name: playerProfileRef.current.name }, (res: any) => {
+          if (res.success) {
+            setMpState(prev => ({ ...prev, roomId: cleanRoom, joinCode: cleanRoom, isHost: false, error: '' }));
+            setActiveLobbyTab('players');
+
+            if (res.colorIdx !== undefined) {
+              setPlayerProfile(prev => ({ ...prev, colorIdx: res.colorIdx }));
+            }
+
+            // Inform existing players of our profile and ask for theirs
+            setTimeout(() => {
+              socketRef.current?.emit('client_action', cleanRoom, {
+                type: 'lobby_update',
+                name: playerProfileRef.current.name,
+                colorIdx: res.colorIdx !== undefined ? res.colorIdx : playerProfileRef.current.colorIdx,
+                isHost: false
+              });
+              socketRef.current?.emit('client_action', cleanRoom, {
+                type: 'lobby_request_sync'
+              });
+            }, 300);
+          } else {
+            setMpState(prev => ({ ...prev, joinCode: cleanRoom, error: res.error || 'Failed to auto-join room' }));
+          }
+        });
+      }
+    }
+  }, [mpState.isConnected]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -570,10 +1242,13 @@ export default function GameCanvas() {
     const state = stateRef.current;
 
     const handleResize = () => {
-      canvas.width = wrapper.clientWidth;
-      canvas.height = wrapper.clientHeight;
-      state.camera.width = canvas.width;
-      state.camera.height = canvas.height;
+      const w = wrapper.clientWidth;
+      const h = wrapper.clientHeight;
+      canvas.width = w;
+      canvas.height = h;
+      state.camera.width = w;
+      state.camera.height = h;
+      setContainerSize({ width: w, height: h });
     };
     handleResize();
     window.addEventListener('resize', handleResize);
@@ -585,9 +1260,62 @@ export default function GameCanvas() {
       if (key === 's') state.keys.s = true;
       if (key === 'd') state.keys.d = true;
       
-      if (key === '1') setUiState(prev => ({ ...prev, activeTool: 'weapon' }));
-      if (key === '2') setUiState(prev => ({ ...prev, activeTool: 'special' }));
-      if (key === '3') setUiState(prev => ({ ...prev, activeTool: 'build' }));
+      const currentTime = performance.now();
+      
+      if (key === '1' || key === ' ') {
+         if (currentTime - stateRef.current.player.dash.lastTime >= DASH_COOLDOWN) {
+            stateRef.current.player.dash.lastTime = currentTime;
+            
+            const isHostMode = !mpRef.current.roomId || mpRef.current.isHost;
+            const finalX = stateRef.current.mouse.worldX;
+            const finalY = stateRef.current.mouse.worldY;
+            
+            if (isHostMode) {
+              const cIdx = playerProfileRef.current.colorIdx;
+              stateRef.current.zones.push({
+                 x: finalX,
+                 y: finalY,
+                 innerRadius: 100,
+                 outerRadius: 250,
+                 duration: 3000,
+                 spawnTime: currentTime,
+                 ownerId: 'local',
+                 colorIdx: cIdx
+              });
+              const pDef = PLAYER_COLORS[cIdx] || PLAYER_COLORS[0];
+              stateRef.current.shockwaves.push({ x: finalX, y: finalY, color: pDef.n, maxRadius: 250, age: 0, maxAge: 0.5, thickness: 15 });
+            } else {
+              socketRef.current?.emit('client_action', mpRef.current.roomId, { type: 'special', x: finalX, y: finalY, colorIdx: playerProfileRef.current.colorIdx });
+            }
+         }
+      }
+      if (key === '2') {
+         if (currentTime - stateRef.current.player.build.lastTime >= BUILD_COOLDOWN) {
+            stateRef.current.player.build.active = true;
+            stateRef.current.player.build.endTime = currentTime + 10000;
+            stateRef.current.player.build.lastTime = currentTime;
+            const gridX = Math.round(stateRef.current.player.x / 40) * 40;
+            const gridY = Math.round(stateRef.current.player.y / 40) * 40;
+            stateRef.current.player.build.lastBlockX = gridX;
+            stateRef.current.player.build.lastBlockY = gridY;
+            // Add a starting block
+            const cIdx = playerProfileRef.current.colorIdx;
+            const existingIdx = stateRef.current.blocks.findIndex(b => b.x === gridX && b.y === gridY);
+            if (existingIdx !== -1) {
+               if (stateRef.current.blocks[existingIdx].colorIdx === cIdx) {
+                  stateRef.current.blocks.splice(existingIdx, 1);
+                  if (socketRef.current && mpRef.current.roomId && !mpRef.current.isHost) {
+                     socketRef.current.emit('client_action', mpRef.current.roomId, { type: 'build_remove', x: gridX, y: gridY });
+                  }
+               }
+            } else {
+               stateRef.current.blocks.push({ x: gridX, y: gridY, size: 40, createdAt: currentTime, colorIdx: cIdx });
+               if (socketRef.current && mpRef.current.roomId && !mpRef.current.isHost) {
+                 socketRef.current.emit('client_action', mpRef.current.roomId, { type: 'build', x: gridX, y: gridY, colorIdx: cIdx });
+               }
+            }
+         }
+      }
       if (key === 'escape') {
         setUiState(prev => {
            if (prev.status === 'PLAYING') return { ...prev, status: 'PAUSED' };
@@ -605,23 +1333,37 @@ export default function GameCanvas() {
       if (key === 'd') state.keys.d = false;
     };
 
+    const handleContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+    };
+
     const handleMouseMove = (e: MouseEvent) => {
       if (e.target !== canvas) return;
       const rect = canvas.getBoundingClientRect();
       state.mouse.x = e.clientX - rect.left;
       state.mouse.y = e.clientY - rect.top;
+      state.mouse.worldX = state.mouse.x + state.camera.x;
+      state.mouse.worldY = state.mouse.y + state.camera.y;
     };
 
     const handleMouseDown = (e: MouseEvent) => {
       if (e.target !== canvas) return;
       if (uiRef.current.status !== 'PLAYING') return;
-      state.mouse.down = true;
-      state.mouse.justDown = true;
+      if (e.button === 2) {
+         state.mouse.rightDown = true;
+         state.mouse.rightJustDown = true;
+      } else {
+         state.mouse.down = true;
+      }
     };
 
     const handleMouseUp = (e: MouseEvent) => {
       if (e.target !== canvas) return;
-      state.mouse.down = false;
+      if (e.button === 2) {
+         state.mouse.rightDown = false;
+      } else {
+         state.mouse.down = false;
+      }
     };
 
     const handleTouchStart = (e: TouchEvent) => {
@@ -660,7 +1402,7 @@ export default function GameCanvas() {
             state.touches.left.currentY = leftJoyY + dy;
             state.touches.left.dirX = dx / maxDist;
             state.touches.left.dirY = dy / maxDist;
-          } else if (uiRef.current.activeTool === 'weapon' && !state.touches.right.active && (x - rightJoyX)**2 + (y - rightJoyY)**2 <= joyRadius**2) {
+          } else if (!state.touches.right.active && (x - rightJoyX)**2 + (y - rightJoyY)**2 <= joyRadius**2) {
             state.touches.right.active = true;
             state.touches.right.id = t.identifier;
             state.touches.right.startX = rightJoyX;
@@ -792,6 +1534,7 @@ export default function GameCanvas() {
 
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
+    canvas.addEventListener('contextmenu', handleContextMenu);
     canvas.addEventListener('mousemove', handleMouseMove);
     canvas.addEventListener('mousedown', handleMouseDown);
     canvas.addEventListener('mouseup', handleMouseUp);
@@ -800,17 +1543,120 @@ export default function GameCanvas() {
     canvas.addEventListener('touchend', handleTouchEnd, { passive: false });
     canvas.addEventListener('touchcancel', handleTouchEnd, { passive: false });
 
+    const triggerEliminationAnimation = (x: number, y: number, colorIdx: number, label: string) => {
+      const pDef = PLAYER_COLORS[colorIdx !== undefined ? colorIdx : 0] || PLAYER_COLORS[0];
+      const pColor = pDef.n;
+
+      // 1. Vector Ring Burst (Option 1)
+      const count = 48; // A beautiful complete circle of particles
+      for (let i = 0; i < count; i++) {
+        const angle = (i / count) * Math.PI * 2 + (Math.random() * 0.1 - 0.05);
+        const speed = Math.random() * 120 + 260; // High-velocity shockwave burst
+        stateRef.current.particles.push({
+          x, y,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed,
+          life: 0,
+          maxLife: Math.random() * 0.4 + 0.6, // Longer lifecycle for maximum visual impact
+          color: pColor,
+          radius: Math.random() * 3.5 + 2 // Slightly larger particles for dramatic impact
+        });
+      }
+
+      // Add 15 extra smaller trailing dust sparks for dramatic lingering feedback
+      for (let i = 0; i < 15; i++) {
+        const angle = Math.random() * Math.PI * 2;
+        const speed = Math.random() * 100 + 30;
+        stateRef.current.particles.push({
+          x, y,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed,
+          life: 0,
+          maxLife: Math.random() * 0.6 + 0.5,
+          color: '#ffffff',
+          radius: Math.random() * 1.5 + 0.8
+        });
+      }
+
+      // 2. High-contrast expanding colored shockwave
+      stateRef.current.shockwaves.push({
+        x, y,
+        color: pColor,
+        maxRadius: 240,
+        age: 0,
+        maxAge: 0.65,
+        thickness: 16
+      });
+
+      // 3. Tactile camera shake of 25px
+      stateRef.current.shake = 25;
+
+      // 4. Floating holographic / neon panel
+      if (!stateRef.current.floatingTexts) {
+        stateRef.current.floatingTexts = [];
+      }
+      stateRef.current.floatingTexts.push({
+        x,
+        y: y - 10,
+        text: label.toUpperCase(),
+        age: 0,
+        maxAge: 1.5,
+        color: pColor,
+        vy: -45
+      });
+    };
+    triggerEliminationRef.current = triggerEliminationAnimation;
+
     let animationFrameId: number;
+    let lastStatus = uiRef.current.status;
 
     const gameLoop = (currentTime: number) => {
       const dt = Math.min((currentTime - state.lastTime) / 1000, 0.1); // cap dt at 100ms to prevent glitches
       state.lastTime = currentTime;
 
       const STATUS = uiRef.current.status;
+      if (lastStatus === 'PLAYING' && STATUS === 'GAME_OVER') {
+        const myColorIdx = playerProfileRef.current.colorIdx;
+        const myName = playerProfileRef.current.name || 'YOU';
+        triggerEliminationAnimation(state.player.x, state.player.y, myColorIdx, `${myName} ELIMINATED`);
+      }
+      lastStatus = STATUS;
+      const shouldRunUpdates = (STATUS === 'PLAYING' && !bannerShowingRef.current) || (STATUS === 'GAME_OVER' && mpRef.current.isConnected && mpRef.current.roomId && mpRef.current.isHost);
 
-      if (STATUS === 'PLAYING') {
+      // Auto Host-Migration claiming protocol
+      if (
+        mpRef.current.isConnected &&
+        mpRef.current.roomId &&
+        !mpRef.current.isHost &&
+        (STATUS === 'PLAYING' || STATUS === 'GAME_OVER')
+      ) {
+        if (currentTime - lastReceivedGameStateTimeRef.current > 1500) {
+          lastReceivedGameStateTimeRef.current = currentTime; // throttle requests
+          console.log("No update from host received, claiming host status.");
+          socketRef.current?.emit('claim_host', mpRef.current.roomId);
+        }
+      }
+
+      // Direct high-performance input/status sync (runs even when client status is GAME_OVER)
+      if (currentTime - state.lastBroadcastTime > 16 && mpRef.current.isConnected && mpRef.current.roomId && !mpRef.current.isHost && (STATUS === 'PLAYING' || STATUS === 'GAME_OVER')) {
+        state.lastBroadcastTime = currentTime;
+        socketRef.current?.emit('client_input', mpRef.current.roomId, {
+          x: state.player.x,
+          y: state.player.y,
+          radius: state.player.radius,
+          isDash: state.player.dash.active,
+          isDead: STATUS === 'GAME_OVER',
+          name: playerProfileRef.current.name,
+          colorIdx: playerProfileRef.current.colorIdx,
+          score: uiRef.current.score
+        });
+      }
+
+      if (shouldRunUpdates) {
         const mouseJustDown = state.mouse.justDown;
         state.mouse.justDown = false;
+        const mouseRightJustDown = state.mouse.rightJustDown;
+        state.mouse.rightJustDown = false;
         const rightJustReleased = state.touches.right.justReleased;
         state.touches.right.justReleased = false;
 
@@ -837,8 +1683,88 @@ export default function GameCanvas() {
         };
 
         // --- LOGIC UPDATES ---
+
+        // Smooth client-side coordinates interpolation for remote players
+        if (!mpRef.current.isHost) {
+          for (const pid in state.multiplayerPlayers) {
+            const pData = state.multiplayerPlayers[pid];
+            if (pData && pData.targetX !== undefined && pData.targetY !== undefined) {
+              const lerpFactor = Math.min(1.0, 15 * dt);
+              pData.x += (pData.targetX - pData.x) * lerpFactor;
+              pData.y += (pData.targetY - pData.y) * lerpFactor;
+            }
+          }
+
+          // Client-side physics projection for smooth 60fps entity rendering between host updates
+          if (mpRef.current.roomId) {
+            // 1. Move Enemies towards closest alive player
+            for (const enemy of state.enemies) {
+              let targetX = state.player.x;
+              let targetY = state.player.y;
+              let minTargetDistSq = (state.player.x - enemy.x) ** 2 + (state.player.y - enemy.y) ** 2;
+
+              for (const pid in state.multiplayerPlayers) {
+                const mpPlayer = state.multiplayerPlayers[pid];
+                if (mpPlayer && !mpPlayer.isDead) {
+                  const dSq = (mpPlayer.x - enemy.x) ** 2 + (mpPlayer.y - enemy.y) ** 2;
+                  if (dSq < minTargetDistSq) {
+                    minTargetDistSq = dSq;
+                    targetX = mpPlayer.x;
+                    targetY = mpPlayer.y;
+                  }
+                }
+              }
+
+              const dx = targetX - enemy.x;
+              const dy = targetY - enemy.y;
+              const dist = Math.sqrt(dx * dx + dy * dy);
+              if (dist > 0) {
+                enemy.x += (dx / dist) * enemy.speed * dt;
+                enemy.y += (dy / dist) * enemy.speed * dt;
+              }
+            }
+
+            // 2. Move Bouncers with boundaries bouncing
+            for (const b of state.bouncers) {
+              b.x += b.dx * b.speed * dt;
+              b.y += b.dy * b.speed * dt;
+              
+              if (b.x < b.radius) { b.x = b.radius; b.dx *= -1; }
+              if (b.x > MAP_WIDTH - b.radius) { b.x = MAP_WIDTH - b.radius; b.dx *= -1; }
+              if (b.y < b.radius) { b.y = b.radius; b.dy *= -1; }
+              if (b.y > MAP_HEIGHT - b.radius) { b.y = MAP_HEIGHT - b.radius; b.dy *= -1; }
+            }
+
+            // 3. Move Bullets and spawn local visual trails
+            for (const bullet of state.bullets) {
+              let speedMultiplier = 1;
+              const timeAlive = currentTime - bullet.spawnTime;
+              if (bullet.isPlayer && timeAlive < 250) {
+                speedMultiplier = 3.5;
+              }
+              bullet.x += bullet.dx * speedMultiplier * dt;
+              bullet.y += bullet.dy * speedMultiplier * dt;
+
+              if (Math.random() > 0.3) {
+                let trailColor = '#ff0066';
+                if (bullet.isNeutral) {
+                  trailColor = '#aaaaaa';
+                } else if (bullet.isPlayer) {
+                  const pDef = PLAYER_COLORS[bullet.colorIdx !== undefined ? bullet.colorIdx : 0] || PLAYER_COLORS[0];
+                  trailColor = pDef.n;
+                }
+                state.trails.push({
+                  x: bullet.x, y: bullet.y, age: 0,
+                  color: trailColor,
+                  radius: bullet.radius * 0.6
+                });
+              }
+            }
+          }
+        }
         
         // 1. Update Player Movement
+        if (STATUS === 'PLAYING') {
         if (state.player.dash.active) {
             const dx = state.player.dash.targetX - state.player.x;
             const dy = state.player.dash.targetY - state.player.y;
@@ -868,6 +1794,7 @@ export default function GameCanvas() {
 
             // Dash Collision with Enemies
             const checkRadius = state.player.dash.shieldRadius;
+
             for (let e = state.enemies.length - 1; e >= 0; e--) {
               const enemy = state.enemies[e];
               const edx = enemy.x - state.player.x;
@@ -968,11 +1895,12 @@ export default function GameCanvas() {
           }
 
           if (length > 0 && Math.random() > 0.5) {
+            const pDef = PLAYER_COLORS[playerProfileRef.current.colorIdx] || PLAYER_COLORS[0];
             state.trails.push({
               x: state.player.x,
               y: state.player.y,
               age: 0,
-              color: '#00ccff',
+              color: pDef.n,
               radius: state.player.radius * 0.4
             });
           }
@@ -984,46 +1912,45 @@ export default function GameCanvas() {
           state.player.y += state.player.vy * PLAYER_SPEED * dt;
         }
 
-        // Block Physics (Player / Enemies vs Blocks)
-        for (let b = state.blocks.length - 1; b >= 0; b--) {
-          const block = state.blocks[b];
-          let destroyed = false;
-
-          // Player touching block
-          const pRadius = state.player.dash.active ? state.player.dash.shieldRadius : state.player.radius;
-          const pdx = Math.abs(state.player.x - block.x);
-          const pdy = Math.abs(state.player.y - block.y);
-          if (pdx < block.size / 2 + pRadius && pdy < block.size / 2 + pRadius) {
-            destroyed = true;
-          }
-
-          // Enemies touching block
-          if (!destroyed) {
-            for (let e = 0; e < state.enemies.length; e++) {
-              const enemy = state.enemies[e];
-              const edx = Math.abs(enemy.x - block.x);
-              const edy = Math.abs(enemy.y - block.y);
-              if (edx < block.size / 2 + enemy.radius && edy < block.size / 2 + enemy.radius) {
-                destroyed = true;
-                break;
-              }
-            }
-          }
-
-          if (destroyed) {
-            spawnParticles(block.x, block.y, '#ffcc00', 20);
-            state.blocks.splice(b, 1);
+        // Handle Build Mode (trailing blocks)
+        if (state.player.build.active) {
+          if (currentTime > state.player.build.endTime) {
+             state.player.build.active = false;
+          } else {
+             const gridX = Math.round(state.player.x / 40) * 40;
+             const gridY = Math.round(state.player.y / 40) * 40;
+             if (gridX !== state.player.build.lastBlockX || gridY !== state.player.build.lastBlockY) {
+                state.player.build.lastBlockX = gridX;
+                state.player.build.lastBlockY = gridY;
+                const cIdx = playerProfileRef.current.colorIdx;
+                const existingIdx = state.blocks.findIndex(b => b.x === gridX && b.y === gridY);
+                if (existingIdx !== -1) {
+                   if (state.blocks[existingIdx].colorIdx === cIdx) {
+                      state.blocks.splice(existingIdx, 1);
+                      if (socketRef.current && mpRef.current.roomId && !mpRef.current.isHost) {
+                         socketRef.current.emit('client_action', mpRef.current.roomId, { type: 'build_remove', x: gridX, y: gridY });
+                      }
+                   }
+                } else {
+                   state.blocks.push({ x: gridX, y: gridY, size: 40, createdAt: currentTime, colorIdx: cIdx });
+                   if (socketRef.current && mpRef.current.roomId && !mpRef.current.isHost) {
+                      socketRef.current.emit('client_action', mpRef.current.roomId, { type: 'build', x: gridX, y: gridY, colorIdx: cIdx });
+                   }
+                }
+             }
           }
         }
 
-        // Player Wall Collisions
+        // Core Player Wall Collisions & Clamping (Run locally on BOTH Client and Host to prevent wall-phasing)
         for (const wall of activeWalls) {
           const closestX = clamp(state.player.x, wall.x, wall.x + wall.w);
           const closestY = clamp(state.player.y, wall.y, wall.y + wall.h);
 
           const distX = state.player.x - closestX;
           const distY = state.player.y - closestY;
-          const distSq = distX * distX + distY * distY;
+          const distXSquare = distX * distX;
+          const distYSquare = distY * distY;
+          const distSq = distXSquare + distYSquare;
 
           if (distSq < state.player.radius * state.player.radius) {
             const dist = Math.sqrt(distSq);
@@ -1035,8 +1962,114 @@ export default function GameCanvas() {
           }
         }
 
+        }
+
         state.player.x = clamp(state.player.x, state.player.radius, MAP_WIDTH - state.player.radius);
         state.player.y = clamp(state.player.y, state.player.radius, MAP_HEIGHT - state.player.radius);
+
+        // Client-side local instant death trigger checks
+        if (!mpRef.current.isHost && mpRef.current.roomId && uiRef.current.status === 'PLAYING') {
+          const localColorIdx = playerProfileRef.current.colorIdx;
+          const localColor = PLAYER_COLORS[localColorIdx]?.n || '#00f0ff';
+
+          // 1. Collide with Enemies
+          for (const enemy of state.enemies) {
+            const dx = state.player.x - enemy.x;
+            const dy = state.player.y - enemy.y;
+            if (dx * dx + dy * dy < (state.player.radius + enemy.radius) ** 2) {
+              spawnParticles(state.player.x, state.player.y, localColor, 50);
+              state.shake = 20;
+              setUiState(prev => {
+                uiRef.current = { ...prev, status: 'GAME_OVER' };
+                return uiRef.current;
+              });
+              break;
+            }
+          }
+          
+          // 2. Collide with Bouncers
+          if (uiRef.current.status === 'PLAYING') {
+            for (const b of state.bouncers) {
+              const pdx = state.player.x - b.x;
+              const pdy = state.player.y - b.y;
+              if (pdx * pdx + pdy * pdy < (state.player.radius + b.radius) ** 2) {
+                if (!state.player.dash.active) {
+                  spawnParticles(state.player.x, state.player.y, localColor, 50);
+                  state.shake = 20;
+                  setUiState(prev => {
+                    uiRef.current = { ...prev, status: 'GAME_OVER' };
+                    return uiRef.current;
+                  });
+                  break;
+                }
+              }
+            }
+          }
+
+          // 3. Collide with Enemy / Neutral / Player Bullets
+          if (uiRef.current.status === 'PLAYING') {
+            for (const bullet of state.bullets) {
+              let bulletColor = '#ff0066';
+              if (bullet.isNeutral) {
+                bulletColor = '#aaaaaa';
+              } else if (bullet.isPlayer) {
+                const pDef = PLAYER_COLORS[bullet.colorIdx !== undefined ? bullet.colorIdx : 0] || PLAYER_COLORS[0];
+                bulletColor = pDef.n;
+              }
+
+              if (bulletColor !== localColor) {
+                const dx = state.player.x - bullet.x;
+                const dy = state.player.y - bullet.y;
+                if (!state.player.dash.active && dx * dx + dy * dy < (state.player.radius + bullet.radius * 0.5) ** 2) {
+                  spawnParticles(state.player.x, state.player.y, localColor, 50);
+                  state.shake = 20;
+                  setUiState(prev => {
+                    uiRef.current = { ...prev, status: 'GAME_OVER' };
+                    return uiRef.current;
+                  });
+                  break;
+                }
+              }
+            }
+          }
+        }
+
+        // Host ONLY logic from here down
+        if (!mpRef.current.roomId || mpRef.current.isHost) {
+
+          // Block Physics (Player / Enemies vs Blocks)
+          for (let b = state.blocks.length - 1; b >= 0; b--) {
+            const block = state.blocks[b];
+            let destroyed = false;
+
+            // Player touching block
+            if (STATUS === 'PLAYING' && (currentTime - block.createdAt > 1500)) {
+              const pRadius = state.player.dash.active ? state.player.dash.shieldRadius : state.player.radius;
+              const pdx = Math.abs(state.player.x - block.x);
+              const pdy = Math.abs(state.player.y - block.y);
+              if (pdx < block.size / 2 + pRadius && pdy < block.size / 2 + pRadius) {
+                destroyed = true;
+              }
+            }
+
+            // Enemies touching block
+            if (!destroyed) {
+              for (let e = 0; e < state.enemies.length; e++) {
+                const enemy = state.enemies[e];
+                const edx = Math.abs(enemy.x - block.x);
+                const edy = Math.abs(enemy.y - block.y);
+                if (edx < block.size / 2 + enemy.radius && edy < block.size / 2 + enemy.radius) {
+                  destroyed = true;
+                  break;
+                }
+              }
+            }
+
+            if (destroyed) {
+              spawnParticles(block.x, block.y, '#ffcc00', 20);
+              state.blocks.splice(b, 1);
+            }
+          }
 
         // 2. Spawn Enemies
         if (state.spawners.length > 0) {
@@ -1064,6 +2097,7 @@ export default function GameCanvas() {
             const spawnY = spawner.y + Math.sin(angle) * spawnDist;
 
             state.enemies.push({
+              id: 'e_' + state.nextEntityId++,
               x: spawnX,
               y: spawnY,
               radius: ENEMY_RADIUS,
@@ -1077,9 +2111,29 @@ export default function GameCanvas() {
         for (let i = state.enemies.length - 1; i >= 0; i--) {
           const enemy = state.enemies[i];
           
-          // Move towards player
-          const dx = state.player.x - enemy.x;
-          const dy = state.player.y - enemy.y;
+          // Move towards closest alive player
+          let targetX = state.player.x;
+          let targetY = state.player.y;
+          let minTargetDistSq = Infinity;
+
+          if (STATUS === 'PLAYING') {
+            minTargetDistSq = (state.player.x - enemy.x) ** 2 + (state.player.y - enemy.y) ** 2;
+          }
+
+          for (const pid in state.multiplayerPlayers) {
+            const mpPlayer = state.multiplayerPlayers[pid];
+            if (mpPlayer && !mpPlayer.isDead) {
+              const dSq = (mpPlayer.x - enemy.x) ** 2 + (mpPlayer.y - enemy.y) ** 2;
+              if (dSq < minTargetDistSq) {
+                minTargetDistSq = dSq;
+                targetX = mpPlayer.x;
+                targetY = mpPlayer.y;
+              }
+            }
+          }
+
+          const dx = targetX - enemy.x;
+          const dy = targetY - enemy.y;
           const dist = Math.sqrt(dx * dx + dy * dy);
           
           if (dist > 0) {
@@ -1114,6 +2168,7 @@ export default function GameCanvas() {
             const dirX = Math.cos(angle);
             const dirY = Math.sin(angle);
             state.bullets.push({
+              id: 'be_' + state.nextEntityId++,
               x: enemy.x,
               y: enemy.y,
               dx: Math.cos(angle) * BULLET_SPEED,
@@ -1141,11 +2196,30 @@ export default function GameCanvas() {
               let targetY = -1;
               let minDist = Infinity;
               
-              const distToPlayer = Math.sqrt((state.player.x - b.x)**2 + (state.player.y - b.y)**2);
+              let activePlayerX = state.player.x;
+              let activePlayerY = state.player.y;
+              let distToPlayer = Infinity;
+
+              if (STATUS === 'PLAYING') {
+                distToPlayer = Math.sqrt((state.player.x - b.x)**2 + (state.player.y - b.y)**2);
+              }
+
+              for (const pid in state.multiplayerPlayers) {
+                const mpPlayer = state.multiplayerPlayers[pid];
+                if (mpPlayer && !mpPlayer.isDead) {
+                  const d = Math.sqrt((mpPlayer.x - b.x)**2 + (mpPlayer.y - b.y)**2);
+                  if (d < distToPlayer) {
+                    distToPlayer = d;
+                    activePlayerX = mpPlayer.x;
+                    activePlayerY = mpPlayer.y;
+                  }
+                }
+              }
+
               if (distToPlayer < 600 && Math.random() < 0.2) {
                 minDist = distToPlayer;
-                targetX = state.player.x;
-                targetY = state.player.y;
+                targetX = activePlayerX;
+                targetY = activePlayerY;
               }
               
               for (const block of state.blocks) {
@@ -1206,10 +2280,7 @@ export default function GameCanvas() {
             const dstX = b.x - closestX;
             const dstY = b.y - closestY;
             if (dstX * dstX + dstY * dstY < b.radius * b.radius) {
-                // Destroy block
-                spawnParticles(block.x, block.y, '#00ff88', 20);
-                state.blocks.splice(blk, 1);
-                // Bounce
+                // Just bounce, block is unbreakable
                 if (Math.abs(b.x - closestX) >= Math.abs(b.y - closestY)) b.dx *= -1;
                 else b.dy *= -1;
             }
@@ -1222,13 +2293,15 @@ export default function GameCanvas() {
             if (pdx * pdx + pdy * pdy < (state.player.radius + b.radius) ** 2) {
               if (state.player.dash.active) {
                 // Destroy bouncer if player is dashing
-                 spawnParticles(b.x, b.y, '#00ff88', 30);
+                 spawnParticles(b.x, b.y, '#ff3333', 30);
                  b.size = 0; // mark for logic below or just bounce?
                  // Wait, let's just bounce
                  b.dx *= -1;
                  b.dy *= -1;
               } else {
-                spawnParticles(state.player.x, state.player.y, '#00ccff', 50);
+                const localColorIdx = playerProfileRef.current.colorIdx;
+                const localColor = PLAYER_COLORS[localColorIdx]?.n || '#00f0ff';
+                spawnParticles(state.player.x, state.player.y, localColor, 50);
                 state.shake = 20;
                 setUiState(prev => {
                   uiRef.current = { ...prev, status: 'GAME_OVER' };
@@ -1245,12 +2318,14 @@ export default function GameCanvas() {
               b.lastMultiply = currentTime;
               const angle = Math.random() * Math.PI * 2;
               state.bouncers.push({
+                id: 'b_' + state.nextEntityId++,
                 x: b.x, y: b.y, dx: Math.cos(angle), dy: Math.sin(angle),
                 size: 1, radius: 24, speed: ENEMY_SPEED + Math.random() * 20, lastDirChange: currentTime, lastMultiply: currentTime
               });
             }
           }
         }
+        } // End of Host ONLY logic (part 1)
 
         // 4. Handle Tools & Shooting
         let isShooting = false;
@@ -1270,16 +2345,16 @@ export default function GameCanvas() {
         }
 
         if (uiRef.current.deviceType === 'desktop') {
-          if (activeTool === 'weapon') {
-            isShooting = state.mouse.down;
-            const worldMouseX = state.mouse.x + state.camera.x;
-            const worldMouseY = state.mouse.y + state.camera.y;
-            shootDirX = worldMouseX - state.player.x;
-            shootDirY = worldMouseY - state.player.y;
-          } else if (mouseJustDown) {
+          isShooting = state.mouse.down;
+          const worldMouseX = state.mouse.x + state.camera.x;
+          const worldMouseY = state.mouse.y + state.camera.y;
+          shootDirX = worldMouseX - state.player.x;
+          shootDirY = worldMouseY - state.player.y;
+          
+          if (mouseRightJustDown) {
             actionTriggered = true;
-            actionTargetX = state.mouse.x + state.camera.x;
-            actionTargetY = state.mouse.y + state.camera.y;
+            actionTargetX = worldMouseX;
+            actionTargetY = worldMouseY;
           }
         } else {
           // Mobile mapping
@@ -1293,61 +2368,13 @@ export default function GameCanvas() {
           }
            
           if (mobileTapWorldX !== undefined) {
-             if (activeTool === 'special') {
-                actionTriggered = true;
-                actionTargetX = mobileTapWorldX;
-                actionTargetY = mobileTapWorldY;
-             }
-             // Build handles its own tap below
+             actionTriggered = true;
+             actionTargetX = mobileTapWorldX;
+             actionTargetY = mobileTapWorldY;
           }
         }
 
-        if (activeTool === 'build') {
-           const isUsingBuild = (uiRef.current.deviceType === 'desktop' && state.mouse.down) || (uiRef.current.deviceType === 'mobile' && mobileTapWorldX !== undefined);
-           if (isUsingBuild) {
-              let targetX = 0;
-              let targetY = 0;
-              const BUILD_RANGE = 300;
-              if (uiRef.current.deviceType === 'mobile') {
-                 targetX = mobileTapWorldX!;
-                 targetY = mobileTapWorldY!;
-              } else {
-                 targetX = state.mouse.x + state.camera.x;
-                 targetY = state.mouse.y + state.camera.y;
-              }
-
-              // Apply BUILD_RANGE clamp
-              const dx = targetX - state.player.x;
-              const dy = targetY - state.player.y;
-              const dist = Math.sqrt(dx * dx + dy * dy);
-              if (dist > BUILD_RANGE) {
-                 targetX = state.player.x + (dx / dist) * BUILD_RANGE;
-                 targetY = state.player.y + (dy / dist) * BUILD_RANGE;
-              }
-              
-              // Align to invisible grid (50x50)
-              const finalX = Math.floor(targetX / 50) * 50 + 25;
-              const finalY = Math.floor(targetY / 50) * 50 + 25;
-              
-              // Check if a block already exists there
-              const existingBlockIndex = state.blocks.findIndex(b => Math.abs(b.x - finalX) < 1 && Math.abs(b.y - finalY) < 1);
-              
-              // Only place if empty and we have blocks, also prevent placing on top of the player
-              const playerDistX = finalX - state.player.x;
-              const playerDistY = finalY - state.player.y;
-              const distToPlayerSq = playerDistX*playerDistX + playerDistY*playerDistY;
-              
-              if (existingBlockIndex === -1 && uiRef.current.blocks > 0 && distToPlayerSq > 60*60) {
-                setUiState(prev => {
-                  uiRef.current = { ...prev, blocks: prev.blocks - 1 };
-                  return uiRef.current;
-                });
-                state.blocks.push({ x: finalX, y: finalY, size: 50, createdAt: performance.now() });
-                state.shockwaves.push({ x: finalX, y: finalY, color: '#00ff88', maxRadius: 60, age: 0, maxAge: 0.2, thickness: 10 });
-                spawnParticles(finalX, finalY, '#00ff88', 15);
-              }
-           }
-        } else if (actionTriggered && !state.player.dash.active) {
+        if (actionTriggered && !state.player.dash.active) {
           const ACTION_RADIUS = 300;
           const dx = actionTargetX - state.player.x;
           const dy = actionTargetY - state.player.y;
@@ -1361,11 +2388,27 @@ export default function GameCanvas() {
 
           if (activeTool === 'special') {
             if (currentTime - state.player.dash.lastTime >= DASH_COOLDOWN) {
-              state.player.dash.active = true;
-              state.player.dash.targetX = finalX;
-              state.player.dash.targetY = finalY;
               state.player.dash.lastTime = currentTime;
-              state.shockwaves.push({ x: state.player.x, y: state.player.y, color: '#b500ff', maxRadius: 150, age: 0, maxAge: 0.4, thickness: 20 });
+              
+              const isHostMode = !mpRef.current.roomId || mpRef.current.isHost;
+              
+              if (isHostMode) {
+                const cIdx = playerProfileRef.current.colorIdx;
+                state.zones.push({
+                   x: finalX,
+                   y: finalY,
+                   innerRadius: 100,
+                   outerRadius: 250,
+                   duration: 3000,
+                   spawnTime: currentTime,
+                   ownerId: 'local',
+                   colorIdx: cIdx
+                });
+                const pDef = PLAYER_COLORS[cIdx] || PLAYER_COLORS[0];
+                state.shockwaves.push({ x: finalX, y: finalY, color: pDef.n, maxRadius: 250, age: 0, maxAge: 0.5, thickness: 15 });
+              } else {
+                socketRef.current?.emit('client_action', mpRef.current.roomId, { type: 'special', x: finalX, y: finalY, colorIdx: playerProfileRef.current.colorIdx });
+              }
             }
           }
         }
@@ -1382,7 +2425,9 @@ export default function GameCanvas() {
             bvy = (shootDirY / shootLen) * BULLET_SPEED;
           }
 
+          // Spawn bullet locally first for immediate visual feedback
           state.bullets.push({
+            id: mpRef.current.roomId && !mpRef.current.isHost ? 'local_' + Math.random() : 'bh_' + state.nextEntityId++,
             x: state.player.x,
             y: state.player.y,
             dx: bvx,
@@ -1392,7 +2437,68 @@ export default function GameCanvas() {
             bounceCount: 0,
             spawnTime: currentTime,
             isNeutral: false,
+            ownerId: socketRef.current?.id || 'local',
+            colorIdx: playerProfileRef.current.colorIdx
           });
+
+          // In multiplayer client mode, also notify the host to create the authoritative bullet
+          if (mpRef.current.roomId && !mpRef.current.isHost) {
+            socketRef.current?.emit('client_action', mpRef.current.roomId, { type: 'shoot', x: state.player.x, y: state.player.y, dx: bvx, dy: bvy, colorIdx: playerProfileRef.current.colorIdx });
+          }
+        }
+
+        // Host ONLY logic (part 2)
+        if (!mpRef.current.roomId || mpRef.current.isHost) {
+
+        // 4.5. Zone Effects
+        for (let z = state.zones.length - 1; z >= 0; z--) {
+          const zone = state.zones[z];
+          if (currentTime - zone.spawnTime > zone.duration) {
+            state.zones.splice(z, 1);
+            continue;
+          }
+          
+          if (zone.ownerId === 'local') {
+             zone.x = state.player.x;
+             zone.y = state.player.y;
+          } else if (state.multiplayerPlayers[zone.ownerId]) {
+             zone.x = state.multiplayerPlayers[zone.ownerId].x;
+             zone.y = state.multiplayerPlayers[zone.ownerId].y;
+          }
+          
+          for (let e = state.enemies.length - 1; e >= 0; e--) {
+            const enemy = state.enemies[e];
+            const dx = enemy.x - zone.x;
+            const dy = enemy.y - zone.y;
+            const distSq = dx*dx + dy*dy;
+            
+            if (distSq < zone.innerRadius * zone.innerRadius) {
+              spawnParticles(enemy.x, enemy.y, '#ff3333', 30);
+              state.enemies.splice(e, 1);
+            } else if (distSq < zone.outerRadius * zone.outerRadius) {
+               const dist = Math.sqrt(distSq);
+               const pushSpeed = 600 * dt;
+               enemy.x += (dx / dist) * pushSpeed;
+               enemy.y += (dy / dist) * pushSpeed;
+            }
+          }
+
+          for (let b = state.bouncers.length - 1; b >= 0; b--) {
+            const bouncer = state.bouncers[b];
+            const dx = bouncer.x - zone.x;
+            const dy = bouncer.y - zone.y;
+            const distSq = dx*dx + dy*dy;
+            
+            if (distSq < zone.innerRadius * zone.innerRadius) {
+               spawnParticles(bouncer.x, bouncer.y, '#ff3333', 30);
+               state.bouncers.splice(b, 1);
+            } else if (distSq < zone.outerRadius * zone.outerRadius) {
+               const dist = Math.sqrt(distSq);
+               const pushSpeed = 600 * dt;
+               bouncer.x += (dx / dist) * pushSpeed;
+               bouncer.y += (dy / dist) * pushSpeed;
+            }
+          }
         }
 
         // 5. Update Bullets & Collisions
@@ -1413,10 +2519,16 @@ export default function GameCanvas() {
           bullet.y += bullet.dy * speedMultiplier * dt;
 
           if (Math.random() > 0.3) {
-            const color = bullet.isNeutral ? '#aaaaaa' : (bullet.isPlayer ? '#00ccff' : '#ff0066');
+            let trailColor = '#ff0066';
+            if (bullet.isNeutral) {
+              trailColor = '#aaaaaa';
+            } else if (bullet.isPlayer) {
+              const pDef = PLAYER_COLORS[bullet.colorIdx !== undefined ? bullet.colorIdx : 0] || PLAYER_COLORS[0];
+              trailColor = pDef.n;
+            }
             state.trails.push({
               x: bullet.x, y: bullet.y, age: 0,
-              color: color,
+              color: trailColor,
               radius: bullet.radius * 0.6
             });
           }
@@ -1460,6 +2572,35 @@ export default function GameCanvas() {
 
           let bulletDestroyed = false;
 
+          // Zone Collisions
+          for (const zone of state.zones) {
+             const zdx = bullet.x - zone.x;
+             const zdy = bullet.y - zone.y;
+             const zDistSq = zdx*zdx + zdy*zdy;
+             const collDist = zone.innerRadius + bullet.radius;
+             if (zDistSq < collDist * collDist) {
+                const zDist = Math.sqrt(zDistSq);
+                const dot = bullet.dx * zdx + bullet.dy * zdy;
+                if (zDist > zone.innerRadius * 0.8 && dot < 0) {
+                   const nx = zdx / zDist;
+                   const ny = zdy / zDist;
+                   const d = bullet.dx * nx + bullet.dy * ny;
+                   bullet.dx -= 2 * d * nx;
+                   bullet.dy -= 2 * d * ny;
+                   bullet.bounceCount++;
+                   bullet.x += nx * (collDist - zDist + 1);
+                   spawnParticles(bullet.x, bullet.y, '#b500ff', 5);
+                } else if (zDist <= zone.innerRadius) {
+                   bulletDestroyed = true;
+                   spawnParticles(bullet.x, bullet.y, '#b500ff', 10);
+                }
+             }
+          }
+          if (bulletDestroyed) {
+             state.bullets.splice(i, 1);
+             continue;
+          }
+
           // Block Collisions
           if (!bulletDestroyed) {
              for (let b = state.blocks.length - 1; b >= 0; b--) {
@@ -1471,31 +2612,20 @@ export default function GameCanvas() {
                const bdy = bullet.y - closestY;
                
                if (bdx * bdx + bdy * bdy < bullet.radius * bullet.radius) {
-                 if (bullet.isPlayer && !bullet.isNeutral) {
-                     // Destroy block by player
-                     spawnParticles(block.x, block.y, '#00ff88', 20);
-                     state.blocks.splice(b, 1);
-                     bulletDestroyed = true;
-                     setUiState(prev => {
-                        uiRef.current = { ...prev, blocks: prev.blocks + 1 };
-                        return uiRef.current;
-                     });
-                     break;
+                 // Block is unbreakable, bounce bullets
+                 bullet.bounceCount++;
+                 bullet.isNeutral = true;
+                 spawnParticles(closestX, closestY, '#ffffff', 5);
+                 
+                 const currentDist = Math.sqrt(bdx * bdx + bdy * bdy);
+                 const pushDist = (bullet.radius - currentDist) + 1;
+                 
+                 if (Math.abs(bullet.x - block.x) >= Math.abs(bullet.y - block.y)) {
+                   bullet.dx *= -1;
+                   bullet.x += bdx === 0 ? (bullet.dx > 0 ? pushDist : -pushDist) : (bdx / Math.abs(bdx)) * pushDist;
                  } else {
-                     bullet.bounceCount++;
-                     bullet.isNeutral = true;
-                     spawnParticles(closestX, closestY, '#ffffff', 5);
-                     
-                     const currentDist = Math.sqrt(bdx * bdx + bdy * bdy);
-                     const pushDist = (bullet.radius - currentDist) + 1;
-                     
-                     if (Math.abs(bullet.x - block.x) >= Math.abs(bullet.y - block.y)) {
-                       bullet.dx *= -1;
-                       bullet.x += bdx === 0 ? (bullet.dx > 0 ? pushDist : -pushDist) : (bdx / Math.abs(bdx)) * pushDist;
-                     } else {
-                       bullet.dy *= -1;
-                       bullet.y += bdy === 0 ? (bullet.dy > 0 ? pushDist : -pushDist) : (bdy / Math.abs(bdy)) * pushDist;
-                     }
+                   bullet.dy *= -1;
+                   bullet.y += bdy === 0 ? (bullet.dy > 0 ? pushDist : -pushDist) : (bdy / Math.abs(bdy)) * pushDist;
                  }
                }
              }
@@ -1508,7 +2638,7 @@ export default function GameCanvas() {
               const dx = bouncer.x - bullet.x;
               const dy = bouncer.y - bullet.y;
               if (dx * dx + dy * dy < (bouncer.radius + bullet.radius) ** 2) {
-                spawnParticles(bouncer.x, bouncer.y, '#00ff88', 20);
+                spawnParticles(bouncer.x, bouncer.y, '#ff3333', 20);
                 bulletDestroyed = true;
                 state.bouncers.splice(b, 1);
                 
@@ -1528,28 +2658,36 @@ export default function GameCanvas() {
                 if (nextSize > 0) {
                   const baseAngle = Math.atan2(bouncer.dy, bouncer.dx);
                   state.bouncers.push({
+                    id: 'b_' + state.nextEntityId++,
                     x: bouncer.x, y: bouncer.y, 
                     dx: Math.cos(baseAngle + 0.5), dy: Math.sin(baseAngle + 0.5),
                     size: nextSize, radius: nextRadius, speed: nextSpeed,
                     lastDirChange: currentTime, lastMultiply: currentTime
                   });
                   state.bouncers.push({
+                    id: 'b_' + state.nextEntityId++,
                     x: bouncer.x, y: bouncer.y, 
                     dx: Math.cos(baseAngle - 0.5), dy: Math.sin(baseAngle - 0.5),
                     size: nextSize, radius: nextRadius, speed: nextSpeed,
                     lastDirChange: currentTime, lastMultiply: currentTime
                   });
                 } else {
-                  state.shockwaves.push({ x: bouncer.x, y: bouncer.y, color: '#00ff88', maxRadius: 100, age: 0, maxAge: 0.3, thickness: 10 });
+                  state.shockwaves.push({ x: bouncer.x, y: bouncer.y, color: '#ff3333', maxRadius: 100, age: 0, maxAge: 0.3, thickness: 10 });
                   let pts = 0;
                   if (bullet.isPlayer && !bullet.isNeutral) pts = 250;
                   
                   if (pts > 0) {
-                    setUiState(prev => {
-                       const newScore = prev.score + pts;
-                       uiRef.current = { ...prev, score: newScore };
-                       return uiRef.current;
-                    });
+                    const bOwner = bullet.ownerId || 'local';
+                    const hostId = socketRef.current?.id || 'local';
+                    if (bOwner === hostId || bOwner === 'local') {
+                      setUiState(prev => {
+                         const newScore = prev.score + pts;
+                         uiRef.current = { ...prev, score: newScore };
+                         return uiRef.current;
+                      });
+                    } else if (state.multiplayerPlayers[bOwner]) {
+                      state.multiplayerPlayers[bOwner].score = (state.multiplayerPlayers[bOwner].score || 0) + pts;
+                    }
                   }
                 }
                 break;
@@ -1557,8 +2695,17 @@ export default function GameCanvas() {
             }
           }
 
-          // Check hit Enemies
-          if (!bulletDestroyed && (bullet.isPlayer || bullet.isNeutral)) { // Player bullets or neutral neutral bullets can hit enemies
+          // Compute bullet color for dynamic friendly-fire / PvP logic
+          let bulletColor = '#ff0066'; // Default red for NPC bouncers/bullets
+          if (bullet.isNeutral) {
+            bulletColor = '#aaaaaa';
+          } else if (bullet.isPlayer) {
+            const pDef = PLAYER_COLORS[bullet.colorIdx !== undefined ? bullet.colorIdx : 0] || PLAYER_COLORS[0];
+            bulletColor = pDef.n;
+          }
+
+          // Check hit Enemies (NPCs - Red)
+          if (!bulletDestroyed && bulletColor !== '#ff0066') {
             for (let e = state.enemies.length - 1; e >= 0; e--) {
               const enemy = state.enemies[e];
               const dx = enemy.x - bullet.x;
@@ -1576,36 +2723,42 @@ export default function GameCanvas() {
                 }
                 
                 if (pts > 0) {
-                  setUiState(prev => {
-                    const newScore = prev.score + pts;
-                    let newBlocks = prev.blocks;
-                    let gainedBlocks = false;
-                    while (newScore >= state.nextBlockScore) {
-                      newBlocks++;
-                      state.nextBlockScore += 100;
-                      gainedBlocks = true;
-                    }
-                    if (gainedBlocks) {
-                      const buildBtn = document.getElementById('tool-btn-build');
-                      if (buildBtn) {
-                        buildBtn.animate([
-                          { transform: 'scale(1)', boxShadow: '0 0 0px #ffcc00' },
-                          { transform: 'scale(1.1)', boxShadow: '0 0 30px #ffcc00' },
-                          { transform: 'scale(1)', boxShadow: '0 0 0px #ffcc00' }
-                        ], { duration: 400, easing: 'ease-out' });
+                  const bOwner = bullet.ownerId || 'local';
+                  const hostId = socketRef.current?.id || 'local';
+                  if (bOwner === hostId || bOwner === 'local') {
+                    setUiState(prev => {
+                      const newScore = prev.score + pts;
+                      let newBlocks = prev.blocks;
+                      let gainedBlocks = false;
+                      while (newScore >= state.nextBlockScore) {
+                        newBlocks++;
+                        state.nextBlockScore += 100;
+                        gainedBlocks = true;
                       }
-                    }
-                    uiRef.current = { ...prev, score: newScore, blocks: newBlocks };
-                    return uiRef.current;
-                  });
+                      if (gainedBlocks) {
+                        const buildBtn = document.getElementById('tool-btn-build');
+                        if (buildBtn) {
+                          buildBtn.animate([
+                            { transform: 'scale(1)', boxShadow: '0 0 0px #ffcc00' },
+                            { transform: 'scale(1.1)', boxShadow: '0 0 30px #ffcc00' },
+                            { transform: 'scale(1)', boxShadow: '0 0 0px #ffcc00' }
+                          ], { duration: 400, easing: 'ease-out' });
+                        }
+                      }
+                      uiRef.current = { ...prev, score: newScore, blocks: newBlocks };
+                      return uiRef.current;
+                    });
+                  } else if (state.multiplayerPlayers[bOwner]) {
+                    state.multiplayerPlayers[bOwner].score = (state.multiplayerPlayers[bOwner].score || 0) + pts;
+                  }
                 }
                 break;
               }
             }
           }
 
-          // Check hit Spawners
-          if (!bulletDestroyed && bullet.isPlayer && !bullet.isNeutral) { // Only blue bullets hurt spawners
+          // Check hit Spawners (Stationary targets - hit by any player bullet)
+          if (!bulletDestroyed && bullet.isPlayer && !bullet.isNeutral) {
             for (let s = state.spawners.length - 1; s >= 0; s--) {
               const spawner = state.spawners[s];
               const dx = spawner.x - bullet.x;
@@ -1624,36 +2777,74 @@ export default function GameCanvas() {
                   let pts = 0;
                   if (bullet.isPlayer && !bullet.isNeutral) pts = 1000;
                   
-                  setUiState(prev => {
-                    const newScore = prev.score + pts;
-                    let newBlocks = prev.blocks + 3; // Bonus blocks
-                    uiRef.current = { ...prev, score: newScore, blocks: newBlocks, spawnersLeft: state.spawners.length };
-                    // Check win condition
+                  const bOwner = bullet.ownerId || 'local';
+                  const hostId = socketRef.current?.id || 'local';
+                  if (bOwner === hostId || bOwner === 'local') {
+                    setUiState(prev => {
+                      const newScore = prev.score + pts;
+                      let newBlocks = prev.blocks + 3; // Bonus blocks
+                      uiRef.current = { ...prev, score: newScore, blocks: newBlocks, spawnersLeft: state.spawners.length };
+                      // Check win condition
+                      if (state.spawners.length === 0) {
+                         uiRef.current.status = 'VICTORY';
+                      }
+                      return uiRef.current;
+                    });
+                  } else if (state.multiplayerPlayers[bOwner]) {
+                    state.multiplayerPlayers[bOwner].score = (state.multiplayerPlayers[bOwner].score || 0) + pts;
                     if (state.spawners.length === 0) {
-                       uiRef.current.status = 'VICTORY';
+                      uiRef.current.status = 'VICTORY';
+                      setUiState(prev => ({ ...prev, status: 'VICTORY', spawnersLeft: 0 }));
                     }
-                    return uiRef.current;
-                  });
+                  }
                 }
                 break;
               }
             }
           }
 
-          // Check hit Player
-          if (!bulletDestroyed && (!bullet.isPlayer || bullet.isNeutral)) { // Red bullets or neutral bullets can hit player
-            const dx = state.player.x - bullet.x;
-            const dy = state.player.y - bullet.y;
-            const isProtected = state.player.dash.active;
-            if (!isProtected && dx * dx + dy * dy < (state.player.radius + bullet.radius * 0.5) ** 2) {
-              // Game Over!
-              spawnParticles(state.player.x, state.player.y, '#00ccff', 50);
-              state.shake = 20;
-              setUiState(prev => {
-                uiRef.current = { ...prev, status: 'GAME_OVER' };
-                return uiRef.current;
-              });
-              bulletDestroyed = true;
+          // Check hit Player (host local player avatar)
+          if (!bulletDestroyed) {
+            const hostColorIdx = playerProfileRef.current.colorIdx;
+            const hostColor = PLAYER_COLORS[hostColorIdx]?.n || '#00f0ff';
+
+            if (bulletColor !== hostColor) {
+              const dx = state.player.x - bullet.x;
+              const dy = state.player.y - bullet.y;
+              const isProtected = state.player.dash.active;
+              if (!isProtected && dx * dx + dy * dy < (state.player.radius + bullet.radius * 0.5) ** 2) {
+                // Game Over!
+                spawnParticles(state.player.x, state.player.y, hostColor, 50);
+                state.shake = 20;
+                setUiState(prev => {
+                  uiRef.current = { ...prev, status: 'GAME_OVER' };
+                  return uiRef.current;
+                });
+                bulletDestroyed = true;
+              }
+            }
+          }
+
+          // Check hit Remote Players (multiplayer players tracked by host)
+          if (!bulletDestroyed) {
+            for (const pid in state.multiplayerPlayers) {
+              const mpPlayer = state.multiplayerPlayers[pid];
+              if (mpPlayer && !mpPlayer.isDead) {
+                const mpColorIdx = mpPlayer.colorIdx;
+                const mpColor = PLAYER_COLORS[mpColorIdx]?.n || '#00f0ff';
+
+                if (bulletColor !== mpColor) {
+                  const dx = mpPlayer.x - bullet.x;
+                  const dy = mpPlayer.y - bullet.y;
+                  const isProtected = mpPlayer.isDash;
+                  if (!isProtected && dx * dx + dy * dy < (mpPlayer.radius + bullet.radius * 0.5) ** 2) {
+                    // Explode bullet on hit, remote player triggers death locally based on color sync
+                    spawnParticles(mpPlayer.x, mpPlayer.y, mpColor, 50);
+                    bulletDestroyed = true;
+                    break;
+                  }
+                }
+              }
             }
           }
 
@@ -1662,7 +2853,10 @@ export default function GameCanvas() {
           }
         }
 
-        // Update Particles
+        } // End of Host ONLY logic
+      } // End of shouldRunUpdates (particles, trails, shockwaves, floating text always update)
+
+      // Update Particles
         for (let i = state.particles.length - 1; i >= 0; i--) {
           const p = state.particles[i];
           p.life += dt;
@@ -1693,6 +2887,43 @@ export default function GameCanvas() {
             state.shockwaves.splice(i, 1);
           }
         }
+
+        // Update Floating Texts
+        if (state.floatingTexts) {
+          for (let i = state.floatingTexts.length - 1; i >= 0; i--) {
+            const ft = state.floatingTexts[i];
+            ft.age += dt;
+            ft.y += ft.vy * dt;
+            if (ft.age >= ft.maxAge) {
+              state.floatingTexts.splice(i, 1);
+            }
+          }
+        }
+
+      // Host broadcasts state
+      if (mpRef.current.isConnected && mpRef.current.roomId && mpRef.current.isHost && (STATUS === 'PLAYING' || STATUS === 'GAME_OVER')) {
+          if (currentTime - state.lastBroadcastTime > 50) {
+              state.lastBroadcastTime = currentTime;
+              socketRef.current?.emit('host_game_state', mpRef.current.roomId, {
+                hostId: socketRef.current?.id,
+                hostPlayer: { ...state.player, isDead: STATUS === 'GAME_OVER', name: playerProfileRef.current.name, colorIdx: playerProfileRef.current.colorIdx, score: uiRef.current.score },
+                multiplayerPlayers: state.multiplayerPlayers,
+                blocks: state.blocks,
+                bullets: state.bullets,
+                enemies: state.enemies,
+                spawners: state.spawners,
+                bouncers: state.bouncers,
+                zones: state.zones,
+                particles: [],
+                trails: [],
+                shockwaves: [],
+                score: uiRef.current.score,
+                spawnersLeft: uiRef.current.spawnersLeft,
+                blocksLeft: uiRef.current.blocks,
+                cameraZ: state.camera.z,
+                hostTime: currentTime
+              });
+          }
       }
 
       // --- RENDERING --- (Always render, even if GAME_OVER)
@@ -1845,12 +3076,12 @@ export default function GameCanvas() {
         ctx.save();
         ctx.translate(b.x, b.y);
 
-        ctx.fillStyle = 'rgba(0, 255, 136, 0.2)';
+        ctx.fillStyle = 'rgba(255, 50, 50, 0.2)';
         ctx.beginPath();
         ctx.arc(0, 0, b.radius * 1.5, 0, Math.PI * 2);
         ctx.fill();
 
-        ctx.fillStyle = '#00ff88';
+        ctx.fillStyle = '#ff3333';
         ctx.beginPath();
         const rot = currentTime / 500;
         for (let i = 0; i < 4; i++) {
@@ -1931,6 +3162,66 @@ export default function GameCanvas() {
       }
       ctx.globalAlpha = 1.0;
 
+      // Draw Zones
+      for (const zone of state.zones) {
+        if (
+          zone.x + zone.outerRadius < state.camera.x ||
+          zone.x - zone.outerRadius > state.camera.x + state.camera.width ||
+          zone.y + zone.outerRadius < state.camera.y ||
+          zone.y - zone.outerRadius > state.camera.y + state.camera.height
+        ) continue;
+
+        const pDef = PLAYER_COLORS[zone.colorIdx !== undefined ? zone.colorIdx : 0] || PLAYER_COLORS[0];
+        const age = performance.now() - zone.spawnTime;
+        const progress = Math.min(1, age / 300);
+        const pulse = 1 + Math.sin(age * 0.005) * 0.05;
+        const innerCurrent = zone.innerRadius * Math.sin(progress * Math.PI / 2) * pulse;
+        const outerCurrent = zone.outerRadius * Math.sin(progress * Math.PI / 2) * pulse;
+
+        // Alpha fades out near the end of duration
+        const remaining = zone.duration - age;
+        const alpha = remaining < 500 ? Math.max(0, remaining / 500) : 1;
+
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        
+        ctx.translate(zone.x, zone.y);
+        ctx.rotate(age * 0.001);
+        
+        // Outer circle
+        ctx.beginPath();
+        ctx.arc(0, 0, outerCurrent, 0, Math.PI * 2);
+        ctx.fillStyle = pDef.g || 'rgba(181, 0, 255, 0.05)';
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = pDef.g || 'rgba(181, 0, 255, 0.4)';
+        ctx.setLineDash([15, 15]);
+        ctx.stroke();
+
+        ctx.rotate(-age * 0.002);
+
+        // Inner circle
+        ctx.beginPath();
+        ctx.arc(0, 0, innerCurrent, 0, Math.PI * 2);
+        ctx.fillStyle = pDef.g || 'rgba(181, 0, 255, 0.15)';
+        ctx.fill();
+        ctx.lineWidth = 4;
+        ctx.strokeStyle = pDef.n;
+        ctx.setLineDash([20, 10]);
+        ctx.stroke();
+
+        // Core glow
+        ctx.beginPath();
+        ctx.arc(0, 0, innerCurrent * 0.5, 0, Math.PI * 2);
+        const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, innerCurrent * 0.5);
+        grad.addColorStop(0, pDef.g || 'rgba(181, 0, 255, 0.5)');
+        grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+        ctx.fillStyle = grad;
+        ctx.fill();
+
+        ctx.restore();
+      }
+
       // Draw Blocks
       for (const block of state.blocks) {
         if (
@@ -1957,11 +3248,15 @@ export default function GameCanvas() {
           ctx.rotate((1 - scale) * Math.PI); // Spin animation
         }
 
-        ctx.fillStyle = 'rgba(255, 204, 0, 0.2)';
-        ctx.shadowColor = '#ffcc00';
+        const pDef = PLAYER_COLORS[block.colorIdx !== undefined ? block.colorIdx : 0] || PLAYER_COLORS[0];
+        const blockColor = pDef.n;
+        const blockGlow = pDef.g || 'rgba(255, 204, 0, 0.2)';
+
+        ctx.fillStyle = blockGlow;
+        ctx.shadowColor = blockColor;
         ctx.shadowBlur = 10;
         ctx.fillRect(-currentSize / 2, -currentSize / 2, currentSize, currentSize);
-        ctx.strokeStyle = '#ffcc00';
+        ctx.strokeStyle = blockColor;
         ctx.lineWidth = 2;
         ctx.strokeRect(-currentSize / 2, -currentSize / 2, currentSize, currentSize);
         ctx.restore();
@@ -1976,8 +3271,17 @@ export default function GameCanvas() {
           bullet.y - bullet.radius > state.camera.y + state.camera.height
         ) continue;
 
-        const color = bullet.isNeutral ? '#aaaaaa' : (bullet.isPlayer ? '#00ccff' : '#ff0066');
-        const glow = bullet.isNeutral ? 'rgba(170, 170, 170, 0.3)' : (bullet.isPlayer ? 'rgba(0, 204, 255, 0.3)' : 'rgba(255, 0, 100, 0.3)');
+        let color = '#ff0066';
+        let glow = 'rgba(255, 0, 100, 0.3)';
+
+        if (bullet.isNeutral) {
+          color = '#aaaaaa';
+          glow = 'rgba(170, 170, 170, 0.3)';
+        } else if (bullet.isPlayer) {
+          const pDef = PLAYER_COLORS[bullet.colorIdx !== undefined ? bullet.colorIdx : 0] || PLAYER_COLORS[0];
+          color = pDef.n;
+          glow = pDef.g || 'rgba(0, 204, 255, 0.3)';
+        }
 
         ctx.fillStyle = glow;
         ctx.beginPath();
@@ -2029,17 +3333,52 @@ export default function GameCanvas() {
       }
       ctx.globalAlpha = 1.0;
 
+      // Draw Multiplayer Players
+      for (const tId in state.multiplayerPlayers) {
+         const pData = state.multiplayerPlayers[tId];
+         if (pData.isDead) continue;
+         const pDef = PLAYER_COLORS[pData.colorIdx] || PLAYER_COLORS[0];
+         const pColor = pDef.n;
+         const pGlow = pDef.g;
+         const pName = pData.name || 'PLAYER';
+         
+         ctx.fillStyle = pData.isDash ? 'rgba(181, 0, 255, 0.4)' : pGlow;
+         ctx.beginPath();
+         ctx.arc(pData.x, pData.y, pData.radius * 2, 0, Math.PI * 2);
+         ctx.fill();
+
+         ctx.fillStyle = pColor;
+         ctx.beginPath();
+         ctx.arc(pData.x, pData.y, pData.radius, 0, Math.PI * 2);
+         ctx.fill();
+         
+         ctx.strokeStyle = '#000';
+         ctx.lineWidth = 2;
+         ctx.stroke();
+
+         ctx.fillStyle = '#ffffff';
+         ctx.font = '10px "Space Grotesk", sans-serif';
+         ctx.textAlign = 'center';
+         ctx.fillText(pName, pData.x, pData.y - pData.radius - 8);
+      }
+
       // Draw Player
       if (uiRef.current.status !== 'GAME_OVER') {
+        const localId = socketRef.current?.id || 'local';
+        const pDef = PLAYER_COLORS[playerProfileRef.current.colorIdx] || PLAYER_COLORS[0];
+        const pColor = pDef.n;
+        const pGlow = pDef.g;
+        const pName = playerProfileRef.current.name || 'PLAYER';
+
         const worldMouseX = state.mouse.x + state.camera.x;
         const worldMouseY = state.mouse.y + state.camera.y;
         
-        ctx.strokeStyle = 'rgba(0, 255, 150, 0.3)';
+        ctx.strokeStyle = pGlow;
         ctx.lineWidth = 2;
         
         let aimX = worldMouseX;
         let aimY = worldMouseY;
-        let shouldDrawAimLine = uiRef.current.activeTool === 'weapon';
+        let shouldDrawAimLine = true;
         
         if (uiRef.current.deviceType === 'mobile') {
           if (state.touches.right.aimLength > 0.01 && (state.touches.right.dirX !== 0 || state.touches.right.dirY !== 0)) {
@@ -2074,13 +3413,13 @@ export default function GameCanvas() {
           ctx.lineWidth = 2;
           ctx.stroke();
         } else {
-          ctx.fillStyle = 'rgba(0, 255, 150, 0.2)';
+          ctx.fillStyle = pGlow;
           ctx.beginPath();
           ctx.arc(state.player.x, state.player.y, state.player.radius * 2, 0, Math.PI * 2);
           ctx.fill();
         }
 
-        ctx.fillStyle = '#00ff96';
+        ctx.fillStyle = pColor;
         ctx.beginPath();
         ctx.arc(state.player.x, state.player.y, state.player.radius, 0, Math.PI * 2);
         ctx.fill();
@@ -2088,15 +3427,174 @@ export default function GameCanvas() {
         ctx.strokeStyle = '#000';
         ctx.lineWidth = 2;
         ctx.stroke();
+
+        if (mpRef.current.roomId) {
+          ctx.fillStyle = '#ffffff';
+          ctx.font = '10px "Space Grotesk", sans-serif';
+          ctx.textAlign = 'center';
+          ctx.fillText(pName, state.player.x, state.player.y - state.player.radius - 8);
+        }
       } else {
-        // Draw dead player
-        ctx.fillStyle = '#555';
-        ctx.beginPath();
-        ctx.arc(state.player.x, state.player.y, state.player.radius, 0, Math.PI * 2);
-        ctx.fill();
+        // Local player is eliminated and invisible (burst into particles)
+      }
+
+      // Draw Floating Texts/Callsigns in World space
+      if (state.floatingTexts && state.floatingTexts.length > 0) {
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        for (const ft of state.floatingTexts) {
+          if (
+            ft.x + 200 < state.camera.x || ft.x - 200 > state.camera.x + state.camera.width ||
+            ft.y + 100 < state.camera.y || ft.y - 100 > state.camera.y + state.camera.height
+          ) continue;
+
+          const progress = ft.age / ft.maxAge;
+          const alpha = progress < 0.15 
+            ? progress / 0.15 
+            : Math.max(0, 1 - (progress - 0.15) / 0.85); // Elegant quick fade-in, slow fade-out
+
+          ctx.save();
+          ctx.globalAlpha = alpha;
+
+          // Compute sizing
+          ctx.font = '900 11px "Space Grotesk", sans-serif';
+          const cleanText = ft.text.toUpperCase();
+          const textWidth = ctx.measureText(cleanText).width;
+          const padX = 14;
+          const padY = 6;
+          const panelW = textWidth + padX * 2;
+          const panelH = 14 + padY * 2;
+
+          // Rounded holographic terminal capsule block
+          ctx.shadowBlur = 0;
+          ctx.fillStyle = 'rgba(10, 0, 0, 0.85)';
+          ctx.strokeStyle = ft.color;
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.roundRect(ft.x - panelW / 2, ft.y - panelH / 2, panelW, panelH, 6);
+          ctx.fill();
+          ctx.stroke();
+
+          // High-contrast outer neon glow
+          ctx.shadowColor = ft.color;
+          ctx.shadowBlur = 10;
+
+          // Glowing text
+          ctx.fillStyle = '#ffffff';
+          ctx.fillText(cleanText, ft.x, ft.y);
+
+          ctx.restore();
+        }
+        ctx.globalAlpha = 1.0;
       }
 
       ctx.restore(); // Reset transform to draw fixed UI
+
+      // Draw off-screen indicators for other players in multiplayer
+      if (uiRef.current.status === 'PLAYING' && mpRef.current.roomId) {
+        const localId = socketRef.current?.id || 'local';
+        const isMobile = uiRef.current.deviceType === 'mobile';
+        
+        // Invisible screen-area box: adjusted to be larger while avoiding overlapping UI elements
+        const boxMarginLeft = isMobile ? 45 : 35;
+        const boxMarginRight = isMobile ? 45 : 35;
+        const boxMarginTop = 85; 
+        const boxMarginBottom = isMobile ? 135 : 45; 
+
+        const boxX1 = boxMarginLeft;
+        const boxY1 = boxMarginTop;
+        const boxX2 = canvas.width - boxMarginRight;
+        const boxY2 = canvas.height - boxMarginBottom;
+
+        // Anchor point is the absolute center of the viewport/player screen
+        const anchorX = canvas.width / 2;
+        const anchorY = canvas.height / 2;
+
+        for (const tId in state.multiplayerPlayers) {
+          if (tId === localId) continue;
+          const pData = state.multiplayerPlayers[tId];
+          if (!pData || pData.isDead) continue;
+
+          const screenOtherX = pData.x - state.camera.x;
+          const screenOtherY = pData.y - state.camera.y;
+
+          // Check if player is off-screen (with a small margin to transition smoothly)
+          const margin = 20;
+          const isOffScreen = 
+            screenOtherX < -margin || 
+            screenOtherX > canvas.width + margin || 
+            screenOtherY < -margin || 
+            screenOtherY > canvas.height + margin;
+
+          if (isOffScreen) {
+            const dx = screenOtherX - anchorX;
+            const dy = screenOtherY - anchorY;
+            const angle = Math.atan2(dy, dx);
+
+            let ix = screenOtherX;
+            let iy = screenOtherY;
+
+            if (dx !== 0 || dy !== 0) {
+              let tMin = Infinity;
+
+              // Left boundary
+              if (dx < 0) {
+                const t = (boxX1 - anchorX) / dx;
+                if (t >= 0 && t < tMin) tMin = t;
+              }
+              // Right boundary
+              if (dx > 0) {
+                const t = (boxX2 - anchorX) / dx;
+                if (t >= 0 && t < tMin) tMin = t;
+              }
+              // Top boundary
+              if (dy < 0) {
+                const t = (boxY1 - anchorY) / dy;
+                if (t >= 0 && t < tMin) tMin = t;
+              }
+              // Bottom boundary
+              if (dy > 0) {
+                const t = (boxY2 - anchorY) / dy;
+                if (t >= 0 && t < tMin) tMin = t;
+              }
+
+              if (tMin !== Infinity) {
+                ix = anchorX + dx * tMin;
+                iy = anchorY + dy * tMin;
+              }
+            }
+
+            const pDef = PLAYER_COLORS[pData.colorIdx] || PLAYER_COLORS[0];
+            const pColor = pDef.n;
+            const pGlow = pDef.g;
+
+            // Draw polished offscreen pointing triangle
+            ctx.save();
+            ctx.translate(ix, iy);
+            ctx.rotate(angle);
+
+            // Sci-fi neon glow
+            ctx.shadowColor = pGlow;
+            ctx.shadowBlur = 8;
+            ctx.fillStyle = pColor;
+
+            const size = 12;
+            ctx.beginPath();
+            ctx.moveTo(size, 0); // pointing towards player
+            ctx.lineTo(-size / 2, -size / 1.5);
+            ctx.lineTo(-size / 2, size / 1.5);
+            ctx.closePath();
+            ctx.fill();
+
+            // Outline so it pops clearly
+            ctx.strokeStyle = '#020205';
+            ctx.lineWidth = 2;
+            ctx.shadowBlur = 0;
+            ctx.stroke();
+            ctx.restore();
+          }
+        }
+      }
 
       // Draw UI over canvas (Joysticks)
       if (uiRef.current.status === 'PLAYING' && uiRef.current.deviceType === 'mobile') {
@@ -2134,9 +3632,17 @@ export default function GameCanvas() {
         };
 
         drawJoystick(leftJoyX, leftJoyY, state.touches.left, '#00ccff');
-        if (uiRef.current.activeTool === 'weapon') {
-           drawJoystick(rightJoyX, rightJoyY, state.touches.right, '#ff0066');
-        }
+        drawJoystick(rightJoyX, rightJoyY, state.touches.right, '#ff0066');
+      }
+
+      // Update cooldown UI
+      const specialCooldown = Math.max(0, Math.ceil((DASH_COOLDOWN - (performance.now() - state.player.dash.lastTime)) / 1000));
+      const buildCooldown = Math.max(0, Math.ceil((BUILD_COOLDOWN - (performance.now() - state.player.build.lastTime)) / 1000));
+      if (uiRef.current.buttonCounters.special !== specialCooldown || uiRef.current.buttonCounters.build !== buildCooldown) {
+         setUiState(prev => {
+           uiRef.current = { ...prev, buttonCounters: { special: specialCooldown, build: buildCooldown } };
+           return uiRef.current;
+         });
       }
 
       animationFrameId = requestAnimationFrame(gameLoop);
@@ -2150,6 +3656,7 @@ export default function GameCanvas() {
       window.removeEventListener('keyup', handleKeyUp);
       
       if (canvas) {
+        canvas.removeEventListener('contextmenu', handleContextMenu);
         canvas.removeEventListener('mousemove', handleMouseMove);
         canvas.removeEventListener('mousedown', handleMouseDown);
         canvas.removeEventListener('mouseup', handleMouseUp);
@@ -2162,12 +3669,15 @@ export default function GameCanvas() {
     };
   }, []);
 
+  const menuScale = Math.max(0.45, Math.min(1.4, Math.min(containerSize.width / 460, containerSize.height / 710)));
+  const mapScale = Math.max(0.45, Math.min(1.15, Math.min(containerSize.width / 950, containerSize.height / 710)));
+
   return (
     <div ref={wrapperRef} className="w-full h-full relative overflow-hidden bg-[#050508] font-mono select-none">
-      <div className="absolute inset-0 pointer-events-none z-50 opacity-[0.1]" style={{
+      <div className="absolute inset-0 pointer-events-none z-[60] opacity-[0.1]" style={{
         backgroundImage: `repeating-linear-gradient(0deg, transparent, transparent 2px, #fff 2px, #fff 4px)`
       }} />
-      <div className="absolute inset-0 pointer-events-none z-50 shadow-[inset_0_0_150px_rgba(0,0,0,0.9)]" />
+      <div className="absolute inset-0 pointer-events-none z-[60] shadow-[inset_0_0_150px_rgba(0,0,0,0.9)]" />
       
       <canvas ref={canvasRef} className="w-full h-full block cursor-crosshair touch-none mix-blend-screen" />
       
@@ -2228,15 +3738,28 @@ export default function GameCanvas() {
                   </div>
 
                   <button 
-                    onTouchStart={() => { isMobileRef.current = true; }}
                     onClick={() => {
                       resetGame(isMobileRef.current ? 'mobile' : 'desktop');
-                      isMobileRef.current = false;
                     }}
                     className="w-full py-3 sm:py-4 bg-[#00f0ff] hover:bg-white text-black border-2 border-[#00f0ff] font-black tracking-[0.2em] transition-all duration-200 uppercase text-base sm:text-lg active:translate-x-1 active:translate-y-1 active:shadow-none hover:shadow-[5px_5px_0_#fff] shrink-0"
                   >
                     ENTER ARENA
                   </button>
+
+                  <div className="flex gap-2 mt-3 items-stretch shrink-0">
+                    <button 
+                      onClick={() => setUiState(prev => ({ ...prev, status: 'LOBBY' }))}
+                      className="flex-1 py-2.5 sm:py-3 bg-[#0d0f1b] text-[#ffcc00] border-2 border-[#ffcc00]/60 hover:bg-[#ffcc00]/10 hover:border-[#ffcc00] font-black tracking-[0.15em] transition-all duration-200 uppercase text-[10px] sm:text-xs flex items-center justify-center shadow-[3px_3px_0_rgba(255,204,0,0.3)] hover:shadow-[3px_3px_0_rgba(255,204,0,0.6)] active:translate-x-[3px] active:translate-y-[3px] active:shadow-none"
+                    >
+                      MULTIPLAYER
+                    </button>
+                    <button 
+                      onClick={() => fileInputRef.current?.click()}
+                      className="flex-1 py-2.5 sm:py-3 bg-[#0d0f1b] text-[#b500ff] border-2 border-[#b500ff]/60 hover:bg-[#b500ff]/10 hover:border-[#b500ff] font-black tracking-[0.15em] transition-all duration-200 uppercase text-[10px] sm:text-xs flex items-center justify-center shadow-[3px_3px_0_rgba(181,0,255,0.3)] hover:shadow-[3px_3px_0_rgba(181,0,255,0.6)] active:translate-x-[3px] active:translate-y-[3px] active:shadow-none"
+                    >
+                      LOAD MATCH
+                    </button>
+                  </div>
                 </motion.div>
               ) : (
                 <motion.div 
@@ -2371,17 +3894,291 @@ export default function GameCanvas() {
         )}
       </AnimatePresence>
 
+      <AnimatePresence>
+        {uiState.status === 'LOBBY' && (
+          <motion.div
+            key="lobby-overlay"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="absolute inset-0 z-50 flex flex-col items-center justify-center p-4 sm:p-8 bg-[#050508]/80 backdrop-blur-md pointer-events-auto"
+          >
+            <motion.div
+              initial={{ scale: 0.9 * menuScale, y: 20 }}
+              animate={{ scale: menuScale, y: 0 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+              className="w-full max-w-md flex flex-col border-2 border-[#ffcc00] bg-[#0d0f1b]/95 p-4 sm:p-6 shadow-[10px_10px_0_#ffcc00] pointer-events-auto items-center relative z-10 origin-center"
+            >
+              <h2 className="text-3xl font-black text-white tracking-widest" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>MULTIPLAYER</h2>
+              
+              <div className="w-full border-t border-b border-[#ffcc00]/30 py-2.5 text-center my-4">
+                <p className="text-[#ffcc00]/80 font-mono text-[9px] uppercase tracking-widest leading-relaxed">
+                  {mpState.roomId ? "CO-OP / VERSUS LOBBY" : "HOST OR JOIN AN ONLINE MATCH"}
+                </p>
+              </div>
+
+              {mpState.roomId ? (
+                <>
+                  {/* Lobby Segmented Controls / Tabs */}
+                  <div className="flex w-full border border-white/10 mb-5 relative bg-black/40">
+                    <button
+                      onClick={() => setActiveLobbyTab('invite')}
+                      className={`flex-1 py-2 text-[10px] font-black tracking-widest text-center transition-all cursor-pointer ${
+                        activeLobbyTab === 'invite'
+                          ? 'bg-[#ffcc00] text-black font-black'
+                          : 'text-[#ffcc00]/60 hover:text-white hover:bg-[#ffcc00]/10'
+                      }`}
+                    >
+                      INVITE ROOM
+                    </button>
+                    <button
+                      onClick={() => setActiveLobbyTab('players')}
+                      className={`flex-1 py-2 text-[10px] font-black tracking-widest text-center transition-all cursor-pointer ${
+                        activeLobbyTab === 'players'
+                          ? 'bg-[#ffcc00] text-black font-black'
+                          : 'text-[#ffcc00]/60 hover:text-white hover:bg-[#ffcc00]/10'
+                      }`}
+                    >
+                      PLAYERS
+                    </button>
+                  </div>
+
+                  <div className="w-full h-[345px] flex flex-col mb-5">
+                    {activeLobbyTab === 'invite' ? (
+                      <div className="w-full h-full flex flex-col justify-between">
+                        <div>
+                          <p className="text-[#ffcc00]/70 font-bold tracking-[0.2em] text-[10px] mb-1 uppercase w-full text-left">
+                            {mpState.isHost ? "YOUR ROOM CODE" : "JOINED ROOM"}
+                          </p>
+                          
+                          {/* Code at the top with a copy button */}
+                          <div className="flex w-full mb-3">
+                            <div className="text-3xl text-white font-mono font-bold tracking-widest py-2 px-5 bg-black border border-r-0 border-white/10 text-center uppercase flex-1">
+                              {mpState.roomId}
+                            </div>
+                            <button
+                              onClick={handleCopyCode}
+                              className="px-4 bg-white/5 border border-white/10 hover:bg-[#ffcc00]/15 hover:border-[#ffcc00]/50 transition-all flex items-center justify-center cursor-pointer"
+                              title="Copy room code"
+                            >
+                              {copyFeedback ? <Check className="w-5 h-5 text-[#ffcc00]" /> : <Copy className="w-5 h-5 text-white/50" />}
+                            </button>
+                          </div>
+
+                          {/* URL with its copy button */}
+                          <p className="text-[#ffcc00]/70 font-bold tracking-[0.15em] text-[10px] uppercase w-full text-left mb-1">
+                            INVITE URL
+                          </p>
+                          <div className="flex w-full mb-3">
+                            <div className="text-[10px] text-white/75 font-mono py-1.5 px-3 bg-black border border-r-0 border-white/10 text-left overflow-x-auto whitespace-nowrap [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden flex-1 flex items-center">
+                              {`${window.location.protocol}//${window.location.host}${window.location.pathname}?room=${mpState.roomId}`}
+                            </div>
+                            <button
+                              onClick={handleCopyInviteLink}
+                              className="px-3 bg-white/5 border border-white/10 hover:bg-[#ffcc00]/15 hover:border-[#ffcc00]/50 transition-all flex items-center justify-center cursor-pointer"
+                              title="Copy invite link"
+                            >
+                              {copyLinkFeedback ? <Check className="w-3.5 h-3.5 text-[#ffcc00]" /> : <Copy className="w-3.5 h-3.5 text-white/50" />}
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Centered larger QR Code card with cleaner neutral border */}
+                        <div className="w-full flex flex-col items-center p-3 bg-black/40 border border-white/10 shadow-[inset_0_0_12px_rgba(255,204,0,0.02)]">
+                          <img 
+                            src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`${window.location.protocol}//${window.location.host}${window.location.pathname}?room=${mpState.roomId}`)}`} 
+                            alt="Room QR Code"
+                            className="w-28 h-28 p-1.5 bg-white mb-2 shadow-[0_0_15px_rgba(255,204,0,0.15)] shrink-0"
+                            referrerPolicy="no-referrer"
+                          />
+                          
+                          <button
+                            onClick={downloadQrCode}
+                            className="w-full py-1.5 bg-[#ffcc00]/10 hover:bg-[#ffcc00]/25 text-[#ffcc00] border border-[#ffcc00]/30 hover:border-[#ffcc00] font-sans font-black text-[9px] tracking-widest uppercase transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                          >
+                            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                              <polyline points="7 10 12 15 17 10" />
+                              <line x1="12" y1="15" x2="12" y2="3" />
+                            </svg>
+                            <span>DOWNLOAD QR CODE</span>
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="w-full h-full flex flex-col justify-start">
+                        {/* Profiling setup */}
+                        <p className="text-[#ffcc00]/70 font-bold tracking-[0.15em] text-[10px] uppercase w-full text-left mb-1 text-xs">
+                          CALLSIGN
+                        </p>
+                        <input 
+                          type="text" 
+                          maxLength={12}
+                          value={playerProfile.name}
+                          onChange={(e) => {
+                            const val = e.target.value.toUpperCase();
+                            updateProfile(val, playerProfile.colorIdx);
+                          }}
+                          className="w-full bg-black border border-white/10 text-white font-mono px-3 py-1.5 text-xs uppercase focus:outline-none focus:border-[#ffcc00]/50 mb-3"
+                        />
+
+                        <p className="text-[#ffcc00]/70 font-bold tracking-[0.15em] text-[10px] uppercase w-full text-left mb-1 text-xs">
+                          HUE
+                        </p>
+                        <div className="flex justify-between gap-1 w-full mb-3.5">
+                          {PLAYER_COLORS.map((color, idx) => {
+                            const isTaken = (Object.values(lobbyPlayers) as { colorIdx: number }[]).map(p => p.colorIdx).includes(idx);
+                            return (
+                              <button
+                                key={idx}
+                                disabled={isTaken && playerProfile.colorIdx !== idx}
+                                onClick={() => {
+                                  if (!isTaken || playerProfile.colorIdx === idx) {
+                                    updateProfile(playerProfile.name, idx);
+                                  }
+                                }}
+                                title={isTaken && playerProfile.colorIdx !== idx ? `${color.name} (TAKEN)` : color.name}
+                                className={`flex-1 h-5 rounded-none border transition-all relative overflow-hidden ${
+                                  playerProfile.colorIdx === idx 
+                                    ? 'scale-105 border-white shadow-[0_0_8px_rgba(0,255,136,0.4)] z-10 cursor-default' 
+                                    : isTaken
+                                      ? 'border-white/5 opacity-15 cursor-not-allowed grayscale'
+                                      : 'border-white/10 opacity-50 hover:opacity-100 cursor-pointer'
+                                }`}
+                                style={{ backgroundColor: color.n }}
+                              >
+                                {isTaken && playerProfile.colorIdx !== idx && (
+                                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                    <div className="w-full h-[1px] bg-red-500/80 rotate-45 transform scale-x-125" />
+                                  </div>
+                                )}
+                              </button>
+                            );
+                          })}
+                        </div>
+
+                        {/* Active Lobby Members */}
+                        <p className="text-[#ffcc00]/70 font-bold tracking-[0.15em] text-[10px] uppercase w-full text-left mb-1 text-xs">
+                          LOBBY MEMBERS ({Object.keys(lobbyPlayers).length + 1})
+                        </p>
+                        <div className="w-full flex-1 min-h-0 overflow-y-auto border border-white/10 bg-black/40 p-1.5 space-y-1 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+                          {/* Local player */}
+                          <div className="flex items-center justify-between py-1 px-1.5 bg-[#ffcc00]/5 border-l-2 border-[#ffcc00]">
+                            <div className="flex items-center gap-1.5 overflow-hidden">
+                              <div className="w-2.5 h-2.5 border border-white/15 shrink-0" style={{ backgroundColor: PLAYER_COLORS[playerProfile.colorIdx]?.n }} />
+                              <span className="text-[10px] font-mono text-white/90 font-black tracking-wider uppercase truncate">
+                                {playerProfile.name || 'ANONYMOUS'}
+                              </span>
+                              <span className="text-[8px] font-mono text-[#ffcc00] font-extrabold tracking-widest shrink-0 bg-[#ffcc00]/15 px-1 py-0.5 rounded-sm">YOU</span>
+                            </div>
+                            <span className="text-[8px] font-mono font-bold text-white/50 tracking-widest shrink-0 ml-1">
+                              {mpState.isHost ? 'HOST' : 'CLIENT'}
+                            </span>
+                          </div>
+
+                          {/* Remote players */}
+                          {(Object.entries(lobbyPlayers) as [string, { name: string, colorIdx: number, isHost: boolean }][]).map(([id, player]) => (
+                            <div key={id} className="flex items-center justify-between py-1 px-1.5 bg-black/30 border-l-2 border-white/10">
+                              <div className="flex items-center gap-1.5 overflow-hidden">
+                                <div className="w-2.5 h-2.5 border border-white/10 shrink-0" style={{ backgroundColor: PLAYER_COLORS[player.colorIdx]?.n }} />
+                                <span className="text-[10px] font-mono text-white/80 tracking-wider uppercase truncate">
+                                  {player.name || 'CONNECTING...'}
+                                </span>
+                              </div>
+                              <span className="text-[8px] font-mono font-bold text-white/40 tracking-widest shrink-0 ml-1">
+                                {player.isHost ? 'HOST' : 'CLIENT'}
+                              </span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {mpState.isHost ? (
+                    <button
+                      onClick={() => {
+                         socketRef.current?.emit('start_game', mpState.roomId, {
+                           mapId: uiState.mapId,
+                           hardMode: true
+                         });
+                         resetGame(isMobileRef.current ? 'mobile' : 'desktop', uiState.mapId, uiState.hardMode);
+                         setUiState(prev => ({ ...prev, status: 'PLAYING' }));
+                      }}
+                      className="w-full py-4 bg-[#ffcc00] hover:bg-white text-black font-black tracking-widest transition-all duration-200 uppercase text-sm cursor-pointer shadow-[3px_3px_0_rgba(255,204,0,0.15)] hover:shadow-[5px_5px_0_#fff] active:translate-x-1 active:translate-y-1 active:shadow-none mb-2"
+                    >
+                      START MATCH
+                    </button>
+                  ) : (
+                    <p className="text-[#ffcc00] animate-pulse font-bold tracking-widest text-[11px] py-2 uppercase">
+                      WAITING FOR HOST TO START...
+                    </p>
+                  )}
+                </>
+              ) : (
+                <>
+                  <p className="text-[#ffcc00]/80 font-bold tracking-widest text-xs uppercase mb-2 w-full text-left">JOIN A ROOM</p>
+                  <input
+                    type="text"
+                    value={mpState.joinCode}
+                    onChange={(e) => setMpState(prev => ({ ...prev, joinCode: e.target.value.toUpperCase() }))}
+                    placeholder="ENTER CODE"
+                    className="w-full py-3 px-4 bg-black border border-white/10 text-white font-mono tracking-widest text-center text-xl outline-none focus:border-[#ffcc00]/50 mb-4 uppercase placeholder-white/20"
+                  />
+                  {mpState.error && <p className="text-red-500 font-bold mb-4 text-xs">{mpState.error}</p>}
+                  <button
+                    onClick={joinRoom}
+                    className="w-full py-4 bg-[#ffcc00] hover:bg-white text-black font-black tracking-widest transition-all duration-200 uppercase text-sm cursor-pointer shadow-[3px_3px_0_rgba(255,204,0,0.15)] hover:shadow-[5px_5px_0_#fff] active:translate-x-1 active:translate-y-1 active:shadow-none mb-2"
+                  >
+                    JOIN MATCH
+                  </button>
+
+                  <div className="flex items-center w-full my-3">
+                    <div className="flex-1 border-t border-white/10"></div>
+                    <span className="px-3 text-white/40 font-mono text-[9px] tracking-widest">OR</span>
+                    <div className="flex-1 border-t border-white/10"></div>
+                  </div>
+
+                  <button
+                    onClick={createRoom}
+                    className="w-full py-4 bg-transparent border-2 border-[#ffcc00]/50 text-[#ffcc00] font-black tracking-widest hover:bg-[#ffcc00]/10 hover:border-[#ffcc00] transition-colors mt-2 cursor-pointer"
+                  >
+                    CREATE ROOM
+                  </button>
+                </>
+              )}
+              
+              <button onClick={() => {
+                if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
+                setMpState(prev => ({ ...prev, roomId: null, isHost: false, error: '' }));
+                setLobbyPlayers({});
+                setUiState(prev => ({ ...prev, status: 'MENU' }));
+              }} className="mt-6 text-[#ffcc00]/60 hover:text-white uppercase tracking-widest text-xs font-bold transition-colors">
+                BACK TO MENU
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
       {(uiState.status === 'PLAYING' || uiState.status === 'PAUSED') && (() => {
         const toolsData = {
-          weapon: { label: 'WEAPON', color: '#ff0066', mobile: 'JOYSTICK TO SHOOT', desktop: 'MOUSE TO SHOOT' },
-          special: { label: 'SPECIAL', color: '#b500ff', mobile: 'TAP TO DASH', desktop: 'MOUSE TO USE SPECIAL' },
-          build: { label: 'BUILD', color: '#ffcc00', mobile: 'TAP TO BUILD', desktop: 'MOUSE TO BUILD' }
+          special: { label: 'SPECIAL', color: '#b500ff', mobile: 'TAP TO USE', desktop: 'RIGHT CLICK / SPACE TO USE' },
+          build: { label: 'BUILD', color: '#ffcc00', mobile: 'TAP TO USE', desktop: 'KEY "2" TO USE' }
         } as const;
         const activeT = toolsData[uiState.activeTool];
 
         return (
-          <>
-            <div className="absolute top-0 left-0 right-0 p-4 sm:p-6 flex flex-col sm:flex-row justify-start sm:justify-between items-start pointer-events-none z-10 w-full max-w-7xl mx-auto gap-4 sm:gap-0">
+          <AnimatePresence>
+            {!bannerState.show && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                transition={{ duration: 0.6, ease: "easeInOut" }}
+                className="absolute inset-0 pointer-events-none z-10"
+              >
+                <div className="absolute top-0 left-0 right-0 p-4 sm:p-6 flex flex-col sm:flex-row justify-start sm:justify-between items-start pointer-events-none z-10 w-full max-w-7xl mx-auto gap-4 sm:gap-0">
               <div className="flex items-stretch gap-2 sm:gap-4">
                 <div className="flex flex-col justify-around py-1 pr-2 sm:pr-4 border-r-2 border-[#00f0ff]/30 pointer-events-auto h-full">
                   <button
@@ -2404,50 +4201,92 @@ export default function GameCanvas() {
                     ⨯ QUIT
                   </button>
                 </div>
-                <div className="flex flex-col items-start justify-center gap-0 sm:gap-1">
+                <motion.div 
+                  animate={flashScore ? {
+                    filter: [
+                      "brightness(1) drop-shadow(0 0 0px rgba(0, 240, 255, 0))",
+                      "brightness(1.8) drop-shadow(0 0 15px rgba(0, 240, 255, 0.95))",
+                      "brightness(1) drop-shadow(0 0 0px rgba(0, 240, 255, 0))"
+                    ]
+                  } : {}}
+                  transition={flashScore ? {
+                    duration: 0.5,
+                    repeat: Infinity,
+                    ease: "easeInOut"
+                  } : {}}
+                  className="flex flex-col items-start justify-center gap-0 sm:gap-1"
+                >
                    <div className="hidden sm:block text-xs text-[#00f0ff] tracking-[0.3em] font-bold whitespace-nowrap">SYSTEM // SCORE</div>
                    <div className="sm:hidden text-[9px] text-[#00f0ff] tracking-widest font-bold whitespace-nowrap">SCORE</div>
                    <div className="text-white font-black text-2xl sm:text-5xl tracking-tighter drop-shadow-[0_0_15px_rgba(0,240,255,0.8)] leading-none mt-1" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>
                      {uiState.score.toString().padStart(6, '0')}
                    </div>
-                </div>
-                <div className={`flex flex-col items-start justify-center gap-0 sm:gap-1 pl-2 sm:pl-4 border-l-2 h-full ${uiState.hardMode ? 'border-[#ff3300]/30' : 'border-[#ff00ff]/30'}`}>
+                </motion.div>
+                <motion.div 
+                  animate={flashSpawner ? {
+                    filter: [
+                      "brightness(1) drop-shadow(0 0 0px rgba(0,0,0,0))",
+                      `brightness(1.8) drop-shadow(0 0 15px ${uiState.hardMode ? 'rgba(255,51,0,0.95)' : 'rgba(255,0,255,0.95)'})`,
+                      "brightness(1) drop-shadow(0 0 0px rgba(0,0,0,0))"
+                    ]
+                  } : {}}
+                  transition={flashSpawner ? {
+                    duration: 0.5,
+                    repeat: Infinity,
+                    ease: "easeInOut"
+                  } : {}}
+                  className={`flex flex-col items-start justify-center gap-0 sm:gap-1 pl-2 sm:pl-4 border-l-2 h-full ${uiState.hardMode ? 'border-[#ff3300]/30' : 'border-[#ff00ff]/30'}`}
+                >
                    <div className={`hidden sm:block text-xs tracking-[0.3em] font-bold whitespace-nowrap ${uiState.hardMode ? 'text-[#ff3300]' : 'text-[#ff00ff]'}`}>
-                     {uiState.hardMode ? 'TARGET // SPAWNERS (HARD)' : 'TARGET // SPAWNERS'}
+                     {mpState.roomId ? 'LEADERBOARD // RANK' : (uiState.hardMode ? 'TARGET // SPAWNERS (HARD)' : 'TARGET // SPAWNERS')}
                    </div>
                    <div className={`sm:hidden text-[9px] tracking-widest font-bold whitespace-nowrap ${uiState.hardMode ? 'text-[#ff3300]' : 'text-[#ff00ff]'}`}>
-                     {uiState.hardMode ? 'TARGET (HARD)' : 'TARGET'}
+                     {mpState.roomId ? 'RANK' : (uiState.hardMode ? 'TARGET (HARD)' : 'TARGET')}
                    </div>
                    <div className="text-white font-black text-2xl sm:text-5xl tracking-tighter leading-none mt-1" 
                         style={{ 
                           fontFamily: 'var(--font-display, Anton, sans-serif)',
                           textShadow: `0 0 15px ${uiState.hardMode ? '#ff3300' : '#ff00ff'}`
                         }}>
-                     {uiState.spawnersLeft}
+                     {mpState.roomId ? `#${getPlayerRank()}` : uiState.spawnersLeft}
                    </div>
-                </div>
-              </div>
-               <div className="flex items-stretch gap-2 sm:gap-8">
-                <div className="flex flex-col items-start sm:items-end justify-center gap-1 h-full">
-                   <div className="hidden sm:block text-xs text-[#b500ff] tracking-[0.3em] font-bold whitespace-nowrap">DASH STATUS</div>
-                   <div className="sm:hidden text-[9px] text-[#b500ff] tracking-widest font-bold whitespace-nowrap">DASH</div>
-                   <div className="scale-100 origin-left sm:origin-right mt-1">
-                     <DashStatus stateRef={stateRef} />
-                   </div>
-                </div>
-                <div className="flex flex-col items-start sm:items-end justify-center gap-1 pl-2 sm:pl-4 border-l-2 border-[#ffcc00]/30 h-full">
-                   <div className="hidden sm:block text-xs text-[#ffcc00] tracking-[0.3em] font-bold whitespace-nowrap">AVAILABLE BLOCKS</div>
-                   <div className="sm:hidden text-[9px] text-[#ffcc00] tracking-widest font-bold whitespace-nowrap">BLOCKS</div>
-                   <div className="text-white font-black text-2xl sm:text-4xl tracking-tighter drop-shadow-[0_0_10px_rgba(255,204,0,0.8)] leading-none mt-1" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>
-                     x{uiState.blocks}
-                   </div>
-                </div>
+                </motion.div>
               </div>
             </div>
 
             {uiState.status === 'PAUSED' && !confirmResign && (
-              <div className="absolute inset-0 bg-black/50 pointer-events-none z-10 flex items-center justify-center backdrop-blur-sm">
-                 <h2 className="text-5xl sm:text-6xl md:text-7xl font-black text-white/50 tracking-tighter" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>HALTED</h2>
+              <div 
+                onPointerDown={() => setUiState(prev => ({ ...prev, status: 'PLAYING' }))}
+                className="absolute inset-0 bg-black/75 pointer-events-auto z-40 flex flex-col items-center justify-center backdrop-blur-md cursor-pointer select-none"
+              >
+                {/* Clean, Simple Typography of old HALTED text */}
+                <div className="flex flex-col items-center text-center">
+                  <h2 
+                    className="text-5xl sm:text-6xl md:text-7xl font-black text-white/95 tracking-[0.1em] uppercase mb-4" 
+                    style={{ fontFamily: 'var(--font-display, Anton, sans-serif)', textShadow: '0 0 10px rgba(255,255,255,0.4)' }}
+                  >
+                    HALTED
+                  </h2>
+                  <p className="text-white/60 font-mono text-xs sm:text-sm tracking-[0.25em] uppercase font-bold animate-pulse">
+                    CLICK ANYWHERE TO RESUME
+                  </p>
+                </div>
+
+                {/* Bottom Save Section (purple accent, simple style) */}
+                <div 
+                  onPointerDown={(e) => e.stopPropagation()}
+                  className="absolute bottom-12 left-1/2 -translate-x-1/2 pointer-events-auto z-40"
+                >
+                  <button 
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleSaveMatch();
+                    }} 
+                    className="px-8 py-3.5 bg-[#b500ff]/15 border-2 border-[#b500ff] text-[#b500ff] hover:bg-[#b500ff] hover:text-black font-mono font-black tracking-widest uppercase text-xs sm:text-sm shadow-[0_0_15px_rgba(181,0,255,0.3)] active:scale-95 transition-all duration-150 cursor-pointer"
+                  >
+                    DOWNLOAD SAVE FILE
+                  </button>
+                </div>
               </div>
             )}
 
@@ -2462,6 +4301,8 @@ export default function GameCanvas() {
                        e.stopPropagation();
                        setConfirmResign(false);
                        stateRef.current.shake = 20;
+                       if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
+                       setMpState(prev => ({ ...prev, roomId: null, isHost: false, error: '' }));
                        setUiState(prev => ({ ...prev, status: 'GAME_OVER' }));
                      }}
                      className="px-8 py-4 bg-[#0a0000] border-2 border-[#ff003c] text-[#ff003c] font-black tracking-[0.2em] text-xl sm:text-2xl uppercase transition-all duration-200 hover:bg-[#ff003c] hover:text-white hover:shadow-[0_0_30px_rgba(255,0,60,0.8)] active:scale-95"
@@ -2481,54 +4322,140 @@ export default function GameCanvas() {
               </div>
             )}
 
-            <div className="hidden sm:block absolute bottom-0 left-0 p-8 pointer-events-none z-10">
-               <div className="text-sm text-[#00ccff] tracking-[0.2em] font-bold font-mono drop-shadow-[0_0_8px_rgba(0,204,255,0.8)]">
-                 {uiState.deviceType === 'mobile' ? 'JOYSTICK TO MOVE' : 'WASD TO MOVE'}
-               </div>
-            </div>
+            {uiState.status !== 'PAUSED' && (
+              <>
+                <div className="hidden sm:block absolute bottom-0 left-0 p-8 pointer-events-none z-10">
+                   <div className="text-sm text-[#00ccff] tracking-[0.2em] font-bold font-mono drop-shadow-[0_0_8px_rgba(0,204,255,0.8)]">
+                     {uiState.deviceType === 'mobile' ? 'JOYSTICK TO MOVE' : 'WASD TO MOVE'}
+                   </div>
+                </div>
 
-            <div className={`absolute left-1/2 -translate-x-1/2 pointer-events-none z-10 flex gap-1 sm:gap-4 bottom-4 sm:bottom-6`}>
-               {(Object.keys(toolsData) as Array<keyof typeof toolsData>).map((toolKey) => {
-                 const tool = toolsData[toolKey];
-                 const isActive = uiState.activeTool === toolKey;
-                 return (
-                   <button
-                     key={toolKey}
-                     id={`tool-btn-${toolKey}`}
-                     onPointerDown={(e) => {
-                       e.stopPropagation();
-                       setUiState(prev => ({ ...prev, activeTool: toolKey }));
-                     }}
-                     className="pointer-events-auto w-16 sm:w-36 py-1 sm:py-2 border-2 font-black tracking-widest uppercase transition-all duration-200 text-[9px] sm:text-sm active:scale-95 relative overflow-hidden flex justify-center items-center gap-1 sm:gap-2"
-                     style={{
-                       borderColor: tool.color,
-                       backgroundColor: isActive ? tool.color : 'transparent',
-                       color: isActive ? '#000' : tool.color,
-                       boxShadow: isActive ? `0 0 15px ${tool.color}` : 'none'
-                     }}
+                <div className={`absolute left-1/2 -translate-x-1/2 pointer-events-none z-10 flex gap-1 sm:gap-4 bottom-4 sm:bottom-6`}>
+                   {(Object.keys(toolsData) as Array<keyof typeof toolsData>).map((toolKey) => {
+                     const tool = toolsData[toolKey];
+                     const isActive = uiState.activeTool === toolKey;
+                     return (
+                       <div key={toolKey} className="relative flex flex-col items-center gap-1 sm:gap-1.5">
+                         <div className="h-4 sm:h-5 flex items-end">
+                           {uiState.buttonCounters[toolKey as 'special' | 'build'] > 0 && (
+                             <span className="text-[10px] sm:text-xs font-mono font-bold" style={{ color: tool.color }}>
+                               {uiState.buttonCounters[toolKey as 'special' | 'build']}
+                             </span>
+                           )}
+                         </div>
+                         <button
+                           id={`tool-btn-${toolKey}`}
+                           onPointerDown={(e) => {
+                             e.stopPropagation();
+                             const currentTime = performance.now();
+                             if (toolKey === 'special') {
+                               if (currentTime - stateRef.current.player.dash.lastTime >= DASH_COOLDOWN) {
+                                  stateRef.current.player.dash.lastTime = currentTime;
+                                  const isHostMode = !mpRef.current.roomId || mpRef.current.isHost;
+                                  
+                                  let finalX = stateRef.current.mouse.worldX;
+                                  let finalY = stateRef.current.mouse.worldY;
+                                  
+                                  // For mobile or if mouse is on the button, use aim direction or default to player position
+                                  if (uiState.deviceType !== 'desktop') {
+                                     const aim = stateRef.current.touches.right;
+                                     if (aim.active) {
+                                        finalX = stateRef.current.player.x + aim.dirX * 300;
+                                        finalY = stateRef.current.player.y + aim.dirY * 300;
+                                     } else {
+                                        finalX = stateRef.current.player.x;
+                                        finalY = stateRef.current.player.y;
+                                     }
+                                  } else {
+                                     const dx = finalX - stateRef.current.player.x;
+                                     const dy = finalY - stateRef.current.player.y;
+                                     const dist = Math.sqrt(dx*dx + dy*dy);
+                                     if (dist > 300) {
+                                        finalX = stateRef.current.player.x + (dx / dist) * 300;
+                                        finalY = stateRef.current.player.y + (dy / dist) * 300;
+                                     }
+                                  }
+
+                                  if (isHostMode) {
+                                    const cIdx = playerProfileRef.current.colorIdx;
+                                    stateRef.current.zones.push({
+                                      x: finalX,
+                                      y: finalY,
+                                      innerRadius: 100,
+                                      outerRadius: 250,
+                                      duration: 3000,
+                                      spawnTime: currentTime,
+                                      ownerId: 'local',
+                                      colorIdx: cIdx
+                                    });
+                                    const pDef = PLAYER_COLORS[cIdx] || PLAYER_COLORS[0];
+                                    stateRef.current.shockwaves.push({ x: finalX, y: finalY, color: pDef.n, maxRadius: 250, age: 0, maxAge: 0.5, thickness: 15 });
+                                  } else {
+                                    socketRef.current?.emit('client_action', mpRef.current.roomId, { type: 'special', x: finalX, y: finalY, colorIdx: playerProfileRef.current.colorIdx });
+                                  }
+                               }
+                             } else if (toolKey === 'build') {
+                               if (currentTime - stateRef.current.player.build.lastTime >= BUILD_COOLDOWN) {
+                                 stateRef.current.player.build.active = true;
+                                 stateRef.current.player.build.endTime = currentTime + 10000;
+                                 stateRef.current.player.build.lastTime = currentTime;
+                                 const gridX = Math.round(stateRef.current.player.x / 40) * 40;
+                                 const gridY = Math.round(stateRef.current.player.y / 40) * 40;
+                                 stateRef.current.player.build.lastBlockX = gridX;
+                                 stateRef.current.player.build.lastBlockY = gridY;
+                                 const cIdx = playerProfileRef.current.colorIdx;
+                                 const existingIdx = stateRef.current.blocks.findIndex(b => b.x === gridX && b.y === gridY);
+                                 if (existingIdx !== -1) {
+                                    if (stateRef.current.blocks[existingIdx].colorIdx === cIdx) {
+                                       stateRef.current.blocks.splice(existingIdx, 1);
+                                       if (socketRef.current && mpRef.current.roomId && !mpRef.current.isHost) {
+                                          socketRef.current.emit('client_action', mpRef.current.roomId, { type: 'build_remove', x: gridX, y: gridY });
+                                       }
+                                    }
+                                 } else {
+                                    stateRef.current.blocks.push({ x: gridX, y: gridY, size: 40, createdAt: currentTime, colorIdx: cIdx });
+                                    if (socketRef.current && mpRef.current.roomId && !mpRef.current.isHost) {
+                                      socketRef.current.emit('client_action', mpRef.current.roomId, { type: 'build', x: gridX, y: gridY, colorIdx: cIdx });
+                                    }
+                                 }
+                               }
+                             }
+                           }}
+                           className="pointer-events-auto w-16 sm:w-36 py-1 sm:py-2 border-2 font-black tracking-widest uppercase transition-all duration-200 text-[9px] sm:text-sm active:scale-95 relative overflow-hidden flex justify-center items-center gap-1 sm:gap-2"
+                           style={{
+                             borderColor: tool.color,
+                             backgroundColor: isActive ? tool.color : 'transparent',
+                             color: isActive ? '#000' : tool.color,
+                             boxShadow: isActive ? `0 0 15px ${tool.color}` : 'none'
+                           }}
+                         >
+                           {uiState.deviceType === 'desktop' && (
+                             <span className="hidden sm:inline-block relative z-10 opacity-50 font-mono">[{toolKey === 'special' ? 1 : 2}]</span>
+                           )}
+                           <span className="relative z-10">{tool.label}</span>
+                         </button>
+                       </div>
+                     );
+                   })}
+                </div>
+                
+                <div className="hidden sm:block absolute bottom-0 right-0 p-8 pointer-events-none z-10 text-right">
+                   <div 
+                     className="text-sm tracking-[0.2em] font-bold font-mono transition-all duration-300"
+                     style={{ color: activeT.color, textShadow: `0 0 8px ${activeT.color}` }}
                    >
-                     {uiState.deviceType === 'desktop' && (
-                       <span className="hidden sm:inline-block relative z-10 opacity-50 font-mono">[{toolKey === 'weapon' ? 1 : toolKey === 'special' ? 2 : 3}]</span>
-                     )}
-                     <span className="relative z-10">{tool.label}</span>
-                   </button>
-                 );
-               })}
-            </div>
-            
-            <div className="hidden sm:block absolute bottom-0 right-0 p-8 pointer-events-none z-10 text-right">
-               <div 
-                 className="text-sm tracking-[0.2em] font-bold font-mono transition-all duration-300"
-                 style={{ color: activeT.color, textShadow: `0 0 8px ${activeT.color}` }}
-               >
-                 {uiState.deviceType === 'mobile' ? activeT.mobile : activeT.desktop}
-               </div>
-            </div>
-          </>
+                     {uiState.deviceType === 'mobile' ? activeT.mobile : activeT.desktop}
+                   </div>
+                </div>
+              </>
+            )}
+              </motion.div>
+            )}
+          </AnimatePresence>
         );
       })()}
 
-      {uiState.status === 'VICTORY' && (
+      {uiState.status === 'VICTORY' && !mpState.roomId && (
         <div className="absolute inset-0 bg-[#00f0ff]/90 flex flex-col items-center justify-center p-4 sm:p-6 text-center backdrop-blur-md z-20">
           <div className="max-w-xl w-full bg-[#0a0000] border-2 border-[#00f0ff] p-6 sm:p-8 md:p-12 shadow-[10px_10px_0_#00f0ff]">
             <h2 className="text-5xl sm:text-6xl md:text-7xl font-black text-[#00f0ff] mb-2 sm:mb-4 tracking-tighter" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>VICTORY</h2>
@@ -2537,10 +4464,8 @@ export default function GameCanvas() {
             </div>
             <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center">
               <button 
-                onTouchStart={() => { isMobileRef.current = true; }}
                 onClick={() => {
                   resetGame(isMobileRef.current ? 'mobile' : 'desktop');
-                  isMobileRef.current = false;
                 }}
                 className="flex-1 py-3 sm:py-4 bg-[#00f0ff] hover:bg-white text-black border-2 border-[#00f0ff] font-black tracking-[0.2em] transition-all duration-200 uppercase text-sm sm:text-base md:text-lg active:translate-x-1 active:translate-y-1 active:shadow-none hover:shadow-[5px_5px_0_#fff] pointer-events-auto"
               >
@@ -2548,6 +4473,8 @@ export default function GameCanvas() {
               </button>
               <button 
                 onClick={() => {
+                  if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
+                  setMpState(prev => ({ ...prev, roomId: null, isHost: false, error: '' }));
                   setUiState(prev => ({ ...prev, status: 'MENU' }));
                 }}
                 className="flex-1 py-3 sm:py-4 bg-transparent hover:bg-white/10 text-[#00f0ff] hover:text-white border-2 border-[#00f0ff] font-black tracking-[0.2em] transition-all duration-200 uppercase text-sm sm:text-base md:text-lg active:translate-x-1 active:translate-y-1 active:shadow-none hover:shadow-[5px_5px_0_rgba(0,240,255,0.4)] pointer-events-auto"
@@ -2559,7 +4486,7 @@ export default function GameCanvas() {
         </div>
       )}
 
-      {uiState.status === 'GAME_OVER' && (
+      {uiState.status === 'GAME_OVER' && !mpState.roomId && (
         <div className="absolute inset-0 bg-red-950/90 flex flex-col items-center justify-center p-4 sm:p-6 text-center backdrop-blur-md z-20">
           <div className="max-w-xl w-full bg-[#0a0000] border-2 border-[#ff003c] p-6 sm:p-8 md:p-12 shadow-[10px_10px_0_#ff003c]">
             <h2 className="text-5xl sm:text-6xl md:text-7xl font-black text-[#ff003c] mb-2 sm:mb-4 tracking-tighter" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>ANNIHILATED</h2>
@@ -2568,10 +4495,8 @@ export default function GameCanvas() {
             </div>
             <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center">
               <button 
-                onTouchStart={() => { isMobileRef.current = true; }}
                 onClick={() => {
                   resetGame(isMobileRef.current ? 'mobile' : 'desktop');
-                  isMobileRef.current = false;
                 }}
                 className="flex-1 py-3 sm:py-4 bg-[#ff003c] hover:bg-white text-black border-2 border-[#ff003c] font-black tracking-[0.2em] transition-all duration-200 uppercase text-sm sm:text-base md:text-lg active:translate-x-1 active:translate-y-1 active:shadow-none hover:shadow-[5px_5px_0_#fff] pointer-events-auto"
               >
@@ -2579,6 +4504,8 @@ export default function GameCanvas() {
               </button>
               <button 
                 onClick={() => {
+                  if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
+                  setMpState(prev => ({ ...prev, roomId: null, isHost: false, error: '' }));
                   setUiState(prev => ({ ...prev, status: 'MENU' }));
                 }}
                 className="flex-1 py-3 sm:py-4 bg-transparent hover:bg-white/10 text-[#ff003c] hover:text-white border-2 border-[#ff003c] font-black tracking-[0.2em] transition-all duration-200 uppercase text-sm sm:text-base md:text-lg active:translate-x-1 active:translate-y-1 active:shadow-none hover:shadow-[5px_5px_0_rgba(255,0,60,0.4)] pointer-events-auto"
@@ -2589,6 +4516,237 @@ export default function GameCanvas() {
           </div>
         </div>
       )}
+
+      {mpState.roomId && (uiState.status === 'GAME_OVER' || uiState.status === 'VICTORY') && (() => {
+        const { list: standings, isWholeGameEnded } = getMultiplayerStandings();
+        const myName = playerProfileRef.current.name || 'YOU';
+        const myId = socketRef.current?.id || 'local';
+
+        return (
+          <div className="absolute inset-0 bg-[#0a0000]/95 flex flex-col items-center justify-center p-2 sm:p-6 text-center backdrop-blur-md z-20 overflow-y-auto">
+            <div className="max-w-xl w-full bg-[#0d0404] border-2 border-[#ff005c] p-5 sm:p-8 md:p-10 shadow-[10px_10px_0_#ff005c] my-auto">
+              
+              {/* GOAL display */}
+              <div className="text-[10px] font-mono text-[#ffcc00] tracking-[0.2em] uppercase mb-1 font-bold">
+                GOAL: GET THE HIGHEST SCORE BEFORE YOU DIE
+              </div>
+
+              {/* Title based on state */}
+              {isWholeGameEnded ? (
+                <h2 className="text-4xl sm:text-5xl md:text-6xl font-black text-[#ffcc00] mb-2 tracking-tighter uppercase drop-shadow-[0_0_15px_rgba(255,204,0,0.5)]" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>
+                  MATCH CONCLUDED
+                </h2>
+              ) : (
+                <h2 className="text-4xl sm:text-5xl md:text-6xl font-black text-[#ff005c] mb-2 tracking-tighter uppercase drop-shadow-[0_0_15px_rgba(255,0,92,0.5)]" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>
+                  ANNIHILATED
+                </h2>
+              )}
+
+              {/* Subtitle explanation */}
+              <p className="text-[10px] sm:text-xs font-mono text-zinc-400 tracking-wider uppercase mb-6 sm:mb-8 border-b border-white/5 pb-4">
+                {isWholeGameEnded 
+                  ? "ALL PLAYERS HAVE FALLEN // FINAL STANDINGS" 
+                  : "YOU WERE ELIMINATED // SPECTATING LIVE MATCH..."
+                }
+              </p>
+
+              {/* Leaderboard Table */}
+              <div className="w-full mb-6 sm:mb-8 space-y-2 max-h-[220px] overflow-y-auto pr-1">
+                {standings.map((p, idx) => {
+                  const isMe = p.id === myId;
+                  const colorDef = PLAYER_COLORS[p.colorIdx] || PLAYER_COLORS[0];
+                  
+                  return (
+                    <div 
+                      key={p.id} 
+                      className={`flex items-center justify-between py-1.5 px-2.5 sm:py-3 sm:px-4 border transition-all ${
+                        isMe 
+                          ? 'bg-[#ffcc00]/10 border-[#ffcc00] shadow-[0_0_10px_rgba(255,204,0,0.15)]' 
+                          : 'bg-black/40 border-white/10'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 sm:gap-3 overflow-hidden text-left">
+                        {/* Rank */}
+                        <span className={`text-[12px] font-black font-mono tracking-tighter w-5 ${
+                          idx === 0 ? 'text-[#ffcc00]' : idx === 1 ? 'text-[#00f0ff]' : 'text-white/60'
+                        }`}>
+                          #{idx + 1}
+                        </span>
+
+                        {/* Player Color Block */}
+                        <div className="w-2.5 h-2.5 border border-white/20 shrink-0" style={{ backgroundColor: colorDef.n }} />
+
+                        {/* Player Name */}
+                        <span className={`text-xs sm:text-sm font-mono tracking-wide uppercase truncate ${
+                          isMe ? 'text-[#ffcc00] font-black' : 'text-white/90'
+                        }`}>
+                          {p.name} {isMe && <span className="text-[10px] text-[#ffcc00]/70 font-semibold">(YOU)</span>}
+                        </span>
+                      </div>
+
+                      {/* Score and Alive/Dead Label */}
+                      <div className="flex items-center gap-2 sm:gap-4 font-mono">
+                        <span className={`text-[8px] sm:text-[10px] tracking-widest font-extrabold uppercase px-1.5 py-0.5 rounded-sm shrink-0 border ${
+                          p.isDead 
+                            ? 'text-[#ff005c]/70 border-[#ff005c]/10 bg-[#ff005c]/5' 
+                            : 'text-[#00ff88] border-[#00ff88]/20 bg-[#00ff88]/5 animate-pulse'
+                        }`}>
+                          {p.isDead ? 'ELIMINATED' : 'ALIVE'}
+                        </span>
+                        
+                        <span className="text-white font-bold text-xs sm:text-base tracking-tight">
+                          {p.score}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex flex-col gap-3">
+                {confirmLeaveMatches ? (
+                  <div className="bg-[#1a050b] p-4 border border-[#ff005c]/20 flex flex-col items-center justify-center gap-3">
+                    <p className="text-[10px] sm:text-xs font-mono text-pink-200 uppercase tracking-widest">
+                      QUIT TO MAIN MENU? YOU WILL ABANDON THIS ROOM.
+                    </p>
+                    <div className="flex gap-3 w-full">
+                      <button 
+                        onClick={() => {
+                          if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
+                          setMpState(prev => ({ ...prev, roomId: null, isHost: false, error: '' }));
+                          setUiState(prev => ({ ...prev, status: 'MENU' }));
+                          setConfirmLeaveMatches(false);
+                        }}
+                        className="flex-1 py-2 sm:py-3 bg-[#ff005c] hover:bg-white text-black font-black tracking-widest uppercase text-xs sm:text-sm transition-all pointer-events-auto"
+                      >
+                        CONFIRM QUIT
+                      </button>
+                      <button 
+                        onClick={() => setConfirmLeaveMatches(false)}
+                        className="flex-1 py-2 sm:py-3 bg-white/5 hover:bg-white/10 text-white font-black tracking-widest uppercase text-xs sm:text-sm border border-white/10 transition-all pointer-events-auto"
+                      >
+                        CANCEL
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center">
+                    {/* Only the Host can restart the match, and only when the whole game ended */}
+                    {isWholeGameEnded && mpState.isHost && (
+                      <button 
+                        onClick={handleMultiplayerRestart}
+                        className="flex-1 py-3 sm:py-4 bg-[#ffcc00] hover:bg-white text-black border-2 border-[#ffcc00] font-black tracking-[0.2em] transition-all duration-200 uppercase text-xs sm:text-sm active:translate-x-1 active:translate-y-1 active:shadow-none hover:shadow-[5px_5px_0_#fff] pointer-events-auto"
+                      >
+                        RESTART MATCH
+                      </button>
+                    )}
+
+                    {/* All other players can only go to main menu */}
+                    {(!isWholeGameEnded || !mpState.isHost) && isWholeGameEnded && (
+                      <div className="text-xs font-mono text-zinc-500 uppercase tracking-widest flex items-center justify-center p-2 mb-2 sm:mb-0">
+                        WAITING FOR HOST TO RESTART...
+                      </div>
+                    )}
+
+                    <button 
+                      onClick={() => setConfirmLeaveMatches(true)}
+                      className="flex-1 py-3 sm:py-4 bg-transparent hover:bg-white/10 text-[#ff005c] hover:text-white border-2 border-[#ff005c] font-black tracking-[0.2em] transition-all duration-200 uppercase text-xs sm:text-sm active:translate-x-1 active:translate-y-1 active:shadow-none hover:shadow-[5px_5px_0_rgba(255,0,92,0.4)] pointer-events-auto"
+                    >
+                      MAIN MENU
+                    </button>
+                  </div>
+                )}
+              </div>
+
+            </div>
+          </div>
+        );
+      })()}
+
+      <AnimatePresence>
+        {bannerState.show && bannerState.mode && (
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[90%] sm:w-[480px] z-50 pointer-events-none select-none">
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: -40 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: -40 }}
+              transition={{ type: 'spring', stiffness: 120, damping: 14 }}
+              className="relative flex flex-col items-center bg-[#0d0f1b]/95 border-2 border-[#00f0ff] p-6 sm:p-8 shadow-[10px_10px_0_rgba(0,240,255,0.4)] text-center max-w-full"
+            >
+              {/* Scanline background overlay */}
+              <div className="absolute inset-0 bg-[linear-gradient(rgba(18,16,16,0)_50%,rgba(0,0,0,0.15)_50%)] bg-[size:100%_4px] pointer-events-none opacity-30" />
+
+              {/* Actual Spawner Design SVG representation */}
+              <div className="relative mb-4 flex items-center justify-center z-10 animate-pulse">
+                <svg width="64" height="64" viewBox="0 0 64 64" className="drop-shadow-[0_0_12px_var(--glow-color)]" style={{ '--glow-color': uiState.hardMode ? '#ff3300' : '#ff00ff' } as React.CSSProperties}>
+                  {/* Outer pulsing ring */}
+                  <circle 
+                    cx="32" 
+                    cy="32" 
+                    r="24" 
+                    fill="none" 
+                    stroke={uiState.hardMode ? '#ff3300' : '#ff00ff'} 
+                    strokeWidth="1.5" 
+                    opacity="0.3" 
+                  />
+                  
+                  {/* Hexagon shape (matches live GameCanvas custom rot/shape) */}
+                  <polygon
+                    points="32,10 51,21 51,43 32,54 13,43 13,21"
+                    fill={uiState.hardMode ? '#2a0500' : '#1a001a'}
+                    stroke={uiState.hardMode ? '#ff3300' : '#ff00ff'}
+                    strokeWidth="3.5"
+                  />
+                  
+                  {/* Connected Inner Core node */}
+                  <circle 
+                    cx="32" 
+                    cy="32" 
+                    r="8" 
+                    fill={uiState.hardMode ? '#ff3300' : '#ff00ff'} 
+                  />
+                </svg>
+              </div>
+
+              {/* Header Badge */}
+              <div className="text-[10px] tracking-[0.3em] font-mono font-black uppercase mb-2 text-[#00f0ff] z-10">
+                ▼ INITIAL OBJECTIVE DETECTED
+              </div>
+
+              <div className="w-full h-[1px] bg-[#00f0ff]/30 mb-4 z-10" />
+
+              {/* Title Text */}
+              {bannerState.mode === 'single' ? (
+                <div className="flex flex-col items-center z-10">
+                  <h1 className="text-2xl sm:text-3xl font-black text-white tracking-wide uppercase leading-tight" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)', textShadow: '0 0 15px rgba(0,240,255,0.5)' }}>
+                    DESTROY ALL {uiState.spawnersLeft} SPAWNERS TO WIN
+                  </h1>
+                  <p className="text-[#00f0ff]/80 font-mono text-[10px] sm:text-xs mt-3 tracking-widest uppercase py-2 border-t border-b border-[#00f0ff]/20 w-4/5 mx-auto font-black leading-relaxed">
+                    SPAWNERS CREATE THE ENEMIES THAT SHOOT AT THE PLAYER
+                  </p>
+                </div>
+              ) : (
+                <div className="flex flex-col items-center z-10">
+                  <h1 className="text-2xl sm:text-3xl font-black text-white tracking-wide uppercase leading-tight" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)', textShadow: '0 0 15px rgba(0,240,255,0.5)' }}>
+                    GET THE HIGHEST SCORE TO WIN
+                  </h1>
+                  <p className="text-[#ffcc00]/85 font-mono text-[10px] sm:text-xs mt-3 tracking-widest uppercase py-2 border-t border-b border-[#ffcc00]/20 w-4/5 mx-auto font-black leading-relaxed">
+                    DESTROY SPAWNERS AND DEFEAT OPPONENTS TO EARN POINTS
+                  </p>
+                </div>
+              )}
+
+              {/* Countdown counter */}
+              <div className="mt-4 font-black text-2xl sm:text-3xl text-[#00f0ff] z-10 tracking-widest drop-shadow-[0_0_8px_rgba(0,240,255,0.6)]" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>
+                {bannerCountdown}
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      <input type="file" ref={fileInputRef} className="hidden" accept=".json" onChange={handleLoadMatch} />
     </div>
   );
 }
