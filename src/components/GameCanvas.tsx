@@ -379,6 +379,53 @@ const MAPS: Record<string, MapDefinition> = {
 
 let activeWalls = MAPS.medium.walls;
 
+const BACKEND_URL_PARAM = 'backend';
+const BACKEND_URL_STORAGE_KEY = 'ricochet_backend_url';
+
+function normalizeBackendUrl(value: string | null | undefined) {
+  if (!value) return '';
+  const trimmed = value.trim();
+  if (!trimmed) return '';
+
+  try {
+    const url = new URL(trimmed);
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return '';
+    return url.origin;
+  } catch {
+    return '';
+  }
+}
+
+function getConfiguredBackendUrl() {
+  if (typeof window === 'undefined') {
+    return normalizeBackendUrl(import.meta.env.VITE_BACKEND_URL);
+  }
+
+  const params = new URLSearchParams(window.location.search);
+  const urlFromQuery = normalizeBackendUrl(params.get(BACKEND_URL_PARAM));
+  if (urlFromQuery) {
+    window.localStorage.setItem(BACKEND_URL_STORAGE_KEY, urlFromQuery);
+    return urlFromQuery;
+  }
+
+  return normalizeBackendUrl(window.localStorage.getItem(BACKEND_URL_STORAGE_KEY))
+    || normalizeBackendUrl(import.meta.env.VITE_BACKEND_URL);
+}
+
+function getInviteUrl(roomId: string | null) {
+  if (!roomId || typeof window === 'undefined') return '';
+
+  const inviteUrl = new URL(window.location.pathname || '/', window.location.origin);
+  inviteUrl.searchParams.set('room', roomId);
+
+  const backendUrl = getConfiguredBackendUrl();
+  if (backendUrl) {
+    inviteUrl.searchParams.set(BACKEND_URL_PARAM, backendUrl);
+  }
+
+  return inviteUrl.toString();
+}
+
 function clamp(val: number, min: number, max: number) {
   return Math.max(min, Math.min(val, max));
 }
@@ -674,7 +721,7 @@ export default function GameCanvas() {
 
   const handleCopyInviteLink = () => {
     if (mpState.roomId) {
-      const inviteLink = `${window.location.protocol}//${window.location.host}${window.location.pathname}?room=${mpState.roomId}`;
+      const inviteLink = getInviteUrl(mpState.roomId);
       navigator.clipboard.writeText(inviteLink);
       setCopyLinkFeedback(true);
       setTimeout(() => setCopyLinkFeedback(false), 2000);
@@ -700,7 +747,7 @@ export default function GameCanvas() {
   const downloadQrCode = async () => {
     if (!mpState.roomId) return;
     try {
-      const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(`${window.location.protocol}//${window.location.host}${window.location.pathname}?room=${mpState.roomId}`)}`;
+      const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(getInviteUrl(mpState.roomId))}`;
       const response = await fetch(qrUrl);
       const blob = await response.blob();
       const blobUrl = URL.createObjectURL(blob);
@@ -714,7 +761,7 @@ export default function GameCanvas() {
     } catch (err) {
       console.error("Failed to download QR code blob:", err);
       const link = document.createElement('a');
-      link.href = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(`${window.location.protocol}//${window.location.host}${window.location.pathname}?room=${mpState.roomId}`)}`;
+      link.href = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(getInviteUrl(mpState.roomId))}`;
       link.target = "_blank";
       link.download = `match-${mpState.roomId}-qr.png`;
       link.click();
@@ -855,7 +902,8 @@ export default function GameCanvas() {
   };
 
   useEffect(() => {
-    const socket = io();
+    const backendUrl = getConfiguredBackendUrl();
+    const socket = backendUrl ? io(backendUrl) : io();
     socketRef.current = socket;
 
     const spawnParticlesDirect = (x: number, y: number, color: string, count: number) => {
@@ -3971,7 +4019,7 @@ export default function GameCanvas() {
                           </p>
                           <div className="flex w-full mb-3">
                             <div className="text-[10px] text-white/75 font-mono py-1.5 px-3 bg-black border border-r-0 border-white/10 text-left overflow-x-auto whitespace-nowrap [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden flex-1 flex items-center">
-                              {`${window.location.protocol}//${window.location.host}${window.location.pathname}?room=${mpState.roomId}`}
+                              {getInviteUrl(mpState.roomId)}
                             </div>
                             <button
                               onClick={handleCopyInviteLink}
@@ -3986,7 +4034,7 @@ export default function GameCanvas() {
                         {/* Centered larger QR Code card with cleaner neutral border */}
                         <div className="w-full flex flex-col items-center p-3 bg-black/40 border border-white/10 shadow-[inset_0_0_12px_rgba(255,204,0,0.02)]">
                           <img 
-                            src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`${window.location.protocol}//${window.location.host}${window.location.pathname}?room=${mpState.roomId}`)}`} 
+                            src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(getInviteUrl(mpState.roomId))}`} 
                             alt="Room QR Code"
                             className="w-28 h-28 p-1.5 bg-white mb-2 shadow-[0_0_15px_rgba(255,204,0,0.15)] shrink-0"
                             referrerPolicy="no-referrer"
@@ -4750,4 +4798,3 @@ export default function GameCanvas() {
     </div>
   );
 }
-
