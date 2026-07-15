@@ -1,7 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { io, Socket } from 'socket.io-client';
-import { Copy, Check, Play } from 'lucide-react';
+import { Copy, Check, Play, X, Shuffle } from 'lucide-react';
 
 const MAP_WIDTH = 3000;
 const MAP_HEIGHT = 3000;
@@ -13,8 +13,8 @@ const BULLET_RADIUS = 5;
 const FIRE_RATE = 800; // ms between shots (slow shooting)
 const ENEMY_FIRE_RATE = 2500;
 const ENEMY_SPEED = 60;
-const DASH_COOLDOWN = 30000;
-const BUILD_COOLDOWN = 30000;
+const DASH_COOLDOWN = 25000;
+const BUILD_COOLDOWN = 25000;
 
 const WALLS = [
   // Outer boundaries
@@ -55,7 +55,7 @@ const BASE_WALLS = [
   { x: 0, y: MAP_HEIGHT - 50, w: MAP_WIDTH, h: 50 },
 ];
 
-type MapDefinition = { name: string; difficulty: 'EASY' | 'MEDIUM' | 'HARD' | 'EXPERT'; description: string; walls: {x: number, y: number, w: number, h: number}[]; spawners: {x: number, y: number, radius: number, hp: number, maxHp: number}[] };
+type MapDefinition = { name: string; difficulty: 'EASY' | 'MEDIUM' | 'HARD' | 'EXPERT'; description: string; walls: {x: number, y: number, w: number, h: number}[]; spawners: {x: number, y: number, radius: number, hp: number, maxHp: number, specialType?: string}[]; spawnArea?: { x: number; y: number; w: number; h: number } };
 
 const MAPS: Record<string, MapDefinition> = {
   medium: {
@@ -129,25 +129,7 @@ const MAPS: Record<string, MapDefinition> = {
       { x: 1500, y: 1000, radius: 40, hp: 100, maxHp: 100 }
     ]
   },
-  open_field: {
-    name: "Open Field",
-    difficulty: "EASY",
-    description: "A wide open expanse perfect for learning the ropes. Minimal walls, maximal dodging.",
-    walls: [
-      ...BASE_WALLS,
-      { x: 500, y: 500, w: 100, h: 100 },
-      { x: 2400, y: 500, w: 100, h: 100 },
-      { x: 500, y: 2400, w: 100, h: 100 },
-      { x: 2400, y: 2400, w: 100, h: 100 }
-    ],
-    spawners: [
-      { x: 1500, y: 1500, radius: 40, hp: 100, maxHp: 100 },
-      { x: 1200, y: 1200, radius: 40, hp: 100, maxHp: 100 },
-      { x: 1800, y: 1200, radius: 40, hp: 100, maxHp: 100 },
-      { x: 1200, y: 1800, radius: 40, hp: 100, maxHp: 100 },
-      { x: 1800, y: 1800, radius: 40, hp: 100, maxHp: 100 }
-    ]
-  },
+
   classic_arena: {
     name: "Classic Arena",
     difficulty: "MEDIUM",
@@ -223,46 +205,7 @@ const MAPS: Record<string, MapDefinition> = {
       { x: 1500, y: 1500, radius: 40, hp: 100, maxHp: 100 }
     ]
   },
-  the_maze: {
-    name: "The Maze",
-    difficulty: "HARD",
-    description: "Tight corridors and sudden ambushes. Ricochets are extremely deadly here.",
-    walls: [
-      ...BASE_WALLS,
-      // Maze structure
-      { x: 300, y: 300, w: 900, h: 50 },
-      { x: 300, y: 300, w: 50, h: 900 },
-      { x: 1700, y: 300, w: 1000, h: 50 },
-      { x: 2650, y: 300, w: 50, h: 900 },
-      
-      { x: 300, y: 1700, w: 50, h: 1000 },
-      { x: 300, y: 2650, w: 1000, h: 50 },
-      
-      { x: 2650, y: 1700, w: 50, h: 1000 },
-      { x: 1700, y: 2650, w: 1000, h: 50 },
-      
-      { x: 800, y: 800, w: 500, h: 50 },
-      { x: 800, y: 800, w: 50, h: 500 },
-      
-      { x: 1700, y: 800, w: 500, h: 50 },
-      { x: 2150, y: 800, w: 50, h: 500 },
-      
-      { x: 800, y: 1700, w: 50, h: 500 },
-      { x: 800, y: 2150, w: 500, h: 50 },
-      
-      { x: 2150, y: 1700, w: 50, h: 500 },
-      { x: 1700, y: 2150, w: 500, h: 50 },
-      
-      { x: 1200, y: 1200, w: 600, h: 600 },
-    ],
-    spawners: [
-      { x: 150, y: 150, radius: 40, hp: 100, maxHp: 100 },
-      { x: 2850, y: 150, radius: 40, hp: 100, maxHp: 100 },
-      { x: 150, y: 2850, radius: 40, hp: 100, maxHp: 100 },
-      { x: 2850, y: 2850, radius: 40, hp: 100, maxHp: 100 },
-      { x: 1500, y: 1000, radius: 40, hp: 100, maxHp: 100 }
-    ]
-  },
+
   fortress: {
     name: "Fortress",
     difficulty: "HARD",
@@ -374,60 +317,381 @@ const MAPS: Record<string, MapDefinition> = {
       { x: 400, y: 2600, radius: 40, hp: 100, maxHp: 100 },
       { x: 2600, y: 2600, radius: 40, hp: 100, maxHp: 100 }
     ]
+  },
+  safe_haven: {
+    name: "Safe Haven",
+    difficulty: "EASY",
+    description: "Begin in a secured bottom-left starting quadrant containing an integrated spawner, allowing you to prepare before venturing out into the wild arena.",
+    walls: [
+      ...BASE_WALLS,
+      { x: 0, y: 1800, w: 700, h: 50 },
+      { x: 1000, y: 2100, w: 50, h: 900 },
+      { x: 2000, y: 800, w: 150, h: 150 },
+      { x: 800, y: 800, w: 150, h: 150 },
+      { x: 2000, y: 2000, w: 150, h: 150 }
+    ],
+    spawners: [
+      { x: 500, y: 2400, radius: 40, hp: 100, maxHp: 100 },
+      { x: 1500, y: 1500, radius: 40, hp: 100, maxHp: 100 },
+      { x: 2500, y: 500, radius: 40, hp: 100, maxHp: 100 },
+      { x: 2500, y: 2500, radius: 40, hp: 100, maxHp: 100 },
+      { x: 500, y: 500, radius: 40, hp: 100, maxHp: 100 }
+    ],
+    spawnArea: { x: 50, y: 1850, w: 950, h: 1100 }
+  },
+  gladiator_pit: {
+    name: "Relic Sanctum",
+    difficulty: "HARD",
+    description: "An asymmetric battleground with five specialized chambers. Each spawner is protected by a powerful cosmic relic—from kinetic deflectors to thermal magma gates.",
+    walls: [
+      ...BASE_WALLS,
+      // Sector 1 (Top-Left, Shield Generator)
+      { x: 250, y: 250, w: 40, h: 500 },
+      { x: 250, y: 250, w: 500, h: 40 },
+      { x: 750, y: 250, w: 40, h: 250 },
+      { x: 250, y: 750, w: 300, h: 40 },
+      
+      // Sector 2 (Top-Right, Kinetic Deflectors)
+      { x: 2100, y: 300, w: 80, h: 80 },
+      { x: 2400, y: 200, w: 80, h: 80 },
+      { x: 2700, y: 350, w: 80, h: 80 },
+      { x: 2300, y: 650, w: 120, h: 40 },
+      { x: 2600, y: 750, w: 40, h: 120 },
+      
+      // Sector 3 (Center, Gravitational Singularity)
+      { x: 1200, y: 1200, w: 150, h: 40 },
+      { x: 1650, y: 1200, w: 150, h: 40 },
+      { x: 1200, y: 1760, w: 150, h: 40 },
+      { x: 1650, y: 1760, w: 150, h: 40 },
+      { x: 1100, y: 1350, w: 40, h: 300 },
+      { x: 1860, y: 1350, w: 40, h: 300 },
+      
+      // Sector 4 (Bottom-Left, Thermal Vent)
+      { x: 200, y: 2100, w: 600, h: 40 },
+      { x: 800, y: 2100, w: 40, h: 500 },
+      { x: 400, y: 2700, w: 400, h: 40 },
+      
+      // Sector 5 (Bottom-Right, Crystal Spire)
+      { x: 1900, y: 2000, w: 40, h: 600 },
+      { x: 1900, y: 2000, w: 600, h: 40 },
+      { x: 2200, y: 2300, w: 40, h: 400 },
+      { x: 2200, y: 2300, w: 400, h: 40 }
+    ],
+    spawners: [
+      { x: 1500, y: 1500, radius: 40, hp: 100, maxHp: 100, specialType: 'singularity' },
+      { x: 500, y: 500, radius: 40, hp: 100, maxHp: 100, specialType: 'shield' },
+      { x: 2500, y: 500, radius: 40, hp: 100, maxHp: 100, specialType: 'kinetic' },
+      { x: 500, y: 2500, radius: 40, hp: 100, maxHp: 100, specialType: 'magma_gates' },
+      { x: 2500, y: 2500, radius: 40, hp: 100, maxHp: 100, specialType: 'crystal' }
+    ],
+    spawnArea: { x: 950, y: 950, w: 1100, h: 1100 }
+  },
+  sector_control: {
+    name: "Sector Control",
+    difficulty: "MEDIUM",
+    description: "Divided into 4 quadrants. Each room's spawner is fortified with a unique defensive layout and cosmic relic—from kinetic deflectors to rotating magma gates.",
+    walls: [
+      ...BASE_WALLS,
+      { x: 50, y: 1450, w: 1200, h: 100 },
+      { x: 1750, y: 1450, w: 1200, h: 100 },
+      { x: 1450, y: 50, w: 100, h: 1200 },
+      { x: 1450, y: 1750, w: 100, h: 1200 },
+      
+      // Sector Control Quadrant walls (additions)
+      // Top-Left (Sector Alpha, Shield) - around (500, 500)
+      { x: 300, y: 300, w: 40, h: 400 },
+      { x: 300, y: 300, w: 400, h: 40 },
+      { x: 300, y: 700, w: 400, h: 40 },
+      
+      // Top-Right (Sector Beta, Kinetic) - around (2500, 500)
+      { x: 2300, y: 300, w: 40, h: 400 },
+      { x: 2660, y: 300, w: 40, h: 400 },
+      
+      // Bottom-Left (Sector Gamma, Lava) - around (500, 2500)
+      { x: 300, y: 2300, w: 400, h: 40 },
+      { x: 300, y: 2660, w: 400, h: 40 },
+      
+      // Bottom-Right (Sector Delta, Crystal) - around (2500, 2500)
+      { x: 2320, y: 2320, w: 80, h: 80 },
+      { x: 2600, y: 2320, w: 80, h: 80 },
+      { x: 2320, y: 2600, w: 80, h: 80 },
+      { x: 2600, y: 2600, w: 80, h: 80 }
+    ],
+    spawners: [
+      { x: 500, y: 500, radius: 40, hp: 100, maxHp: 100, specialType: 'shield' },
+      { x: 2500, y: 500, radius: 40, hp: 100, maxHp: 100, specialType: 'kinetic' },
+      { x: 500, y: 2500, radius: 40, hp: 100, maxHp: 100, specialType: 'magma_gates' },
+      { x: 2500, y: 2500, radius: 40, hp: 100, maxHp: 100, specialType: 'crystal' }
+    ]
+  },
+  hellfire_ring: {
+    name: "Hellfire Ring",
+    difficulty: "EXPERT",
+    description: "High-intensity tactical layout. Start within a tight central bunker that contains a spawner but is surrounded by an active outer ring of hostiles.",
+    walls: [
+      ...BASE_WALLS,
+      { x: 1100, y: 1100, w: 300, h: 50 },
+      { x: 1600, y: 1100, w: 300, h: 50 },
+      { x: 1100, y: 1850, w: 300, h: 50 },
+      { x: 1600, y: 1850, w: 300, h: 50 },
+      { x: 1100, y: 1100, w: 50, h: 300 },
+      { x: 1100, y: 1600, w: 50, h: 300 },
+      { x: 1850, y: 1100, w: 50, h: 300 },
+      { x: 1850, y: 1600, w: 50, h: 300 }
+    ],
+    spawners: [
+      { x: 1500, y: 1500, radius: 40, hp: 100, maxHp: 100 },
+      { x: 700, y: 700, radius: 40, hp: 100, maxHp: 100 },
+      { x: 2300, y: 700, radius: 40, hp: 100, maxHp: 100 },
+      { x: 700, y: 2300, radius: 40, hp: 100, maxHp: 100 },
+      { x: 2300, y: 2300, radius: 40, hp: 100, maxHp: 100 }
+    ],
+    spawnArea: { x: 1150, y: 1150, w: 700, h: 700 }
+  },
+  gridlock: {
+    name: "Gridlock",
+    difficulty: "EXPERT",
+    description: "An intense grid network of tight 400x400 rooms. Players begin inside a safe bottom-left room containing a single spawner.",
+    walls: [
+      ...BASE_WALLS,
+      // Vertical divider 1 (at x=950, w=100)
+      { x: 950, y: 50, w: 100, h: 350 },
+      { x: 950, y: 600, w: 100, h: 800 },
+      { x: 950, y: 1600, w: 100, h: 800 },
+      { x: 950, y: 2600, w: 100, h: 350 },
+
+      // Vertical divider 2 (at x=1950, w=100)
+      { x: 1950, y: 50, w: 100, h: 350 },
+      { x: 1950, y: 600, w: 100, h: 800 },
+      { x: 1950, y: 1600, w: 100, h: 800 },
+      { x: 1950, y: 2600, w: 100, h: 350 },
+
+      // Horizontal divider 1 (at y=950, h=100)
+      { x: 50, y: 950, w: 350, h: 100 },
+      { x: 600, y: 950, w: 800, h: 100 },
+      { x: 1600, y: 950, w: 800, h: 100 },
+      { x: 2600, y: 950, w: 350, h: 100 },
+
+      // Horizontal divider 2 (at y=1950, h=100)
+      { x: 50, y: 1950, w: 350, h: 100 },
+      { x: 600, y: 1950, w: 800, h: 100 },
+      { x: 1600, y: 1950, w: 800, h: 100 },
+      { x: 2600, y: 1950, w: 350, h: 100 }
+    ],
+    spawners: [
+      { x: 500, y: 2500, radius: 40, hp: 100, maxHp: 100 },
+      { x: 500, y: 500, radius: 40, hp: 100, maxHp: 100 },
+      { x: 2500, y: 500, radius: 40, hp: 100, maxHp: 100 },
+      { x: 1500, y: 1500, radius: 40, hp: 100, maxHp: 100 },
+      { x: 2500, y: 2500, radius: 40, hp: 100, maxHp: 100 }
+    ],
+    spawnArea: { x: 50, y: 2050, w: 900, h: 900 }
+  },
+  labyrinth: {
+    name: "Serpentine Labyrinth",
+    difficulty: "HARD",
+    description: "A serpentine, winding network of intricate corridors. Find your path and destroy the deep nested spawners.",
+    walls: (() => {
+      const walls: { x: number; y: number; w: number; h: number }[] = [...BASE_WALLS];
+      const CELL_SIZE = 360;
+      const WALL_THICKNESS = 80;
+      const HALF_THICKNESS = 40;
+
+      const openEdges = new Set<string>();
+
+      const addEdge = (c1: number, r1: number, c2: number, r2: number) => {
+        if (c1 > c2 || (c1 === c2 && r1 > r2)) {
+          openEdges.add(`${c2},${r2}-${c1},${r1}`);
+        } else {
+          openEdges.add(`${c1},${r1}-${c2},${r2}`);
+        }
+      };
+
+      // Top half (rows 0..3) serpentine winding path
+      addEdge(0, 0, 0, 1);
+      addEdge(0, 1, 0, 2);
+      addEdge(0, 2, 0, 3);
+      addEdge(0, 3, 1, 3);
+      addEdge(1, 3, 1, 2);
+      addEdge(1, 2, 1, 1);
+      addEdge(1, 1, 1, 0);
+      addEdge(1, 0, 2, 0);
+      addEdge(2, 0, 2, 1);
+      addEdge(2, 1, 2, 2);
+      addEdge(2, 2, 2, 3);
+      addEdge(2, 3, 3, 3);
+      addEdge(3, 3, 3, 2);
+      addEdge(3, 2, 3, 1);
+      addEdge(3, 1, 3, 0);
+      addEdge(3, 0, 4, 0);
+      addEdge(4, 0, 4, 1);
+      addEdge(4, 1, 4, 2);
+      addEdge(4, 2, 4, 3);
+      addEdge(4, 3, 5, 3);
+      addEdge(5, 3, 5, 2);
+      addEdge(5, 2, 5, 1);
+      addEdge(5, 1, 5, 0);
+      addEdge(5, 0, 6, 0);
+      addEdge(6, 0, 6, 1);
+      addEdge(6, 1, 6, 2);
+      addEdge(6, 2, 6, 3);
+      addEdge(6, 3, 7, 3);
+      addEdge(7, 3, 7, 2);
+      addEdge(7, 2, 7, 1);
+      addEdge(7, 1, 7, 0);
+
+      // Bridge Top half to Bottom half
+      addEdge(7, 3, 7, 4);
+
+      // Column 7 bottom half
+      addEdge(7, 4, 7, 5);
+      addEdge(7, 5, 7, 6);
+      addEdge(7, 6, 7, 7);
+
+      // Columns 0..6 vertical connectors for rows 4..7
+      for (let c = 0; c <= 6; c++) {
+        addEdge(c, 4, c, 5);
+        addEdge(c, 5, c, 6);
+        addEdge(c, 6, c, 7);
+      }
+
+      // Horizontal connectors on Row 4
+      for (let c = 0; c <= 6; c++) {
+        addEdge(c, 4, c + 1, 4);
+      }
+
+      // Generate walls for boundaries that are NOT open edges
+      // 1. Vertical wall lines (c ranges from 1 to 7) separating col c-1 and col c
+      for (let c = 1; c <= 7; c++) {
+        for (let r = 0; r <= 7; r++) {
+          const edgeKey = `${c - 1},${r}-${c},${r}`;
+          if (!openEdges.has(edgeKey)) {
+            const x = 50 + c * CELL_SIZE - HALF_THICKNESS;
+            const y = 50 + r * CELL_SIZE - HALF_THICKNESS;
+            const w = WALL_THICKNESS;
+            const h = CELL_SIZE + WALL_THICKNESS;
+            walls.push({ x, y, w, h });
+          }
+        }
+      }
+
+      // 2. Horizontal wall lines (r ranges from 1 to 7) separating row r-1 and row r
+      for (let r = 1; r <= 7; r++) {
+        for (let c = 0; c <= 7; c++) {
+          const edgeKey = `${c},${r - 1}-${c},${r}`;
+          if (!openEdges.has(edgeKey)) {
+            const x = 50 + c * CELL_SIZE - HALF_THICKNESS;
+            const y = 50 + r * CELL_SIZE - HALF_THICKNESS;
+            const w = CELL_SIZE + WALL_THICKNESS;
+            const h = WALL_THICKNESS;
+            walls.push({ x, y, w, h });
+          }
+        }
+      }
+
+      return walls;
+    })(),
+    spawners: [
+      { x: 320, y: 320, radius: 40, hp: 100, maxHp: 100 }, // Directly in spawnArea, cell (0,0)
+      { x: 2750, y: 230, radius: 40, hp: 100, maxHp: 100 }, // Cell (7,0)
+      { x: 1310, y: 1670, radius: 40, hp: 100, maxHp: 100 }, // Cell (3,4)
+      { x: 230, y: 2750, radius: 40, hp: 100, maxHp: 100 }, // Cell (0,7)
+      { x: 2750, y: 2750, radius: 40, hp: 100, maxHp: 100 } // Cell (7,7) - the exact far end of the maze
+    ],
+    spawnArea: { x: 50, y: 50, w: 360, h: 360 }
+  },
+  scattered_ruins: {
+    name: "Scattered Ruins",
+    difficulty: "EASY",
+    description: "An ancient tactical arena littered with randomized-looking features and organic covers, perfect for multiplayer strategy.",
+    walls: [
+      ...BASE_WALLS,
+      { x: 400, y: 1000, w: 200, h: 100 },
+      { x: 1000, y: 400, w: 100, h: 300 },
+      { x: 1600, y: 300, w: 150, h: 150 },
+      { x: 2200, y: 800, w: 200, h: 100 },
+      
+      { x: 800, y: 1200, w: 100, h: 250 },
+      { x: 1300, y: 1000, w: 300, h: 100 },
+      { x: 1900, y: 1300, w: 150, h: 150 },
+      
+      { x: 600, y: 1700, w: 250, h: 100 },
+      { x: 1200, y: 1900, w: 100, h: 300 },
+      { x: 1700, y: 2100, w: 300, h: 100 },
+      
+      { x: 2300, y: 1800, w: 150, h: 250 },
+      { x: 1100, y: 2500, w: 200, h: 100 },
+      { x: 2100, y: 2500, w: 100, h: 200 }
+    ],
+    spawners: [
+      { x: 500, y: 500, radius: 40, hp: 100, maxHp: 100 },
+      { x: 2500, y: 500, radius: 40, hp: 100, maxHp: 100 },
+      { x: 1500, y: 1500, radius: 40, hp: 100, maxHp: 100 },
+      { x: 500, y: 2500, radius: 40, hp: 100, maxHp: 100 },
+      { x: 2500, y: 2500, radius: 40, hp: 100, maxHp: 100 }
+    ],
+    spawnArea: { x: 50, y: 2050, w: 900, h: 900 }
+  },
+  checkerboard: {
+    name: "Checkerboard",
+    difficulty: "EXPERT",
+    description: "An elegant matrix of small square pillars arranged in a grid-like checkerboard pattern. High-frequency ricochets are guaranteed!",
+    walls: [
+      ...BASE_WALLS,
+      // Row 0
+      { x: 900, y: 300, w: 200, h: 200 },
+      { x: 1900, y: 300, w: 200, h: 200 },
+      // Row 1
+      { x: 300, y: 900, w: 200, h: 200 },
+      { x: 1400, y: 900, w: 200, h: 200 },
+      { x: 2500, y: 900, w: 200, h: 200 },
+      // Row 2
+      { x: 900, y: 1500, w: 200, h: 200 },
+      { x: 1900, y: 1500, w: 200, h: 200 },
+      // Row 3
+      { x: 300, y: 2100, w: 200, h: 200 },
+      { x: 1400, y: 2100, w: 200, h: 200 },
+      { x: 2500, y: 2100, w: 200, h: 200 },
+      // Row 4
+      { x: 900, y: 2700, w: 200, h: 200 },
+      { x: 1900, y: 2700, w: 200, h: 200 }
+    ],
+    spawners: [
+      { x: 300, y: 300, radius: 40, hp: 100, maxHp: 100 },
+      { x: 2700, y: 300, radius: 40, hp: 100, maxHp: 100 },
+      { x: 1500, y: 1500, radius: 40, hp: 100, maxHp: 100 },
+      { x: 300, y: 2700, radius: 40, hp: 100, maxHp: 100 },
+      { x: 2700, y: 2700, radius: 40, hp: 100, maxHp: 100 }
+    ],
+    spawnArea: { x: 50, y: 2050, w: 900, h: 900 }
   }
 };
 
 let activeWalls = MAPS.medium.walls;
 
-const BACKEND_URL_PARAM = 'backend';
-const BACKEND_URL_STORAGE_KEY = 'ricochet_backend_url';
-
-function normalizeBackendUrl(value: string | null | undefined) {
-  if (!value) return '';
-  const trimmed = value.trim();
-  if (!trimmed) return '';
-
-  try {
-    const url = new URL(trimmed);
-    if (url.protocol !== 'https:' && url.protocol !== 'http:') return '';
-    return url.origin;
-  } catch {
-    return '';
-  }
-}
-
-function getConfiguredBackendUrl() {
-  if (typeof window === 'undefined') {
-    return normalizeBackendUrl(import.meta.env.VITE_BACKEND_URL);
-  }
-
-  const params = new URLSearchParams(window.location.search);
-  const urlFromQuery = normalizeBackendUrl(params.get(BACKEND_URL_PARAM));
-  if (urlFromQuery) {
-    window.localStorage.setItem(BACKEND_URL_STORAGE_KEY, urlFromQuery);
-    return urlFromQuery;
-  }
-
-  return normalizeBackendUrl(window.localStorage.getItem(BACKEND_URL_STORAGE_KEY))
-    || normalizeBackendUrl(import.meta.env.VITE_BACKEND_URL);
-}
-
-function getInviteUrl(roomId: string | null) {
-  if (!roomId || typeof window === 'undefined') return '';
-
-  const inviteUrl = new URL(window.location.pathname || '/', window.location.origin);
-  inviteUrl.searchParams.set('room', roomId);
-
-  const backendUrl = getConfiguredBackendUrl();
-  if (backendUrl) {
-    inviteUrl.searchParams.set(BACKEND_URL_PARAM, backendUrl);
-  }
-
-  return inviteUrl.toString();
-}
-
 function clamp(val: number, min: number, max: number) {
   return Math.max(min, Math.min(val, max));
+}
+
+function getConnectedComponent(startBlock: { x: number; y: number }, allBlocks: { x: number; y: number }[]): { x: number; y: number }[] {
+  const component: { x: number; y: number }[] = [startBlock];
+  const visited = new Set<string>();
+  visited.add(`${startBlock.x}_${startBlock.y}`);
+  
+  let head = 0;
+  while (head < component.length) {
+    const current = component[head++];
+    for (const other of allBlocks) {
+      const otherKey = `${other.x}_${other.y}`;
+      if (visited.has(otherKey)) continue;
+      
+      if (Math.abs(current.x - other.x) <= 45 && Math.abs(current.y - other.y) <= 45) {
+        visited.add(otherKey);
+        component.push(other);
+      }
+    }
+  }
+  return component;
 }
 
 function distSqLinePoint(v: {x:number, y:number}, w: {x:number, y:number}, p: {x:number, y:number}) {
@@ -437,14 +701,19 @@ function distSqLinePoint(v: {x:number, y:number}, w: {x:number, y:number}, p: {x
   return (p.x - (v.x + t * (w.x - v.x))) ** 2 + (p.y - (v.y + t * (w.y - v.y))) ** 2;
 }
 
-function getSafeSpawn(minDistToWalls = 50) {
+function getSafeSpawn(minDistToWalls = 50, spawnArea?: { x: number; y: number; w: number; h: number }) {
   let spawnX = 500;
   let spawnY = 500;
   let validSpawn = false;
   let attempts = 0;
   while (!validSpawn && attempts < 100) {
-    spawnX = 100 + Math.random() * (MAP_WIDTH - 200);
-    spawnY = 100 + Math.random() * (MAP_HEIGHT - 200);
+    if (spawnArea) {
+      spawnX = spawnArea.x + minDistToWalls + Math.random() * (spawnArea.w - 2 * minDistToWalls);
+      spawnY = spawnArea.y + minDistToWalls + Math.random() * (spawnArea.h - 2 * minDistToWalls);
+    } else {
+      spawnX = 100 + Math.random() * (MAP_WIDTH - 200);
+      spawnY = 100 + Math.random() * (MAP_HEIGHT - 200);
+    }
     let inWall = false;
     for (const wall of activeWalls) {
       if (spawnX > wall.x - minDistToWalls && spawnX < wall.x + wall.w + minDistToWalls &&
@@ -457,6 +726,202 @@ function getSafeSpawn(minDistToWalls = 50) {
     attempts++;
   }
   return { x: spawnX, y: spawnY };
+}
+
+function getBulletRelicCollision(
+  bulletX: number,
+  bulletY: number,
+  bulletRadius: number,
+  spawner: { x: number; y: number; specialType?: string },
+  currentTime: number
+): { nx: number; ny: number; overlap: number } | null {
+  if (!spawner.specialType) return null;
+
+  // Helper for circle collision
+  const checkCircle = (cx: number, cy: number, r: number) => {
+    const dx = bulletX - cx;
+    const dy = bulletY - cy;
+    const distSq = dx * dx + dy * dy;
+    const minDist = bulletRadius + r;
+    if (distSq < minDist * minDist) {
+      const dist = Math.sqrt(distSq);
+      if (dist > 0) {
+        return {
+          nx: dx / dist,
+          ny: dy / dist,
+          overlap: minDist - dist,
+        };
+      } else {
+        return {
+          nx: 0,
+          ny: -1,
+          overlap: minDist,
+        };
+      }
+    }
+    return null;
+  };
+
+  // Helper for segment collision
+  const checkSegment = (ax: number, ay: number, bx: number, by: number, thickness: number = 0) => {
+    const vx = bx - ax;
+    const vy = by - ay;
+    const wx = bulletX - ax;
+    const wy = bulletY - ay;
+    
+    const vLenSq = vx * vx + vy * vy;
+    if (vLenSq === 0) return checkCircle(ax, ay, thickness);
+
+    let t = (wx * vx + wy * vy) / vLenSq;
+    if (t < 0) t = 0;
+    if (t > 1) t = 1;
+
+    const px = ax + t * vx;
+    const py = ay + t * vy;
+
+    const dx = bulletX - px;
+    const dy = bulletY - py;
+    const distSq = dx * dx + dy * dy;
+    const minDist = bulletRadius + thickness;
+
+    if (distSq < minDist * minDist) {
+      const dist = Math.sqrt(distSq);
+      if (dist > 0) {
+        return {
+          nx: dx / dist,
+          ny: dy / dist,
+          overlap: minDist - dist,
+        };
+      }
+    }
+    return null;
+  };
+
+  if (spawner.specialType === 'shield') {
+    // 5 small nodes of radius 12 at distance 95, rotated by -currentTime * 0.001
+    const angleOffset = -currentTime * 0.001;
+    for (let i = 0; i < 5; i++) {
+      const angle = angleOffset + (i * Math.PI * 2) / 5;
+      const cx = spawner.x + Math.cos(angle) * 95;
+      const cy = spawner.y + Math.sin(angle) * 95;
+      const col = checkCircle(cx, cy, 12);
+      if (col) return col;
+    }
+  } else if (spawner.specialType === 'kinetic') {
+    // 4 petals rotated by currentTime * 0.0015
+    const angleOffset = currentTime * 0.0015;
+    for (let i = 0; i < 4; i++) {
+      const angle = angleOffset + (i * Math.PI) / 2;
+      const p1x = spawner.x + Math.cos(angle) * 50;
+      const p1y = spawner.y + Math.sin(angle) * 50;
+      const p2x = spawner.x + Math.cos(angle + 0.2) * 85;
+      const p2y = spawner.y + Math.sin(angle + 0.2) * 85;
+      const p3x = spawner.x + Math.cos(angle) * 95;
+      const p3y = spawner.y + Math.sin(angle) * 95;
+      const p4x = spawner.x + Math.cos(angle - 0.2) * 85;
+      const p4y = spawner.y + Math.sin(angle - 0.2) * 85;
+
+      const col1 = checkSegment(p1x, p1y, p2x, p2y);
+      if (col1) return col1;
+      const col2 = checkSegment(p2x, p2y, p3x, p3y);
+      if (col2) return col2;
+      const col3 = checkSegment(p3x, p3y, p4x, p4y);
+      if (col3) return col3;
+      const col4 = checkSegment(p4x, p4y, p1x, p1y);
+      if (col4) return col4;
+    }
+  } else if (spawner.specialType === 'singularity') {
+    // 3 spiral arms rotated by currentTime * 0.002
+    const angleOffset = currentTime * 0.002;
+    for (let arm = 0; arm < 3; arm++) {
+      const startA = angleOffset + (arm * Math.PI * 2) / 3;
+      let lastX = spawner.x + Math.cos(startA) * 35;
+      let lastY = spawner.y + Math.sin(startA) * 35;
+      for (let r = 45; r <= 95; r += 10) {
+        const theta = startA + (r - 35) * 0.05;
+        const rx = spawner.x + Math.cos(theta) * r;
+        const ry = spawner.y + Math.sin(theta) * r;
+        const col = checkSegment(lastX, lastY, rx, ry, 3);
+        if (col) return col;
+        lastX = rx;
+        lastY = ry;
+      }
+    }
+  } else if (spawner.specialType === 'magma_gates') {
+    // 6 asymmetric rectangular rotating obstacles with parallel orientations
+    const orbitAngle = currentTime * 0.0008;
+    const cosO = Math.cos(orbitAngle);
+    const sinO = Math.sin(orbitAngle);
+
+    const rects = [
+      { angle: 0.2, distance: 75, w: 22, h: 45 },
+      { angle: 1.2, distance: 95, w: 35, h: 20 },
+      { angle: 2.2, distance: 80, w: 18, h: 32 },
+      { angle: 3.3, distance: 100, w: 40, h: 15 },
+      { angle: 4.4, distance: 70, w: 25, h: 38 },
+      { angle: 5.5, distance: 90, w: 20, h: 28 },
+    ];
+    for (const r of rects) {
+      const cx_local = Math.cos(r.angle) * r.distance;
+      const cy_local = Math.sin(r.angle) * r.distance;
+      const hw = r.w / 2;
+      const hh = r.h / 2;
+
+      // Unrotated corners relative to the spawner center
+      const c0x_local = cx_local - hw;
+      const c0y_local = cy_local - hh;
+      const c1x_local = cx_local + hw;
+      const c1y_local = cy_local - hh;
+      const c2x_local = cx_local + hw;
+      const c2y_local = cy_local + hh;
+      const c3x_local = cx_local - hw;
+      const c3y_local = cy_local + hh;
+
+      // Rotated world-space corners
+      const c0x = spawner.x + c0x_local * cosO - c0y_local * sinO;
+      const c0y = spawner.y + c0x_local * sinO + c0y_local * cosO;
+      const c1x = spawner.x + c1x_local * cosO - c1y_local * sinO;
+      const c1y = spawner.y + c1x_local * sinO + c1y_local * cosO;
+      const c2x = spawner.x + c2x_local * cosO - c2y_local * sinO;
+      const c2y = spawner.y + c2x_local * sinO + c2y_local * cosO;
+      const c3x = spawner.x + c3x_local * cosO - c3y_local * sinO;
+      const c3y = spawner.y + c3x_local * sinO + c3y_local * cosO;
+
+      const col1 = checkSegment(c0x, c0y, c1x, c1y, 2);
+      if (col1) return col1;
+      const col2 = checkSegment(c1x, c1y, c2x, c2y, 2);
+      if (col2) return col2;
+      const col3 = checkSegment(c2x, c2y, c3x, c3y, 2);
+      if (col3) return col3;
+      const col4 = checkSegment(c3x, c3y, c0x, c0y, 2);
+      if (col4) return col4;
+    }
+  } else if (spawner.specialType === 'crystal') {
+    // 6 shards rotated by currentTime * 0.0006
+    const angleOffset = currentTime * 0.0006;
+    for (let i = 0; i < 6; i++) {
+      const angle = angleOffset + (i * Math.PI) / 3;
+      const p1x = spawner.x + Math.cos(angle) * 45;
+      const p1y = spawner.y + Math.sin(angle) * 45;
+      const p2x = spawner.x + Math.cos(angle - 0.1) * 70;
+      const p2y = spawner.y + Math.sin(angle - 0.1) * 70;
+      const p3x = spawner.x + Math.cos(angle) * 85;
+      const p3y = spawner.y + Math.sin(angle) * 85;
+      const p4x = spawner.x + Math.cos(angle + 0.1) * 70;
+      const p4y = spawner.y + Math.sin(angle + 0.1) * 70;
+
+      const col1 = checkSegment(p1x, p1y, p2x, p2y);
+      if (col1) return col1;
+      const col2 = checkSegment(p2x, p2y, p3x, p3y);
+      if (col2) return col2;
+      const col3 = checkSegment(p3x, p3y, p4x, p4y);
+      if (col3) return col3;
+      const col4 = checkSegment(p4x, p4y, p1x, p1y);
+      if (col4) return col4;
+    }
+  }
+
+  return null;
 }
 
 const DashStatus = ({ stateRef }: { stateRef: any }) => {
@@ -519,6 +984,7 @@ export default function GameCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const mapListRef = useRef<HTMLDivElement>(null);
 
   const PLAYER_COLORS = [
     { n: '#00f0ff', g: 'rgba(0, 240, 255, 0.4)', name: 'CYAN' },
@@ -674,22 +1140,22 @@ export default function GameCanvas() {
   // We use a ref for the entire game state to avoid stale closures
   const initialSpawn = useRef(getSafeSpawn(100)).current;
   const stateRef = useRef({
-    player: { x: initialSpawn.x, y: initialSpawn.y, vx: 0, vy: 0, radius: PLAYER_RADIUS, lastShoot: 0, dash: { active: false, targetX: 0, targetY: 0, shieldRadius: 60, lastTime: performance.now() - DASH_COOLDOWN, wasReady: true }, build: { active: false, endTime: 0, lastBlockX: 0, lastBlockY: 0, lastTime: performance.now() - BUILD_COOLDOWN } },
-    multiplayerPlayers: {} as Record<string, { x: number, y: number, radius: number, isDash: boolean, name?: string, colorIdx?: number }>,
+    player: { x: initialSpawn.x, y: initialSpawn.y, vx: 0, vy: 0, kbvx: 0, kbvy: 0, processedZoneKbs: [] as number[], radius: PLAYER_RADIUS, lastShoot: 0, dash: { active: false, endTime: 0, targetX: 0, targetY: 0, shieldRadius: 60, lastTime: performance.now() - DASH_COOLDOWN, wasReady: true }, build: { active: false, endTime: 0, lastBlockX: 0, lastBlockY: 0, lastTime: performance.now() - BUILD_COOLDOWN }, recentBlocks: [] as { key: string, x: number, y: number, timestamp: number }[] },
+    multiplayerPlayers: {} as Record<string, { x: number, y: number, radius: number, isDash: boolean, name?: string, colorIdx?: number, isDead?: boolean, kbvx?: number, kbvy?: number, recentBlocks?: { key: string, x: number, y: number, timestamp: number }[] }>,
     blocks: [] as { x: number; y: number; size: number; createdAt: number, colorIdx?: number }[],
     nextBlockScore: 100,
-    bullets: [] as { id?: string; x: number; y: number; dx: number; dy: number; radius: number, isPlayer: boolean, bounceCount: number, spawnTime: number, isNeutral: boolean, ownerId?: string, colorIdx?: number, targetX?: number, targetY?: number }[],
-    enemies: [] as { id?: string; x: number; y: number; radius: number; lastShoot: number, speed: number, targetX?: number, targetY?: number }[],
-    bouncers: [] as { id?: string; x: number; y: number; dx: number; dy: number; size: number; radius: number; speed: number; lastDirChange: number; lastMultiply: number, targetX?: number, targetY?: number }[],
-    zones: [] as { x: number; y: number; innerRadius: number; outerRadius: number; duration: number; spawnTime: number; ownerId: string; colorIdx?: number }[],
+    bullets: [] as { id?: string; x: number; y: number; dx: number; dy: number; radius: number, isPlayer: boolean, bounceCount: number, spawnTime: number, isNeutral: boolean, ownerId?: string, colorIdx?: number, targetX?: number, targetY?: number, repelMultiplied?: boolean, allowedBlockKeys?: string[], leftBlockKeys?: string[] }[],
+    enemies: [] as { id?: string; x: number; y: number; radius: number; lastShoot: number, speed: number, targetX?: number, targetY?: number, kbvx?: number, kbvy?: number, processedZoneKbs?: number[] }[],
+    bouncers: [] as { id?: string; x: number; y: number; dx: number; dy: number; size: number; radius: number; speed: number; lastDirChange: number; lastMultiply: number, targetX?: number, targetY?: number, kbvx?: number, kbvy?: number, processedZoneKbs?: number[] }[],
+    zones: [] as { x: number; y: number; innerRadius: number; outerRadius: number; duration: number; spawnTime: number; ownerId: string; colorIdx?: number, type?: 'repel' }[],
     nextEntityId: 1,
     bouncerCapacity: 2,
     spawners: [
-      { x: 800, y: 800, radius: 40, hp: 100, maxHp: 100 },
-      { x: 2200, y: 800, radius: 40, hp: 100, maxHp: 100 },
-      { x: 800, y: 2200, radius: 40, hp: 100, maxHp: 100 },
-      { x: 2400, y: 2400, radius: 40, hp: 100, maxHp: 100 },
-      { x: 1500, y: 600, radius: 40, hp: 100, maxHp: 100 }
+      { x: 800, y: 800, radius: 40, hp: 100, maxHp: 100, specialType: undefined as string | undefined },
+      { x: 2200, y: 800, radius: 40, hp: 100, maxHp: 100, specialType: undefined as string | undefined },
+      { x: 800, y: 2200, radius: 40, hp: 100, maxHp: 100, specialType: undefined as string | undefined },
+      { x: 2400, y: 2400, radius: 40, hp: 100, maxHp: 100, specialType: undefined as string | undefined },
+      { x: 1500, y: 600, radius: 40, hp: 100, maxHp: 100, specialType: undefined as string | undefined }
     ],
     keys: { w: false, a: false, s: false, d: false },
     mouse: { x: 0, y: 0, worldX: 0, worldY: 0, down: false, justDown: false, rightDown: false, rightJustDown: false },
@@ -701,7 +1167,7 @@ export default function GameCanvas() {
     camera: { x: 0, y: 0, width: 0, height: 0, z: 1 },
     lastBroadcastTime: 0,
     particles: [] as { x: number; y: number; vx: number; vy: number; life: number; maxLife: number; color: string; radius: number }[],
-    trails: [] as { x: number; y: number; age: number; color: string; radius: number }[],
+    trails: [] as { x: number; y: number; age: number; color: string; radius: number, isSuperStrong?: boolean }[],
     shockwaves: [] as { x: number; y: number; color: string; maxRadius: number; age: number; maxAge: number; thickness: number }[],
     floatingTexts: [] as { x: number; y: number; text: string; age: number; maxAge: number; color: string; vy: number }[],
     shake: 0,
@@ -721,7 +1187,7 @@ export default function GameCanvas() {
 
   const handleCopyInviteLink = () => {
     if (mpState.roomId) {
-      const inviteLink = getInviteUrl(mpState.roomId);
+      const inviteLink = `${window.location.protocol}//${window.location.host}${window.location.pathname}?room=${mpState.roomId}`;
       navigator.clipboard.writeText(inviteLink);
       setCopyLinkFeedback(true);
       setTimeout(() => setCopyLinkFeedback(false), 2000);
@@ -747,7 +1213,7 @@ export default function GameCanvas() {
   const downloadQrCode = async () => {
     if (!mpState.roomId) return;
     try {
-      const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(getInviteUrl(mpState.roomId))}`;
+      const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(`${window.location.protocol}//${window.location.host}${window.location.pathname}?room=${mpState.roomId}`)}`;
       const response = await fetch(qrUrl);
       const blob = await response.blob();
       const blobUrl = URL.createObjectURL(blob);
@@ -761,7 +1227,7 @@ export default function GameCanvas() {
     } catch (err) {
       console.error("Failed to download QR code blob:", err);
       const link = document.createElement('a');
-      link.href = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(getInviteUrl(mpState.roomId))}`;
+      link.href = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(`${window.location.protocol}//${window.location.host}${window.location.pathname}?room=${mpState.roomId}`)}`;
       link.target = "_blank";
       link.download = `match-${mpState.roomId}-qr.png`;
       link.click();
@@ -802,6 +1268,30 @@ export default function GameCanvas() {
     };
     reader.readAsText(file);
     if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const selectAndScrollToMap = (mapId: string) => {
+    setUiState(prev => ({ ...prev, mapId }));
+    
+    setTimeout(() => {
+      if (mapListRef.current) {
+        const container = mapListRef.current;
+        const button = container.querySelector(`[data-map-id="${mapId}"]`) as HTMLElement;
+        if (button) {
+          const containerRect = container.getBoundingClientRect();
+          const buttonRect = button.getBoundingClientRect();
+          
+          const isFullyVisible = (
+            buttonRect.top >= containerRect.top - 1 &&
+            buttonRect.bottom <= containerRect.bottom + 1
+          );
+          
+          if (!isFullyVisible) {
+            button.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        }
+      }
+    }, 50);
   };
 
   const createRoom = () => {
@@ -859,13 +1349,16 @@ export default function GameCanvas() {
     const state = stateRef.current;
     state.hardMode = isHardMode;
     state.nextEntityId = 1;
-    const spawn = getSafeSpawn(100);
+    const spawn = getSafeSpawn(100, mapDef.spawnArea);
     state.player.x = spawn.x;
     state.player.y = spawn.y;
     state.player.vx = 0;
     state.player.vy = 0;
+    state.player.kbvx = 0;
+    state.player.kbvy = 0;
+    state.player.processedZoneKbs = [];
     state.player.lastShoot = performance.now();
-    state.player.dash = { active: false, targetX: 0, targetY: 0, shieldRadius: 60, lastTime: performance.now() - DASH_COOLDOWN, wasReady: true };
+    state.player.dash = { active: false, endTime: 0, targetX: 0, targetY: 0, shieldRadius: 60, lastTime: performance.now() - DASH_COOLDOWN, wasReady: true };
     state.player.build = { active: false, endTime: 0, lastBlockX: 0, lastBlockY: 0, lastTime: performance.now() - BUILD_COOLDOWN };
     state.blocks = [];
     state.nextBlockScore = 100;
@@ -901,9 +1394,98 @@ export default function GameCanvas() {
     setUiState(newUi);
   };
 
+  const tryPlaceBuildBlock = useCallback((currentTime: number, gridX: number, gridY: number, cIdx: number) => {
+     try {
+         const s = stateRef.current;
+         let blockOccupied = false;
+         
+         for (const enemy of s.enemies) {
+            if (enemy.x > gridX - 20 - enemy.radius && enemy.x < gridX + 20 + enemy.radius &&
+                enemy.y > gridY - 20 - enemy.radius && enemy.y < gridY + 20 + enemy.radius) {
+               blockOccupied = true;
+               break;
+            }
+         }
+         if (!blockOccupied) {
+             for (const b of s.bouncers) {
+                if (b.x > gridX - 20 - b.radius && b.x < gridX + 20 + b.radius &&
+                    b.y > gridY - 20 - b.radius && b.y < gridY + 20 + b.radius) {
+                   blockOccupied = true;
+                   break;
+                }
+             }
+         }
+         if (!blockOccupied) {
+             for (const spawner of s.spawners) {
+                 if (spawner.hp > 0 && spawner.x > gridX - 20 - spawner.radius && spawner.x < gridX + 20 + spawner.radius &&
+                     spawner.y > gridY - 20 - spawner.radius && spawner.y < gridY + 20 + spawner.radius) {
+                     blockOccupied = true;
+                     break;
+                 }
+             }
+         }
+         if (!blockOccupied) {
+             const players = Object.values(s.multiplayerPlayers) as any[];
+             for (const p of players) {
+                if (!p.isDead && p.x > gridX - 20 - p.radius && p.x < gridX + 20 + p.radius &&
+                    p.y > gridY - 20 - p.radius && p.y < gridY + 20 + p.radius) {
+                   blockOccupied = true;
+                   break;
+                }
+             }
+         }
+         if (blockOccupied) return;
+
+         for (let i = s.bullets.length - 1; i >= 0; i--) {
+            const b = s.bullets[i];
+            if (b.x > gridX - 20 && b.x < gridX + 20 && b.y > gridY - 20 && b.y < gridY + 20) {
+               s.bullets.splice(i, 1);
+            }
+         }
+
+         const existingIdx = s.blocks.findIndex(b => b.x === gridX && b.y === gridY);
+         if (existingIdx !== -1) {
+            if (s.blocks[existingIdx].colorIdx === cIdx) {
+               return;
+            } else {
+               s.blocks.splice(existingIdx, 1);
+               if (socketRef.current && mpRef.current.roomId && !mpRef.current.isHost) {
+                  socketRef.current.emit('client_action', mpRef.current.roomId, { type: 'build_remove', x: gridX, y: gridY });
+               }
+            }
+         }
+         
+         s.blocks.push({ x: gridX, y: gridY, size: 40, createdAt: currentTime, colorIdx: cIdx });
+         if (socketRef.current && mpRef.current.roomId && !mpRef.current.isHost) {
+            socketRef.current.emit('client_action', mpRef.current.roomId, { type: 'build', x: gridX, y: gridY, colorIdx: cIdx });
+         }
+     } catch(e) {
+         console.error("Error in tryPlaceBuildBlock:", e);
+     }
+  }, []);
+
+  const applySpecialAbility = useCallback((x: number, y: number, colorIdx: number, ownerId: string) => {
+     const radius = 240;
+     const s = stateRef.current;
+     
+     s.zones.push({
+         x: x,
+         y: y,
+         innerRadius: 0,
+         outerRadius: radius,
+         duration: 6000,
+         spawnTime: performance.now(),
+         ownerId: ownerId,
+         colorIdx: colorIdx,
+         type: 'repel'
+     });
+     const pDef = PLAYER_COLORS[colorIdx !== undefined ? colorIdx : 0] || PLAYER_COLORS[0];
+     s.shockwaves.push({ x: x, y: y, color: pDef.n, maxRadius: radius, age: 0, maxAge: 0.5, thickness: 30 });
+     s.shockwaves.push({ x: x, y: y, color: '#ffffff', maxRadius: radius * 0.8, age: 0, maxAge: 0.3, thickness: 10 });
+  }, []);
+
   useEffect(() => {
-    const backendUrl = getConfiguredBackendUrl();
-    const socket = backendUrl ? io(backendUrl) : io();
+    const socket = io();
     socketRef.current = socket;
 
     const spawnParticlesDirect = (x: number, y: number, color: string, count: number) => {
@@ -1179,6 +1761,23 @@ export default function GameCanvas() {
          });
        } else if (mpRef.current.isHost) {
          if (action.type === 'shoot') {
+              const clientAllowedKeys: string[] = [];
+              const clientPlayer = stateRef.current.multiplayerPlayers[clientId];
+              if (clientPlayer && clientPlayer.recentBlocks) {
+                for (const rb of clientPlayer.recentBlocks) {
+                  const blockObj = stateRef.current.blocks.find(b => b.x === rb.x && b.y === rb.y);
+                  if (blockObj) {
+                    const comp = getConnectedComponent(blockObj, stateRef.current.blocks.filter(b => b.colorIdx === blockObj.colorIdx));
+                    for (const cb of comp) {
+                      const cbKey = `${cb.x}_${cb.y}`;
+                      if (!clientAllowedKeys.includes(cbKey)) {
+                        clientAllowedKeys.push(cbKey);
+                      }
+                    }
+                  }
+                }
+              }
+
               stateRef.current.bullets.push({
                 id: 'bl_' + stateRef.current.nextEntityId++,
                 x: action.x,
@@ -1191,21 +1790,12 @@ export default function GameCanvas() {
                 spawnTime: performance.now(),
                 isNeutral: false,
                 ownerId: clientId,
-                colorIdx: action.colorIdx
+                colorIdx: action.colorIdx,
+                allowedBlockKeys: clientAllowedKeys,
+                leftBlockKeys: []
               });
          } else if (action.type === 'special') {
-             stateRef.current.zones.push({
-                 x: action.x,
-                 y: action.y,
-                 innerRadius: 100,
-                 outerRadius: 250,
-                 duration: 3000,
-                 spawnTime: performance.now(),
-                 ownerId: clientId,
-                 colorIdx: action.colorIdx
-             });
-             const pDef = PLAYER_COLORS[action.colorIdx !== undefined ? action.colorIdx : 0] || PLAYER_COLORS[0];
-             stateRef.current.shockwaves.push({ x: action.x, y: action.y, color: pDef.n, maxRadius: 250, age: 0, maxAge: 0.5, thickness: 15 });
+             applySpecialAbility(action.x, action.y, action.colorIdx, clientId);
          } else if (action.type === 'build') {
              stateRef.current.blocks.push({
                  x: action.x,
@@ -1214,6 +1804,14 @@ export default function GameCanvas() {
                  createdAt: performance.now(),
                  colorIdx: action.colorIdx
              });
+             if (mpRef.current.isHost) {
+                 for (let i = stateRef.current.bullets.length - 1; i >= 0; i--) {
+                    const b = stateRef.current.bullets[i];
+                    if (b.x > action.x - 20 && b.x < action.x + 20 && b.y > action.y - 20 && b.y < action.y + 20) {
+                       stateRef.current.bullets.splice(i, 1);
+                    }
+                 }
+             }
          } else if (action.type === 'build_remove') {
              const idx = stateRef.current.blocks.findIndex(b => b.x === action.x && b.y === action.y);
              if (idx !== -1) {
@@ -1292,14 +1890,25 @@ export default function GameCanvas() {
     const handleResize = () => {
       const w = wrapper.clientWidth;
       const h = wrapper.clientHeight;
+      if (w === 0 || h === 0) return;
       canvas.width = w;
       canvas.height = h;
       state.camera.width = w;
       state.camera.height = h;
       setContainerSize({ width: w, height: h });
     };
+
+    let resizeObserver: ResizeObserver | null = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver((entries) => {
+        if (!entries || entries.length === 0) return;
+        handleResize();
+      });
+      resizeObserver.observe(wrapper);
+    } else {
+      window.addEventListener('resize', handleResize);
+    }
     handleResize();
-    window.addEventListener('resize', handleResize);
 
     const handleKeyDown = (e: KeyboardEvent) => {
       const key = e.key.toLowerCase();
@@ -1310,58 +1919,40 @@ export default function GameCanvas() {
       
       const currentTime = performance.now();
       
-      if (key === '1' || key === ' ') {
-         if (currentTime - stateRef.current.player.dash.lastTime >= DASH_COOLDOWN) {
-            stateRef.current.player.dash.lastTime = currentTime;
-            
-            const isHostMode = !mpRef.current.roomId || mpRef.current.isHost;
-            const finalX = stateRef.current.mouse.worldX;
-            const finalY = stateRef.current.mouse.worldY;
-            
-            if (isHostMode) {
-              const cIdx = playerProfileRef.current.colorIdx;
-              stateRef.current.zones.push({
-                 x: finalX,
-                 y: finalY,
-                 innerRadius: 100,
-                 outerRadius: 250,
-                 duration: 3000,
-                 spawnTime: currentTime,
-                 ownerId: 'local',
-                 colorIdx: cIdx
-              });
-              const pDef = PLAYER_COLORS[cIdx] || PLAYER_COLORS[0];
-              stateRef.current.shockwaves.push({ x: finalX, y: finalY, color: pDef.n, maxRadius: 250, age: 0, maxAge: 0.5, thickness: 15 });
-            } else {
-              socketRef.current?.emit('client_action', mpRef.current.roomId, { type: 'special', x: finalX, y: finalY, colorIdx: playerProfileRef.current.colorIdx });
+      if (key === '1') {
+         if (uiRef.current.status === 'PLAYING') {
+            const dash = stateRef.current.player.dash;
+            const endTime = dash.endTime || 0;
+            if (!dash.active && (endTime === 0 || currentTime - endTime >= DASH_COOLDOWN)) {
+               dash.active = true;
+               dash.endTime = currentTime + 6000;
+               dash.lastTime = currentTime;
+               
+               const isHostMode = !mpRef.current.roomId || mpRef.current.isHost;
+               const finalX = stateRef.current.player.x;
+               const finalY = stateRef.current.player.y;
+               
+               if (isHostMode) {
+                 const cIdx = playerProfileRef.current.colorIdx;
+                 applySpecialAbility(finalX, finalY, cIdx, 'local');
+               } else {
+                 socketRef.current?.emit('client_action', mpRef.current.roomId, { type: 'special', x: finalX, y: finalY, colorIdx: playerProfileRef.current.colorIdx });
+                 applySpecialAbility(finalX, finalY, playerProfileRef.current.colorIdx, socketRef.current?.id || 'local');
+               }
             }
          }
       }
       if (key === '2') {
-         if (currentTime - stateRef.current.player.build.lastTime >= BUILD_COOLDOWN) {
+         if (!stateRef.current.player.build.active && (stateRef.current.player.build.endTime === 0 || currentTime - stateRef.current.player.build.endTime >= BUILD_COOLDOWN)) {
             stateRef.current.player.build.active = true;
-            stateRef.current.player.build.endTime = currentTime + 10000;
+            stateRef.current.player.build.endTime = currentTime + 8000;
             stateRef.current.player.build.lastTime = currentTime;
             const gridX = Math.round(stateRef.current.player.x / 40) * 40;
             const gridY = Math.round(stateRef.current.player.y / 40) * 40;
             stateRef.current.player.build.lastBlockX = gridX;
             stateRef.current.player.build.lastBlockY = gridY;
-            // Add a starting block
             const cIdx = playerProfileRef.current.colorIdx;
-            const existingIdx = stateRef.current.blocks.findIndex(b => b.x === gridX && b.y === gridY);
-            if (existingIdx !== -1) {
-               if (stateRef.current.blocks[existingIdx].colorIdx === cIdx) {
-                  stateRef.current.blocks.splice(existingIdx, 1);
-                  if (socketRef.current && mpRef.current.roomId && !mpRef.current.isHost) {
-                     socketRef.current.emit('client_action', mpRef.current.roomId, { type: 'build_remove', x: gridX, y: gridY });
-                  }
-               }
-            } else {
-               stateRef.current.blocks.push({ x: gridX, y: gridY, size: 40, createdAt: currentTime, colorIdx: cIdx });
-               if (socketRef.current && mpRef.current.roomId && !mpRef.current.isHost) {
-                 socketRef.current.emit('client_action', mpRef.current.roomId, { type: 'build', x: gridX, y: gridY, colorIdx: cIdx });
-               }
-            }
+            tryPlaceBuildBlock(currentTime, gridX, gridY, cIdx);
          }
       }
       if (key === 'escape') {
@@ -1386,7 +1977,7 @@ export default function GameCanvas() {
     };
 
     const handleMouseMove = (e: MouseEvent) => {
-      if (e.target !== canvas) return;
+      if (!canvas) return;
       const rect = canvas.getBoundingClientRect();
       state.mouse.x = e.clientX - rect.left;
       state.mouse.y = e.clientY - rect.top;
@@ -1583,7 +2174,7 @@ export default function GameCanvas() {
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
     canvas.addEventListener('contextmenu', handleContextMenu);
-    canvas.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mousemove', handleMouseMove);
     canvas.addEventListener('mousedown', handleMouseDown);
     canvas.addEventListener('mouseup', handleMouseUp);
     canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
@@ -1701,10 +2292,71 @@ export default function GameCanvas() {
       }
 
       if (shouldRunUpdates) {
+        // Track blocks each player has been inside during the last 1 second to prevent bullet self-elimination
+        if (!state.player.recentBlocks) {
+          state.player.recentBlocks = [];
+        }
+        const pRadius = state.player.radius;
+        const myColorIdx = playerProfileRef.current.colorIdx;
+        for (const block of state.blocks) {
+          // Only track blocks placed by the same player
+          if (block.colorIdx !== myColorIdx) {
+            continue;
+          }
+          const halfSize = block.size / 2;
+          const closestX = Math.max(block.x - halfSize, Math.min(state.player.x, block.x + halfSize));
+          const closestY = Math.max(block.y - halfSize, Math.min(state.player.y, block.y + halfSize));
+          const pdx = state.player.x - closestX;
+          const pdy = state.player.y - closestY;
+          if (pdx * pdx + pdy * pdy < pRadius * pRadius) {
+            const key = `${block.x}_${block.y}`;
+            const exists = state.player.recentBlocks.some((b: any) => b.key === key);
+            if (!exists) {
+              state.player.recentBlocks.push({ key, x: block.x, y: block.y, timestamp: currentTime });
+            } else {
+              const found = state.player.recentBlocks.find((b: any) => b.key === key);
+              if (found) found.timestamp = currentTime;
+            }
+          }
+        }
+        state.player.recentBlocks = state.player.recentBlocks.filter((b: any) => currentTime - b.timestamp <= 1000);
+
+        for (const pid in state.multiplayerPlayers) {
+          const mpPlayer = state.multiplayerPlayers[pid];
+          if (!mpPlayer.recentBlocks) {
+            mpPlayer.recentBlocks = [];
+          }
+          const rRadius = mpPlayer.radius || PLAYER_RADIUS;
+          const mpColorIdx = mpPlayer.colorIdx;
+          for (const block of state.blocks) {
+            // Only track blocks placed by this specific player
+            if (block.colorIdx !== mpColorIdx) {
+              continue;
+            }
+            const halfSize = block.size / 2;
+            const closestX = Math.max(block.x - halfSize, Math.min(mpPlayer.x, block.x + halfSize));
+            const closestY = Math.max(block.y - halfSize, Math.min(mpPlayer.y, block.y + halfSize));
+            const pdx = mpPlayer.x - closestX;
+            const pdy = mpPlayer.y - closestY;
+            if (pdx * pdx + pdy * pdy < rRadius * rRadius) {
+              const key = `${block.x}_${block.y}`;
+              const exists = mpPlayer.recentBlocks.some((b: any) => b.key === key);
+              if (!exists) {
+                mpPlayer.recentBlocks.push({ key, x: block.x, y: block.y, timestamp: currentTime });
+              } else {
+                const found = mpPlayer.recentBlocks.find((b: any) => b.key === key);
+                if (found) found.timestamp = currentTime;
+              }
+            }
+          }
+          mpPlayer.recentBlocks = mpPlayer.recentBlocks.filter((b: any) => currentTime - b.timestamp <= 1000);
+        }
+
         const mouseJustDown = state.mouse.justDown;
         state.mouse.justDown = false;
         const mouseRightJustDown = state.mouse.rightJustDown;
         state.mouse.rightJustDown = false;
+
         const rightJustReleased = state.touches.right.justReleased;
         state.touches.right.justReleased = false;
 
@@ -1813,112 +2465,10 @@ export default function GameCanvas() {
         
         // 1. Update Player Movement
         if (STATUS === 'PLAYING') {
-        if (state.player.dash.active) {
-            const dx = state.player.dash.targetX - state.player.x;
-            const dy = state.player.dash.targetY - state.player.y;
-            const dist = Math.sqrt(dx * dx + dy * dy);
-            const DASH_SPEED = 2000;
-            const moveDist = DASH_SPEED * dt;
+          if (state.player.dash.active && currentTime >= state.player.dash.endTime) {
+            state.player.dash.active = false;
+          }
 
-            if (dist <= moveDist) {
-              state.player.x = state.player.dash.targetX;
-              state.player.y = state.player.dash.targetY;
-              state.player.dash.active = false;
-              state.player.vx = 0;
-              state.player.vy = 0;
-              spawnParticles(state.player.x, state.player.y, '#b500ff', 30);
-              state.shockwaves.push({ x: state.player.x, y: state.player.y, color: '#b500ff', maxRadius: 200, age: 0, maxAge: 0.5, thickness: 25 });
-              state.shake = 15;
-            } else {
-              state.player.x += (dx / dist) * moveDist;
-              state.player.y += (dy / dist) * moveDist;
-              state.player.vx = (dx / dist) * DASH_SPEED;
-              state.player.vy = (dy / dist) * DASH_SPEED;
-              state.trails.push({
-                x: state.player.x, y: state.player.y, age: 0,
-                color: '#b500ff', radius: state.player.dash.shieldRadius - 10
-              });
-            }
-
-            // Dash Collision with Enemies
-            const checkRadius = state.player.dash.shieldRadius;
-
-            for (let e = state.enemies.length - 1; e >= 0; e--) {
-              const enemy = state.enemies[e];
-              const edx = enemy.x - state.player.x;
-              const edy = enemy.y - state.player.y;
-              if (edx * edx + edy * edy < (checkRadius + enemy.radius) ** 2) {
-                spawnParticles(enemy.x, enemy.y, '#ff3333', 30);
-                state.shockwaves.push({ x: enemy.x, y: enemy.y, color: '#ff3333', maxRadius: 100, age: 0, maxAge: 0.3, thickness: 10 });
-                state.shake = 10;
-                state.enemies.splice(e, 1);
-                setUiState(prev => {
-                  const newScore = prev.score + 150;
-                  let newBlocks = prev.blocks;
-                  let gainedBlocks = false;
-                  while (newScore >= state.nextBlockScore) {
-                    newBlocks++;
-                    state.nextBlockScore += 100;
-                    gainedBlocks = true;
-                  }
-                  if (gainedBlocks) {
-                    const buildBtn = document.getElementById('tool-btn-build');
-                    if (buildBtn) {
-                      buildBtn.animate([
-                        { transform: 'scale(1)', boxShadow: '0 0 0px #ffcc00' },
-                        { transform: 'scale(1.1)', boxShadow: '0 0 30px #ffcc00' },
-                        { transform: 'scale(1)', boxShadow: '0 0 0px #ffcc00' }
-                      ], { duration: 400, easing: 'ease-out' });
-                    }
-                  }
-                  uiRef.current = { ...prev, score: newScore, blocks: newBlocks };
-                  return uiRef.current;
-                });
-              }
-            }
-
-            // Dash Collision with Bullets
-            for (let b = state.bullets.length - 1; b >= 0; b--) {
-              const bullet = state.bullets[b];
-              const bdx = bullet.x - state.player.x;
-              const bdy = bullet.y - state.player.y;
-              if (bdx * bdx + bdy * bdy < (checkRadius + bullet.radius) ** 2) {
-                spawnParticles(bullet.x, bullet.y, '#ffffff', 10);
-                state.bullets.splice(b, 1);
-              }
-            }
-            
-            // Dash Collision with Spawners
-            for (let s = state.spawners.length - 1; s >= 0; s--) {
-              const spawner = state.spawners[s];
-              const sdx = spawner.x - state.player.x;
-              const sdy = spawner.y - state.player.y;
-              if (sdx * sdx + sdy * sdy < (checkRadius + spawner.radius) ** 2) {
-                // Dash does continuous damage while overlapping (scaled by dt to ignore framerate dependency)
-                spawner.hp -= 1000 * dt;
-                spawnParticles(spawner.x, spawner.y, '#ffffff', 2);
-                
-                if (spawner.hp <= 0) {
-                  const spawnerColor = state.hardMode ? '#ff3300' : '#ff00ff';
-                  spawnParticles(spawner.x, spawner.y, spawnerColor, 100);
-                  state.shockwaves.push({ x: spawner.x, y: spawner.y, color: spawnerColor, maxRadius: 200, age: 0, maxAge: 0.5, thickness: 20 });
-                  state.shake = 30;
-                  state.spawners.splice(s, 1);
-                  
-                  setUiState(prev => {
-                    const newScore = prev.score + 1000;
-                    let newBlocks = prev.blocks + 3; // Bonus blocks
-                    uiRef.current = { ...prev, score: newScore, blocks: newBlocks, spawnersLeft: state.spawners.length };
-                    // Check win condition
-                    if (state.spawners.length === 0) {
-                       uiRef.current.status = 'VICTORY';
-                    }
-                    return uiRef.current;
-                  });
-                }
-              }
-            }
-        } else {
           let moveX = 0;
           let moveY = 0;
           if (state.keys.w) moveY -= 1;
@@ -1942,8 +2492,20 @@ export default function GameCanvas() {
             }
           }
 
-          if (length > 0 && Math.random() > 0.5) {
-            const pDef = PLAYER_COLORS[playerProfileRef.current.colorIdx] || PLAYER_COLORS[0];
+          const pDef = PLAYER_COLORS[playerProfileRef.current.colorIdx] || PLAYER_COLORS[0];
+          const playerKb = Math.sqrt((state.player.kbvx || 0) ** 2 + (state.player.kbvy || 0) ** 2);
+          if (playerKb > 150) {
+            // Flying away / high knockback - spawn powerful super trails every frame
+            state.trails.push({
+              x: state.player.x,
+              y: state.player.y,
+              age: 0,
+              color: pDef.n,
+              radius: state.player.radius * 0.8,
+              isSuperStrong: true
+            });
+          } else if (length > 0 && Math.random() > 0.5) {
+            // Normal movement trail
             state.trails.push({
               x: state.player.x,
               y: state.player.y,
@@ -1956,8 +2518,42 @@ export default function GameCanvas() {
           state.player.vx = moveX;
           state.player.vy = moveY;
 
-          state.player.x += state.player.vx * PLAYER_SPEED * dt;
-          state.player.y += state.player.vy * PLAYER_SPEED * dt;
+          const kbvx = state.player.kbvx || 0;
+          const kbvy = state.player.kbvy || 0;
+          state.player.x += (state.player.vx * PLAYER_SPEED + kbvx) * dt;
+          state.player.y += (state.player.vy * PLAYER_SPEED + kbvy) * dt;
+
+          state.player.kbvx = kbvx * Math.exp(-8 * dt);
+          state.player.kbvy = kbvy * Math.exp(-8 * dt);
+          if (Math.abs(state.player.kbvx) < 1) state.player.kbvx = 0;
+          if (Math.abs(state.player.kbvy) < 1) state.player.kbvy = 0;
+        }
+
+        // Apply zone shockwave knockback to local player
+        const myId = mpRef.current.roomId ? socketRef.current?.id : 'local';
+        if (!state.player.processedZoneKbs) {
+           state.player.processedZoneKbs = [];
+        }
+        for (const zone of state.zones) {
+           if (zone.ownerId !== myId && zone.ownerId !== 'local') {
+              if (!state.player.processedZoneKbs.includes(zone.spawnTime)) {
+                 const dx = state.player.x - zone.x;
+                 const dy = state.player.y - zone.y;
+                 const distSq = dx * dx + dy * dy;
+                 if (distSq < zone.outerRadius * zone.outerRadius) {
+                    const dist = Math.sqrt(distSq);
+                    if (dist > 0) {
+                       state.player.kbvx = (dx / dist) * 2000;
+                       state.player.kbvy = (dy / dist) * 2000;
+                    }
+                    state.player.processedZoneKbs.push(zone.spawnTime);
+                 }
+              }
+           }
+        }
+        if (state.player.processedZoneKbs.length > 20) {
+           const now = performance.now();
+           state.player.processedZoneKbs = state.player.processedZoneKbs.filter((t: number) => now - t < 10000);
         }
 
         // Handle Build Mode (trailing blocks)
@@ -1971,20 +2567,7 @@ export default function GameCanvas() {
                 state.player.build.lastBlockX = gridX;
                 state.player.build.lastBlockY = gridY;
                 const cIdx = playerProfileRef.current.colorIdx;
-                const existingIdx = state.blocks.findIndex(b => b.x === gridX && b.y === gridY);
-                if (existingIdx !== -1) {
-                   if (state.blocks[existingIdx].colorIdx === cIdx) {
-                      state.blocks.splice(existingIdx, 1);
-                      if (socketRef.current && mpRef.current.roomId && !mpRef.current.isHost) {
-                         socketRef.current.emit('client_action', mpRef.current.roomId, { type: 'build_remove', x: gridX, y: gridY });
-                      }
-                   }
-                } else {
-                   state.blocks.push({ x: gridX, y: gridY, size: 40, createdAt: currentTime, colorIdx: cIdx });
-                   if (socketRef.current && mpRef.current.roomId && !mpRef.current.isHost) {
-                      socketRef.current.emit('client_action', mpRef.current.roomId, { type: 'build', x: gridX, y: gridY, colorIdx: cIdx });
-                   }
-                }
+                tryPlaceBuildBlock(currentTime, gridX, gridY, cIdx);
              }
           }
         }
@@ -2010,38 +2593,54 @@ export default function GameCanvas() {
           }
         }
 
-        }
-
         state.player.x = clamp(state.player.x, state.player.radius, MAP_WIDTH - state.player.radius);
         state.player.y = clamp(state.player.y, state.player.radius, MAP_HEIGHT - state.player.radius);
 
-        // Client-side local instant death trigger checks
-        if (!mpRef.current.isHost && mpRef.current.roomId && uiRef.current.status === 'PLAYING') {
+        // Local player instant death trigger checks (runs in ALL modes: Solo, Host, and Client)
+        if (uiRef.current.status === 'PLAYING') {
           const localColorIdx = playerProfileRef.current.colorIdx;
           const localColor = PLAYER_COLORS[localColorIdx]?.n || '#00f0ff';
 
-          // 1. Collide with Enemies
-          for (const enemy of state.enemies) {
-            const dx = state.player.x - enemy.x;
-            const dy = state.player.y - enemy.y;
-            if (dx * dx + dy * dy < (state.player.radius + enemy.radius) ** 2) {
-              spawnParticles(state.player.x, state.player.y, localColor, 50);
-              state.shake = 20;
-              setUiState(prev => {
-                uiRef.current = { ...prev, status: 'GAME_OVER' };
-                return uiRef.current;
-              });
-              break;
+          // 1. Collide with Enemies (state.enemies)
+          if (!state.player.dash.active) {
+            for (const enemy of state.enemies) {
+              const dx = state.player.x - enemy.x;
+              const dy = state.player.y - enemy.y;
+              if (dx * dx + dy * dy < (state.player.radius + enemy.radius) ** 2) {
+                spawnParticles(state.player.x, state.player.y, localColor, 50);
+                state.shake = 20;
+                setUiState(prev => {
+                  uiRef.current = { ...prev, status: 'GAME_OVER' };
+                  return uiRef.current;
+                });
+                break;
+              }
             }
           }
-          
-          // 2. Collide with Bouncers
-          if (uiRef.current.status === 'PLAYING') {
+
+          // 2. Collide with Bouncers (state.bouncers)
+          if (uiRef.current.status === 'PLAYING' && !state.player.dash.active) {
             for (const b of state.bouncers) {
               const pdx = state.player.x - b.x;
               const pdy = state.player.y - b.y;
               if (pdx * pdx + pdy * pdy < (state.player.radius + b.radius) ** 2) {
-                if (!state.player.dash.active) {
+                spawnParticles(state.player.x, state.player.y, localColor, 50);
+                state.shake = 20;
+                setUiState(prev => {
+                  uiRef.current = { ...prev, status: 'GAME_OVER' };
+                  return uiRef.current;
+                });
+                break;
+              }
+            }
+          }
+
+          // 3. Collide with Spawner Orbiting Special Obstacles (Shield, Kinetic, Singularity, Magma gates, Crystal)
+          if (uiRef.current.status === 'PLAYING' && !state.player.dash.active) {
+            for (const spawner of state.spawners) {
+              if (spawner.specialType) {
+                const collision = getBulletRelicCollision(state.player.x, state.player.y, state.player.radius, spawner, currentTime);
+                if (collision) {
                   spawnParticles(state.player.x, state.player.y, localColor, 50);
                   state.shake = 20;
                   setUiState(prev => {
@@ -2054,7 +2653,7 @@ export default function GameCanvas() {
             }
           }
 
-          // 3. Collide with Enemy / Neutral / Player Bullets
+          // 4. Collide with Enemy / Neutral / Player Bullets
           if (uiRef.current.status === 'PLAYING') {
             for (const bullet of state.bullets) {
               let bulletColor = '#ff0066';
@@ -2091,12 +2690,24 @@ export default function GameCanvas() {
             let destroyed = false;
 
             // Player touching block
-            if (STATUS === 'PLAYING' && (currentTime - block.createdAt > 1500)) {
-              const pRadius = state.player.dash.active ? state.player.dash.shieldRadius : state.player.radius;
-              const pdx = Math.abs(state.player.x - block.x);
-              const pdy = Math.abs(state.player.y - block.y);
-              if (pdx < block.size / 2 + pRadius && pdy < block.size / 2 + pRadius) {
-                destroyed = true;
+            if (STATUS === 'PLAYING') {
+              const gridX = Math.round(state.player.x / 40) * 40;
+              const gridY = Math.round(state.player.y / 40) * 40;
+              const isStandingOn = (block.x === gridX && block.y === gridY);
+
+              if (state.player.build.active) {
+                // When build mode is active:
+                // - If standing on empty tile: place one of that player's blocks (handled by tryPlaceBuildBlock).
+                // - If standing on another player's block: replace it (handled by tryPlaceBuildBlock).
+                // - If standing on one of their own blocks: do nothing.
+                // We do not destroy any blocks via physical overlap when build mode is active.
+              } else {
+                // When build mode is inactive:
+                // - If the player is standing on any block, remove that block.
+                // - If the player is standing on an empty tile, do nothing.
+                if (isStandingOn) {
+                  destroyed = true;
+                }
               }
             }
 
@@ -2114,13 +2725,77 @@ export default function GameCanvas() {
             }
 
             if (destroyed) {
-              spawnParticles(block.x, block.y, '#ffcc00', 20);
+              const pDef = PLAYER_COLORS[block.colorIdx !== undefined ? block.colorIdx : 0] || PLAYER_COLORS[0];
+              spawnParticles(block.x, block.y, pDef.n, 20);
               state.blocks.splice(b, 1);
             }
           }
 
         // 2. Spawn Enemies
         if (state.spawners.length > 0) {
+          // Emit ambient floating relic particles (only for spawners with active obstacles)
+          for (const spawner of state.spawners) {
+            if (spawner.specialType && Math.random() < 0.15) {
+              let pColor = '#ff00ff';
+              let vx = (Math.random() - 0.5) * 50;
+              let vy = (Math.random() - 0.5) * 50;
+              let maxLife = Math.random() * 1.5 + 0.5;
+              let radius = Math.random() * 2 + 1;
+              
+              if (spawner.specialType === 'shield') {
+                pColor = '#00f0ff';
+                const angle = Math.random() * Math.PI * 2;
+                vx = Math.cos(angle) * 30;
+                vy = Math.sin(angle) * 30;
+              } else if (spawner.specialType === 'kinetic') {
+                pColor = '#ffcc00';
+                const angle = Math.random() * Math.PI * 2;
+                vx = Math.cos(angle) * 120;
+                vy = Math.sin(angle) * 120;
+              } else if (spawner.specialType === 'singularity') {
+                pColor = '#b500ff';
+                const angle = Math.random() * Math.PI * 2;
+                const spawnRadius = 80 + Math.random() * 20;
+                const px = spawner.x + Math.cos(angle) * spawnRadius;
+                const py = spawner.y + Math.sin(angle) * spawnRadius;
+                state.particles.push({
+                  x: px,
+                  y: py,
+                  vx: -Math.cos(angle) * 60,
+                  vy: -Math.sin(angle) * 60,
+                  life: 0,
+                  maxLife: 1.2,
+                  color: pColor,
+                  radius: Math.random() * 2.5 + 0.5
+                });
+                continue;
+              } else if (spawner.specialType === 'magma_gates') {
+                pColor = '#ff5500';
+                vy = -Math.random() * 40 - 20;
+                vx = (Math.random() - 0.5) * 20;
+              } else if (spawner.specialType === 'crystal') {
+                pColor = '#00ffaa';
+                vx = (Math.random() - 0.5) * 15;
+                vy = (Math.random() - 0.5) * 15;
+                radius = Math.random() * 3 + 1.5;
+              } else {
+                continue; // Do not emit for default or unknown spawner types
+              }
+              
+              state.particles.push({
+                x: spawner.x + (Math.random() - 0.5) * 50,
+                y: spawner.y + (Math.random() - 0.5) * 50,
+                vx,
+                vy,
+                life: 0,
+                maxLife,
+                color: pColor,
+                radius
+              });
+            }
+          }
+
+
           const mapDef = MAPS[uiRef.current.mapId] || MAPS.medium;
           const initialSpawners = mapDef.spawners.length;
           
@@ -2184,10 +2859,51 @@ export default function GameCanvas() {
           const dy = targetY - enemy.y;
           const dist = Math.sqrt(dx * dx + dy * dy);
           
-          if (dist > 0) {
-            enemy.x += (dx / dist) * enemy.speed * dt;
-            enemy.y += (dy / dist) * enemy.speed * dt;
+          // Apply zone shockwave knockback to enemy
+          if (!enemy.processedZoneKbs) {
+            enemy.processedZoneKbs = [];
           }
+          for (const zone of state.zones) {
+            const zdx = enemy.x - zone.x;
+            const zdy = enemy.y - zone.y;
+            const distSq = zdx * zdx + zdy * zdy;
+            if (distSq < zone.outerRadius * zone.outerRadius) {
+              const zdist = Math.sqrt(distSq);
+              if (zdist > 0) {
+                if (!enemy.processedZoneKbs.includes(zone.spawnTime)) {
+                  // 1. Initial shockwave blast hit (INSTANT, no delay!)
+                  enemy.kbvx = (zdx / zdist) * 2000;
+                  enemy.kbvy = (zdy / zdist) * 2000;
+                  enemy.processedZoneKbs.push(zone.spawnTime);
+                } else {
+                  // 2. Continuous wind/repellent force to keep them out
+                  enemy.kbvx += (zdx / zdist) * 3000 * dt;
+                  enemy.kbvy += (zdy / zdist) * 3000 * dt;
+                }
+              }
+            }
+          }
+          if (enemy.processedZoneKbs.length > 20) {
+            const nowTime = performance.now();
+            enemy.processedZoneKbs = enemy.processedZoneKbs.filter((t: number) => nowTime - t < 10000);
+          }
+
+          let moveX = 0;
+          let moveY = 0;
+          if (dist > 0) {
+            moveX = (dx / dist) * enemy.speed;
+            moveY = (dy / dist) * enemy.speed;
+          }
+
+          const kbvx = enemy.kbvx || 0;
+          const kbvy = enemy.kbvy || 0;
+          enemy.x += (moveX + kbvx) * dt;
+          enemy.y += (moveY + kbvy) * dt;
+
+          enemy.kbvx = kbvx * Math.exp(-8 * dt);
+          enemy.kbvy = kbvy * Math.exp(-8 * dt);
+          if (Math.abs(enemy.kbvx) < 1) enemy.kbvx = 0;
+          if (Math.abs(enemy.kbvy) < 1) enemy.kbvy = 0;
 
           // Enemy Wall Collisions
           for (const wall of activeWalls) {
@@ -2291,8 +3007,44 @@ export default function GameCanvas() {
             }
           }
           
-          b.x += b.dx * b.speed * dt;
-          b.y += b.dy * b.speed * dt;
+          // Apply zone shockwave knockback to bouncer
+          if (!b.processedZoneKbs) {
+            b.processedZoneKbs = [];
+          }
+          for (const zone of state.zones) {
+            const zdx = b.x - zone.x;
+            const zdy = b.y - zone.y;
+            const distSq = zdx * zdx + zdy * zdy;
+            if (distSq < zone.outerRadius * zone.outerRadius) {
+              const zdist = Math.sqrt(distSq);
+              if (zdist > 0) {
+                if (!b.processedZoneKbs.includes(zone.spawnTime)) {
+                  // 1. Initial shockwave blast hit (INSTANT, no delay!)
+                  b.kbvx = (zdx / zdist) * 2000;
+                  b.kbvy = (zdy / zdist) * 2000;
+                  b.processedZoneKbs.push(zone.spawnTime);
+                } else {
+                  // 2. Continuous wind/repellent force to keep them out
+                  b.kbvx += (zdx / zdist) * 3000 * dt;
+                  b.kbvy += (zdy / zdist) * 3000 * dt;
+                }
+              }
+            }
+          }
+          if (b.processedZoneKbs.length > 20) {
+            const nowTime = performance.now();
+            b.processedZoneKbs = b.processedZoneKbs.filter((t: number) => nowTime - t < 10000);
+          }
+
+          const kbvx = b.kbvx || 0;
+          const kbvy = b.kbvy || 0;
+          b.x += (b.dx * b.speed + kbvx) * dt;
+          b.y += (b.dy * b.speed + kbvy) * dt;
+
+          b.kbvx = kbvx * Math.exp(-8 * dt);
+          b.kbvy = kbvy * Math.exp(-8 * dt);
+          if (Math.abs(b.kbvx) < 1) b.kbvx = 0;
+          if (Math.abs(b.kbvy) < 1) b.kbvy = 0;
           
           if (b.x < b.radius) { b.x = b.radius; b.dx *= -1; }
           if (b.x > MAP_WIDTH - b.radius) { b.x = MAP_WIDTH - b.radius; b.dx *= -1; }
@@ -2379,18 +3131,7 @@ export default function GameCanvas() {
         let isShooting = false;
         let shootDirX = 0;
         let shootDirY = 0;
-        let actionTriggered = false;
-        let actionTargetX = 0;
-        let actionTargetY = 0;
         const activeTool = uiRef.current.activeTool;
-
-        let mobileTapWorldX: number | undefined = undefined;
-        let mobileTapWorldY: number | undefined = undefined;
-        if (state.touches.tap.active) {
-           mobileTapWorldX = state.touches.tap.x + state.camera.x;
-           mobileTapWorldY = state.touches.tap.y + state.camera.y;
-           state.touches.tap.active = false;
-        }
 
         if (uiRef.current.deviceType === 'desktop') {
           isShooting = state.mouse.down;
@@ -2398,12 +3139,6 @@ export default function GameCanvas() {
           const worldMouseY = state.mouse.y + state.camera.y;
           shootDirX = worldMouseX - state.player.x;
           shootDirY = worldMouseY - state.player.y;
-          
-          if (mouseRightJustDown) {
-            actionTriggered = true;
-            actionTargetX = worldMouseX;
-            actionTargetY = worldMouseY;
-          }
         } else {
           // Mobile mapping
           if (state.touches.right.active && currentTime - state.touches.right.startTime > 100) {
@@ -2412,51 +3147,6 @@ export default function GameCanvas() {
               isShooting = true;
               shootDirX = state.touches.right.dirX;
               shootDirY = state.touches.right.dirY;
-            }
-          }
-           
-          if (mobileTapWorldX !== undefined) {
-             actionTriggered = true;
-             actionTargetX = mobileTapWorldX;
-             actionTargetY = mobileTapWorldY;
-          }
-        }
-
-        if (actionTriggered && !state.player.dash.active) {
-          const ACTION_RADIUS = 300;
-          const dx = actionTargetX - state.player.x;
-          const dy = actionTargetY - state.player.y;
-          const dist = Math.sqrt(dx * dx + dy * dy);
-          let finalX = actionTargetX;
-          let finalY = actionTargetY;
-          if (dist > ACTION_RADIUS) {
-            finalX = state.player.x + (dx / dist) * ACTION_RADIUS;
-            finalY = state.player.y + (dy / dist) * ACTION_RADIUS;
-          }
-
-          if (activeTool === 'special') {
-            if (currentTime - state.player.dash.lastTime >= DASH_COOLDOWN) {
-              state.player.dash.lastTime = currentTime;
-              
-              const isHostMode = !mpRef.current.roomId || mpRef.current.isHost;
-              
-              if (isHostMode) {
-                const cIdx = playerProfileRef.current.colorIdx;
-                state.zones.push({
-                   x: finalX,
-                   y: finalY,
-                   innerRadius: 100,
-                   outerRadius: 250,
-                   duration: 3000,
-                   spawnTime: currentTime,
-                   ownerId: 'local',
-                   colorIdx: cIdx
-                });
-                const pDef = PLAYER_COLORS[cIdx] || PLAYER_COLORS[0];
-                state.shockwaves.push({ x: finalX, y: finalY, color: pDef.n, maxRadius: 250, age: 0, maxAge: 0.5, thickness: 15 });
-              } else {
-                socketRef.current?.emit('client_action', mpRef.current.roomId, { type: 'special', x: finalX, y: finalY, colorIdx: playerProfileRef.current.colorIdx });
-              }
             }
           }
         }
@@ -2473,6 +3163,22 @@ export default function GameCanvas() {
             bvy = (shootDirY / shootLen) * BULLET_SPEED;
           }
 
+          const localAllowedKeys: string[] = [];
+          if (state.player.recentBlocks) {
+            for (const rb of state.player.recentBlocks) {
+              const blockObj = state.blocks.find(b => b.x === rb.x && b.y === rb.y);
+              if (blockObj) {
+                const comp = getConnectedComponent(blockObj, state.blocks.filter(b => b.colorIdx === blockObj.colorIdx));
+                for (const cb of comp) {
+                  const cbKey = `${cb.x}_${cb.y}`;
+                  if (!localAllowedKeys.includes(cbKey)) {
+                    localAllowedKeys.push(cbKey);
+                  }
+                }
+              }
+            }
+          }
+
           // Spawn bullet locally first for immediate visual feedback
           state.bullets.push({
             id: mpRef.current.roomId && !mpRef.current.isHost ? 'local_' + Math.random() : 'bh_' + state.nextEntityId++,
@@ -2486,7 +3192,9 @@ export default function GameCanvas() {
             spawnTime: currentTime,
             isNeutral: false,
             ownerId: socketRef.current?.id || 'local',
-            colorIdx: playerProfileRef.current.colorIdx
+            colorIdx: playerProfileRef.current.colorIdx,
+            allowedBlockKeys: localAllowedKeys,
+            leftBlockKeys: []
           });
 
           // In multiplayer client mode, also notify the host to create the authoritative bullet
@@ -2506,47 +3214,96 @@ export default function GameCanvas() {
             continue;
           }
           
-          if (zone.ownerId === 'local') {
-             zone.x = state.player.x;
-             zone.y = state.player.y;
-          } else if (state.multiplayerPlayers[zone.ownerId]) {
-             zone.x = state.multiplayerPlayers[zone.ownerId].x;
-             zone.y = state.multiplayerPlayers[zone.ownerId].y;
+          if (zone.type === 'repel') {
+             // Zone follows owner
+             let ownerTarget = null;
+             if (zone.ownerId === 'local') {
+                 ownerTarget = state.player;
+             } else if (state.multiplayerPlayers[zone.ownerId]) {
+                 ownerTarget = state.multiplayerPlayers[zone.ownerId];
+             }
+             if (ownerTarget) {
+                 zone.x = ownerTarget.x;
+                 zone.y = ownerTarget.y;
+             }
+
+             // Repel bullets
+             const newBullets: any[] = [];
+             for (const bullet of state.bullets) {
+                 // Ignore bullets of the same color that have not bounced off a wall yet
+                 if (bullet.colorIdx === zone.colorIdx && bullet.isPlayer && !bullet.isNeutral) {
+                     continue;
+                 }
+                 
+                 const dx = bullet.x - zone.x;
+                 const dy = bullet.y - zone.y;
+                 if (dx * dx + dy * dy <= zone.outerRadius * zone.outerRadius) {
+                     const dist = Math.sqrt(dx * dx + dy * dy);
+                     if (dist > 0) {
+                         const nx = dx / dist;
+                         const ny = dy / dist;
+                         const dot = bullet.dx * nx + bullet.dy * ny;
+                         if (dot < 0) { // Moving inward
+                             const origDx = bullet.dx;
+                             const origDy = bullet.dy;
+                             const speed = Math.sqrt(origDx * origDx + origDy * origDy);
+                             
+                             // 1. Mirrored bullet (modify existing)
+                             bullet.dx -= 2 * dot * nx;
+                             bullet.dy -= 2 * dot * ny;
+                             bullet.bounceCount++;
+                             bullet.isNeutral = false;
+                             bullet.isPlayer = true;
+                             bullet.ownerId = zone.ownerId;
+                             bullet.colorIdx = zone.colorIdx;
+                             
+                             if (!bullet.repelMultiplied) {
+                                 bullet.repelMultiplied = true;
+                                 
+                                 // 2. Reversed bullet (directly back where it came from)
+                                 newBullets.push({
+                                     id: Math.random().toString(36).substring(2, 9),
+                                     x: bullet.x,
+                                     y: bullet.y,
+                                     dx: -origDx,
+                                     dy: -origDy,
+                                     radius: bullet.radius,
+                                     isPlayer: true,
+                                     ownerId: zone.ownerId,
+                                     bounceCount: bullet.bounceCount,
+                                     isNeutral: false,
+                                     colorIdx: zone.colorIdx,
+                                     spawnTime: bullet.spawnTime || performance.now(),
+                                     repelMultiplied: true
+                                 });
+                                 
+                                 // 3. Away bullet (shot directly away from player)
+                                 newBullets.push({
+                                     id: Math.random().toString(36).substring(2, 9),
+                                     x: bullet.x,
+                                     y: bullet.y,
+                                     dx: nx * speed,
+                                     dy: ny * speed,
+                                     radius: bullet.radius,
+                                     isPlayer: true,
+                                     ownerId: zone.ownerId,
+                                     bounceCount: bullet.bounceCount,
+                                     isNeutral: false,
+                                     colorIdx: zone.colorIdx,
+                                     spawnTime: bullet.spawnTime || performance.now(),
+                                     repelMultiplied: true
+                                 });
+                             }
+                         }
+                     }
+                 }
+             }
+             if (newBullets.length > 0) {
+                 state.bullets.push(...newBullets);
+             }
           }
           
-          for (let e = state.enemies.length - 1; e >= 0; e--) {
-            const enemy = state.enemies[e];
-            const dx = enemy.x - zone.x;
-            const dy = enemy.y - zone.y;
-            const distSq = dx*dx + dy*dy;
-            
-            if (distSq < zone.innerRadius * zone.innerRadius) {
-              spawnParticles(enemy.x, enemy.y, '#ff3333', 30);
-              state.enemies.splice(e, 1);
-            } else if (distSq < zone.outerRadius * zone.outerRadius) {
-               const dist = Math.sqrt(distSq);
-               const pushSpeed = 600 * dt;
-               enemy.x += (dx / dist) * pushSpeed;
-               enemy.y += (dy / dist) * pushSpeed;
-            }
-          }
-
-          for (let b = state.bouncers.length - 1; b >= 0; b--) {
-            const bouncer = state.bouncers[b];
-            const dx = bouncer.x - zone.x;
-            const dy = bouncer.y - zone.y;
-            const distSq = dx*dx + dy*dy;
-            
-            if (distSq < zone.innerRadius * zone.innerRadius) {
-               spawnParticles(bouncer.x, bouncer.y, '#ff3333', 30);
-               state.bouncers.splice(b, 1);
-            } else if (distSq < zone.outerRadius * zone.outerRadius) {
-               const dist = Math.sqrt(distSq);
-               const pushSpeed = 600 * dt;
-               bouncer.x += (dx / dist) * pushSpeed;
-               bouncer.y += (dy / dist) * pushSpeed;
-            }
-          }
+          // Continuous pushes for enemies and bouncers have been replaced with smooth decaying knockback shockwaves in their updates.
         }
 
         // 5. Update Bullets & Collisions
@@ -2554,6 +3311,86 @@ export default function GameCanvas() {
           const bullet = state.bullets[i];
           const prevX = bullet.x;
           const prevY = bullet.y;
+
+          // Initialize connected-area tracking arrays
+          if (!bullet.allowedBlockKeys) {
+            bullet.allowedBlockKeys = [];
+          }
+          if (!bullet.leftBlockKeys) {
+            bullet.leftBlockKeys = [];
+          }
+
+          // Dynamic tracking of connected area for the bullet
+          // 1. If it's a freshly initialized bullet, automatically register connected area it is currently spawned in
+          const isFreshBullet = bullet.allowedBlockKeys.length === 0 && bullet.leftBlockKeys.length === 0;
+          
+          for (const block of state.blocks) {
+            const halfSize = block.size / 2;
+            const closestX = Math.max(block.x - halfSize, Math.min(bullet.x, block.x + halfSize));
+            const closestY = Math.max(block.y - halfSize, Math.min(bullet.y, block.y + halfSize));
+            const bdx = bullet.x - closestX;
+            const bdy = bullet.y - closestY;
+            
+            if (bdx * bdx + bdy * bdy < bullet.radius * bullet.radius && block.colorIdx === bullet.colorIdx) {
+              const key = `${block.x}_${block.y}`;
+              const isNewBlock = (currentTime - block.createdAt < 300);
+              const isAlreadyAllowed = bullet.allowedBlockKeys.includes(key);
+              
+              if (isFreshBullet || isNewBlock || isAlreadyAllowed) {
+                // If a new block was placed, clear it from leftBlockKeys just in case
+                if (isNewBlock) {
+                  const leftIdx = bullet.leftBlockKeys.indexOf(key);
+                  if (leftIdx !== -1) {
+                    bullet.leftBlockKeys.splice(leftIdx, 1);
+                  }
+                }
+
+                const comp = getConnectedComponent(block, state.blocks.filter(b => b.colorIdx === block.colorIdx));
+                for (const cb of comp) {
+                  const cbKey = `${cb.x}_${cb.y}`;
+                  
+                  // Make sure to remove any newly connected block keys from leftBlockKeys
+                  if (isNewBlock) {
+                    const cbLeftIdx = bullet.leftBlockKeys.indexOf(cbKey);
+                    if (cbLeftIdx !== -1) {
+                      bullet.leftBlockKeys.splice(cbLeftIdx, 1);
+                    }
+                  }
+
+                  if (!bullet.leftBlockKeys.includes(cbKey) && !bullet.allowedBlockKeys.includes(cbKey)) {
+                    bullet.allowedBlockKeys.push(cbKey);
+                  }
+                }
+              }
+            }
+          }
+
+          // 2. Check if the bullet is overlapping with any block in allowedBlockKeys
+          let overlappingWithAllowed = false;
+          for (const block of state.blocks) {
+            const key = `${block.x}_${block.y}`;
+            if (bullet.allowedBlockKeys.includes(key)) {
+              const halfSize = block.size / 2;
+              const closestX = Math.max(block.x - halfSize, Math.min(bullet.x, block.x + halfSize));
+              const closestY = Math.max(block.y - halfSize, Math.min(bullet.y, block.y + halfSize));
+              const bdx = bullet.x - closestX;
+              const bdy = bullet.y - closestY;
+              if (bdx * bdx + bdy * bdy < bullet.radius * bullet.radius) {
+                overlappingWithAllowed = true;
+                break;
+              }
+            }
+          }
+
+          // 3. Transition to leftBlockKeys if we completely exited the allowed block(s)
+          if (bullet.allowedBlockKeys.length > 0 && !overlappingWithAllowed) {
+            for (const key of bullet.allowedBlockKeys) {
+              if (!bullet.leftBlockKeys.includes(key)) {
+                bullet.leftBlockKeys.push(key);
+              }
+            }
+            bullet.allowedBlockKeys = [];
+          }
 
           let speedMultiplier = 1;
           const timeAlive = currentTime - bullet.spawnTime;
@@ -2618,32 +3455,36 @@ export default function GameCanvas() {
             }
           }
 
+          // Special Relic Collisions
+          for (const spawner of state.spawners) {
+            if (spawner.specialType) {
+              const collision = getBulletRelicCollision(bullet.x, bullet.y, bullet.radius, spawner, currentTime);
+              if (collision) {
+                const { nx, ny, overlap } = collision;
+                bullet.x += nx * overlap;
+                bullet.y += ny * overlap;
+
+                const dot = bullet.dx * nx + bullet.dy * ny;
+                if (dot < 0) {
+                  bullet.dx = bullet.dx - 2 * dot * nx;
+                  bullet.dy = bullet.dy - 2 * dot * ny;
+                  bullet.bounceCount++;
+                  
+                  let pColor = '#aaaaaa';
+                  if (spawner.specialType === 'shield') pColor = '#00f0ff';
+                  else if (spawner.specialType === 'kinetic') pColor = '#ffcc00';
+                  else if (spawner.specialType === 'singularity') pColor = '#b500ff';
+                  else if (spawner.specialType === 'magma_gates') pColor = '#ff5500';
+                  else if (spawner.specialType === 'crystal') pColor = '#00ffaa';
+                  
+                  spawnParticles(bullet.x, bullet.y, pColor, 8);
+                }
+              }
+            }
+          }
+
           let bulletDestroyed = false;
 
-          // Zone Collisions
-          for (const zone of state.zones) {
-             const zdx = bullet.x - zone.x;
-             const zdy = bullet.y - zone.y;
-             const zDistSq = zdx*zdx + zdy*zdy;
-             const collDist = zone.innerRadius + bullet.radius;
-             if (zDistSq < collDist * collDist) {
-                const zDist = Math.sqrt(zDistSq);
-                const dot = bullet.dx * zdx + bullet.dy * zdy;
-                if (zDist > zone.innerRadius * 0.8 && dot < 0) {
-                   const nx = zdx / zDist;
-                   const ny = zdy / zDist;
-                   const d = bullet.dx * nx + bullet.dy * ny;
-                   bullet.dx -= 2 * d * nx;
-                   bullet.dy -= 2 * d * ny;
-                   bullet.bounceCount++;
-                   bullet.x += nx * (collDist - zDist + 1);
-                   spawnParticles(bullet.x, bullet.y, '#b500ff', 5);
-                } else if (zDist <= zone.innerRadius) {
-                   bulletDestroyed = true;
-                   spawnParticles(bullet.x, bullet.y, '#b500ff', 10);
-                }
-             }
-          }
           if (bulletDestroyed) {
              state.bullets.splice(i, 1);
              continue;
@@ -2653,6 +3494,13 @@ export default function GameCanvas() {
           if (!bulletDestroyed) {
              for (let b = state.blocks.length - 1; b >= 0; b--) {
                const block = state.blocks[b];
+               
+               // Skip collision if this block is currently part of the allowed connected area
+               const blockKey = `${block.x}_${block.y}`;
+               if (bullet.allowedBlockKeys && bullet.allowedBlockKeys.includes(blockKey)) {
+                 continue;
+               }
+
                const halfSize = block.size / 2;
                const closestX = Math.max(block.x - halfSize, Math.min(bullet.x, block.x + halfSize));
                const closestY = Math.max(block.y - halfSize, Math.min(bullet.y, block.y + halfSize));
@@ -2663,7 +3511,8 @@ export default function GameCanvas() {
                  // Block is unbreakable, bounce bullets
                  bullet.bounceCount++;
                  bullet.isNeutral = true;
-                 spawnParticles(closestX, closestY, '#ffffff', 5);
+                 const pDef = PLAYER_COLORS[block.colorIdx !== undefined ? block.colorIdx : 0] || PLAYER_COLORS[0];
+                 spawnParticles(closestX, closestY, pDef.n, 5);
                  
                  const currentDist = Math.sqrt(bdx * bdx + bdy * bdy);
                  const pushDist = (bullet.radius - currentDist) + 1;
@@ -2922,7 +3771,8 @@ export default function GameCanvas() {
         for (let i = state.trails.length - 1; i >= 0; i--) {
           const t = state.trails[i];
           t.age += dt;
-          if (t.age >= 0.4) {
+          const maxAge = t.isSuperStrong ? 0.7 : 0.4;
+          if (t.age >= maxAge) {
             state.trails.splice(i, 1);
           }
         }
@@ -3044,6 +3894,147 @@ export default function GameCanvas() {
           spawner.y - spawner.radius > state.camera.y + state.camera.height
         ) continue;
 
+        // Draw Special Relic effects next to spawners
+        if (spawner.specialType === 'shield') {
+          ctx.save();
+          ctx.translate(spawner.x, spawner.y);
+          ctx.rotate(-currentTime * 0.001);
+          ctx.strokeStyle = '#00f0ff';
+          ctx.shadowColor = '#00f0ff';
+          ctx.shadowBlur = 15;
+          ctx.lineWidth = 2;
+          for (let i = 0; i < 5; i++) {
+            const angle = (i * Math.PI * 2) / 5;
+            const nx = Math.cos(angle) * 95;
+            const ny = Math.sin(angle) * 95;
+            ctx.fillStyle = '#051d2e';
+            ctx.beginPath();
+            ctx.arc(nx, ny, 12, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+            ctx.fillStyle = '#00f0ff';
+            ctx.beginPath();
+            ctx.arc(nx, ny, 5, 0, Math.PI * 2);
+            ctx.fill();
+          }
+          ctx.restore();
+        } else if (spawner.specialType === 'kinetic') {
+          ctx.save();
+          ctx.translate(spawner.x, spawner.y);
+          ctx.rotate(currentTime * 0.0015);
+          ctx.strokeStyle = '#ffcc00';
+          ctx.shadowColor = '#ffcc00';
+          ctx.shadowBlur = 15;
+          ctx.lineWidth = 2.5;
+          for (let i = 0; i < 4; i++) {
+            const angle = (i * Math.PI) / 2;
+            ctx.beginPath();
+            ctx.moveTo(Math.cos(angle) * 50, Math.sin(angle) * 50);
+            ctx.lineTo(Math.cos(angle + 0.2) * 85, Math.sin(angle + 0.2) * 85);
+            ctx.lineTo(Math.cos(angle) * 95, Math.sin(angle) * 95);
+            ctx.lineTo(Math.cos(angle - 0.2) * 85, Math.sin(angle - 0.2) * 85);
+            ctx.closePath();
+            ctx.fillStyle = 'rgba(255, 204, 0, 0.15)';
+            ctx.fill();
+            ctx.stroke();
+          }
+          ctx.restore();
+        } else if (spawner.specialType === 'singularity') {
+          ctx.save();
+          ctx.translate(spawner.x, spawner.y);
+          ctx.rotate(currentTime * 0.002);
+          for (let arm = 0; arm < 3; arm++) {
+            const startA = (arm * Math.PI * 2) / 3;
+            ctx.beginPath();
+            ctx.strokeStyle = '#b500ff';
+            ctx.shadowColor = '#b500ff';
+            ctx.shadowBlur = 10;
+            ctx.lineWidth = 3;
+            for (let r = 35; r < 90; r += 5) {
+              const theta = startA + (r - 35) * 0.05;
+              const rx = Math.cos(theta) * r;
+              const ry = Math.sin(theta) * r;
+              if (r === 35) ctx.moveTo(rx, ry);
+              else ctx.lineTo(rx, ry);
+            }
+            ctx.stroke();
+          }
+          ctx.fillStyle = '#05000a';
+          ctx.strokeStyle = '#e100ff';
+          ctx.lineWidth = 2;
+          ctx.shadowColor = '#e100ff';
+          ctx.shadowBlur = 15;
+          ctx.beginPath();
+          ctx.arc(0, 0, 20 + Math.sin(currentTime * 0.01) * 3, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+          ctx.restore();
+        } else if (spawner.specialType === 'magma_gates') {
+          ctx.save();
+          ctx.translate(spawner.x, spawner.y);
+
+          const orbitAngle = currentTime * 0.0008;
+          ctx.rotate(orbitAngle);
+
+          const rects = [
+            { angle: 0.2, distance: 75, w: 22, h: 45 },
+            { angle: 1.2, distance: 95, w: 35, h: 20 },
+            { angle: 2.2, distance: 80, w: 18, h: 32 },
+            { angle: 3.3, distance: 100, w: 40, h: 15 },
+            { angle: 4.4, distance: 70, w: 25, h: 38 },
+            { angle: 5.5, distance: 90, w: 20, h: 28 },
+          ];
+
+          for (const r of rects) {
+            ctx.save();
+            const cx = Math.cos(r.angle) * r.distance;
+            const cy = Math.sin(r.angle) * r.distance;
+            ctx.translate(cx, cy);
+
+            // Draw translucent orange glowing rectangle with parallel orientation
+            ctx.fillStyle = 'rgba(255, 85, 0, 0.18)';
+            ctx.strokeStyle = '#ff5500';
+            ctx.shadowColor = '#ff5500';
+            ctx.shadowBlur = 10;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.rect(-r.w / 2, -r.h / 2, r.w, r.h);
+            ctx.fill();
+            ctx.stroke();
+
+            ctx.restore();
+          }
+          ctx.restore();
+        } else if (spawner.specialType === 'crystal') {
+          ctx.save();
+          ctx.translate(spawner.x, spawner.y);
+          ctx.rotate(currentTime * 0.0006);
+          ctx.strokeStyle = '#00ffaa';
+          ctx.shadowColor = '#00ffaa';
+          ctx.shadowBlur = 15;
+          ctx.lineWidth = 2;
+          for (let i = 0; i < 6; i++) {
+            const angle = (i * Math.PI) / 3;
+            ctx.beginPath();
+            const cos = Math.cos(angle);
+            const sin = Math.sin(angle);
+            ctx.moveTo(cos * 45, sin * 45);
+            ctx.lineTo(Math.cos(angle - 0.1) * 70, Math.sin(angle - 0.1) * 70);
+            ctx.lineTo(cos * 85, sin * 85);
+            ctx.lineTo(Math.cos(angle + 0.1) * 70, Math.sin(angle + 0.1) * 70);
+            ctx.closePath();
+            ctx.fillStyle = 'rgba(0, 255, 170, 0.12)';
+            ctx.fill();
+            ctx.stroke();
+          }
+          ctx.fillStyle = '#011c14';
+          ctx.beginPath();
+          ctx.arc(0, 0, 22, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+          ctx.restore();
+        }
+
         const initialSpawners = (MAPS[uiRef.current.mapId] || MAPS.medium).spawners.length;
         const spawnerSpeedScale = state.hardMode ? (initialSpawners / state.spawners.length) : 1;
 
@@ -3121,6 +4112,25 @@ export default function GameCanvas() {
           b.y - b.radius > state.camera.y + state.camera.height
         ) continue;
 
+        // Draw trail for bouncer
+        if (uiRef.current.status === 'PLAYING') {
+          const bkb = Math.sqrt((b.kbvx || 0)**2 + (b.kbvy || 0)**2);
+          if (bkb > 150) {
+            state.trails.push({
+              x: b.x, y: b.y, age: 0,
+              color: '#ff3333',
+              radius: b.radius * 0.8,
+              isSuperStrong: true
+            });
+          } else if (Math.random() > 0.7) {
+            state.trails.push({
+              x: b.x, y: b.y, age: 0,
+              color: '#ff3333',
+              radius: b.radius * 0.4
+            });
+          }
+        }
+
         ctx.save();
         ctx.translate(b.x, b.y);
 
@@ -3160,12 +4170,22 @@ export default function GameCanvas() {
         ) continue;
 
         // Draw trail for enemy
-        if (uiRef.current.status === 'PLAYING' && Math.random() > 0.6) {
-          state.trails.push({
-            x: enemy.x, y: enemy.y, age: 0,
-            color: '#ff3333',
-            radius: enemy.radius * 0.4
-          });
+        if (uiRef.current.status === 'PLAYING') {
+          const ekb = Math.sqrt((enemy.kbvx || 0)**2 + (enemy.kbvy || 0)**2);
+          if (ekb > 150) {
+            state.trails.push({
+              x: enemy.x, y: enemy.y, age: 0,
+              color: '#ff3333',
+              radius: enemy.radius * 0.8,
+              isSuperStrong: true
+            });
+          } else if (Math.random() > 0.6) {
+            state.trails.push({
+              x: enemy.x, y: enemy.y, age: 0,
+              color: '#ff3333',
+              radius: enemy.radius * 0.4
+            });
+          }
         }
 
         // Draw gun/eye aim direction
@@ -3201,12 +4221,38 @@ export default function GameCanvas() {
           t.y + t.radius < state.camera.y ||
           t.y - t.radius > state.camera.y + state.camera.height
         ) continue;
-        const alpha = 1 - (t.age / 0.4);
-        ctx.fillStyle = t.color;
-        ctx.globalAlpha = alpha * 0.5;
-        ctx.beginPath();
-        ctx.arc(t.x, t.y, t.radius * alpha, 0, Math.PI * 2);
-        ctx.fill();
+        
+        const maxAge = t.isSuperStrong ? 0.7 : 0.4;
+        const progress = t.age / maxAge;
+        if (progress >= 1) continue;
+        
+        const alpha = 1 - progress;
+        ctx.save();
+        if (t.isSuperStrong) {
+          // Draw an extra vibrant neon glowing tail circle
+          ctx.fillStyle = t.color;
+          ctx.shadowColor = t.color;
+          ctx.shadowBlur = 15;
+          ctx.globalAlpha = alpha * 0.85; // highly opaque
+          
+          ctx.beginPath();
+          ctx.arc(t.x, t.y, t.radius * (1 - progress * 0.5), 0, Math.PI * 2); // shrink slower
+          ctx.fill();
+          
+          // Outer white core ring for extra dynamic energy emphasis
+          ctx.strokeStyle = '#ffffff';
+          ctx.lineWidth = 1.5 * alpha;
+          ctx.beginPath();
+          ctx.arc(t.x, t.y, t.radius * (1 - progress * 0.5), 0, Math.PI * 2);
+          ctx.stroke();
+        } else {
+          ctx.fillStyle = t.color;
+          ctx.globalAlpha = alpha * 0.5;
+          ctx.beginPath();
+          ctx.arc(t.x, t.y, t.radius * alpha, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        ctx.restore();
       }
       ctx.globalAlpha = 1.0;
 
@@ -3223,8 +4269,10 @@ export default function GameCanvas() {
         const age = performance.now() - zone.spawnTime;
         const progress = Math.min(1, age / 300);
         const pulse = 1 + Math.sin(age * 0.005) * 0.05;
-        const innerCurrent = zone.innerRadius * Math.sin(progress * Math.PI / 2) * pulse;
+        
+        // Let the inner ring be a scaling fraction of the outer ring so it is fully visible and beautiful
         const outerCurrent = zone.outerRadius * Math.sin(progress * Math.PI / 2) * pulse;
+        const innerCurrent = outerCurrent * 0.25;
 
         // Alpha fades out near the end of duration
         const remaining = zone.duration - age;
@@ -3234,40 +4282,127 @@ export default function GameCanvas() {
         ctx.globalAlpha = alpha;
         
         ctx.translate(zone.x, zone.y);
-        ctx.rotate(age * 0.001);
         
-        // Outer circle
-        ctx.beginPath();
-        ctx.arc(0, 0, outerCurrent, 0, Math.PI * 2);
-        ctx.fillStyle = pDef.g || 'rgba(181, 0, 255, 0.05)';
-        ctx.fill();
-        ctx.lineWidth = 2;
-        ctx.strokeStyle = pDef.g || 'rgba(181, 0, 255, 0.4)';
-        ctx.setLineDash([15, 15]);
-        ctx.stroke();
+        const oR = Math.max(0.1, outerCurrent);
+        const iR = Math.max(0.1, innerCurrent);
 
-        ctx.rotate(-age * 0.002);
-
-        // Inner circle
+        // 1. Beautiful Semi-Transparent Backdrop Area with a tinted glass visual feel
+        ctx.save();
+        ctx.globalAlpha = alpha * 0.12; // 12% opacity backdrop in the player's custom neon color
+        ctx.fillStyle = pDef.n;
         ctx.beginPath();
-        ctx.arc(0, 0, innerCurrent, 0, Math.PI * 2);
-        ctx.fillStyle = pDef.g || 'rgba(181, 0, 255, 0.15)';
+        ctx.arc(0, 0, oR, 0, Math.PI * 2);
         ctx.fill();
-        ctx.lineWidth = 4;
+        ctx.restore();
+
+        // Faint radar scanning ring lines to enrich the backdrop
+        ctx.save();
+        ctx.globalAlpha = alpha * 0.05;
         ctx.strokeStyle = pDef.n;
-        ctx.setLineDash([20, 10]);
+        ctx.lineWidth = 1;
+        for (let r = 0; r < 1; r += 0.2) {
+          ctx.beginPath();
+          ctx.arc(0, 0, oR * r, 0, Math.PI * 2);
+          ctx.stroke();
+        }
+        ctx.restore();
+
+        // 1.1 Soft Magical Spell Field (Radial gradient glow that fills the spell area)
+        const zoneGrad = ctx.createRadialGradient(0, 0, 0, 0, 0, oR);
+        zoneGrad.addColorStop(0, pDef.g || 'rgba(181, 0, 255, 0.22)');
+        zoneGrad.addColorStop(0.6, 'rgba(0, 0, 0, 0.03)');
+        zoneGrad.addColorStop(1, 'rgba(0, 0, 0, 0)');
+        ctx.fillStyle = zoneGrad;
+        ctx.beginPath();
+        ctx.arc(0, 0, oR, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 2. High-Contrast Runic Borders
+        // Solid outer ring boundary
+        ctx.beginPath();
+        ctx.arc(0, 0, oR, 0, Math.PI * 2);
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = pDef.n;
         ctx.stroke();
 
-        // Core glow
+        // Delicate, nested inner circle
         ctx.beginPath();
-        ctx.arc(0, 0, innerCurrent * 0.5, 0, Math.PI * 2);
-        const grad = ctx.createRadialGradient(0, 0, 0, 0, 0, innerCurrent * 0.5);
-        grad.addColorStop(0, pDef.g || 'rgba(181, 0, 255, 0.5)');
-        grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
-        ctx.fillStyle = grad;
-        ctx.fill();
+        ctx.arc(0, 0, oR * 0.9, 0, Math.PI * 2);
+        ctx.lineWidth = 0.5;
+        ctx.strokeStyle = pDef.n;
+        ctx.stroke();
+
+        // 3. Elegant Rotating Inner Magic Star/Sigil
+        ctx.save();
+        ctx.rotate(age * 0.0003); // Slow, magical rotation
+        ctx.strokeStyle = pDef.n;
+        ctx.lineWidth = 0.75;
+        ctx.globalAlpha = alpha * 0.25;
+
+        // Draw an elegant overlapping double-square star (8-pointed magic seal)
+        const sealRadius = oR * 0.85;
+        ctx.beginPath();
+        for (let i = 0; i < 4; i++) {
+          const angle = (i * Math.PI) / 2;
+          const sX = Math.cos(angle) * sealRadius;
+          const sY = Math.sin(angle) * sealRadius;
+          if (i === 0) ctx.moveTo(sX, sY);
+          else ctx.lineTo(sX, sY);
+        }
+        ctx.closePath();
+        ctx.stroke();
+
+        ctx.beginPath();
+        for (let i = 0; i < 4; i++) {
+          const angle = (i * Math.PI) / 2 + Math.PI / 4;
+          const sX = Math.cos(angle) * sealRadius;
+          const sY = Math.sin(angle) * sealRadius;
+          if (i === 0) ctx.moveTo(sX, sY);
+          else ctx.lineTo(sX, sY);
+        }
+        ctx.closePath();
+        ctx.stroke();
+        ctx.restore();
+
+        // 4. Clean Concentric Ring details
+        ctx.beginPath();
+        ctx.arc(0, 0, iR, 0, Math.PI * 2);
+        ctx.lineWidth = 1;
+        ctx.strokeStyle = pDef.n;
+        ctx.stroke();
+
+        // 5. Initial Expanding Shockwave Blast (Only shown at the beginning of the cast, fades quickly)
+        if (progress < 1) {
+          const waveRadius = oR * progress;
+          ctx.beginPath();
+          ctx.arc(0, 0, waveRadius, 0, Math.PI * 2);
+          ctx.strokeStyle = pDef.n;
+          ctx.lineWidth = 3 * (1 - progress);
+          ctx.save();
+          ctx.globalAlpha = alpha * (1 - progress) * 0.8;
+          ctx.stroke();
+          ctx.restore();
+        }
 
         ctx.restore();
+
+        // 6. Ethereal Rising Magic Sparks (Slow drifting particles rising upward, like an aura/fire)
+        if (STATUS === 'PLAYING' && Math.random() < 0.22) {
+          const pAngle = Math.random() * Math.PI * 2;
+          const pDist = Math.random() * oR;
+          const pX = zone.x + Math.cos(pAngle) * pDist;
+          const pY = zone.y + Math.sin(pAngle) * pDist;
+          state.particles.push({
+            x: pX,
+            y: pY,
+            vx: (Math.random() - 0.5) * 30, // slow horizontal drift
+            vy: -Math.random() * 40 - 20,   // elegant rising vertical motion
+            life: 0,
+            maxLife: Math.random() * 1.0 + 0.5,
+            color: pDef.n,
+            radius: Math.random() * 1.8 + 0.8
+          });
+        }
       }
 
       // Draw Blocks
@@ -3369,7 +4504,7 @@ export default function GameCanvas() {
         ) continue;
 
         const progress = s.age / s.maxAge;
-        const currentRadius = s.maxRadius * Math.sin(progress * Math.PI / 2); // Ease out
+        const currentRadius = Math.max(0.1, s.maxRadius * Math.sin(progress * Math.PI / 2)); // Ease out
         const alpha = Math.max(0, 1 - progress);
 
         ctx.beginPath();
@@ -3684,8 +4819,23 @@ export default function GameCanvas() {
       }
 
       // Update cooldown UI
-      const specialCooldown = Math.max(0, Math.ceil((DASH_COOLDOWN - (performance.now() - state.player.dash.lastTime)) / 1000));
-      const buildCooldown = Math.max(0, Math.ceil((BUILD_COOLDOWN - (performance.now() - state.player.build.lastTime)) / 1000));
+      let specialCooldown = 0;
+      const now = performance.now();
+      if (state.player.dash.active) {
+         specialCooldown = Math.max(0, Math.ceil((state.player.dash.endTime - now) / 1000));
+      } else if (state.player.dash.endTime > 0) {
+         specialCooldown = Math.max(0, Math.ceil((DASH_COOLDOWN - (now - state.player.dash.endTime)) / 1000));
+      } else {
+         specialCooldown = Math.max(0, Math.ceil((DASH_COOLDOWN - (now - state.player.dash.lastTime)) / 1000));
+      }
+      
+      let buildCooldown = 0;
+      if (state.player.build.active) {
+         buildCooldown = Math.max(0, Math.ceil((state.player.build.endTime - now) / 1000));
+      } else if (state.player.build.endTime > 0) {
+         buildCooldown = Math.max(0, Math.ceil((BUILD_COOLDOWN - (now - state.player.build.endTime)) / 1000));
+      }
+
       if (uiRef.current.buttonCounters.special !== specialCooldown || uiRef.current.buttonCounters.build !== buildCooldown) {
          setUiState(prev => {
            uiRef.current = { ...prev, buttonCounters: { special: specialCooldown, build: buildCooldown } };
@@ -3699,13 +4849,17 @@ export default function GameCanvas() {
     animationFrameId = requestAnimationFrame(gameLoop);
 
     return () => {
-      window.removeEventListener('resize', handleResize);
+      if (resizeObserver) {
+        resizeObserver.disconnect();
+      } else {
+        window.removeEventListener('resize', handleResize);
+      }
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
+      window.removeEventListener('mousemove', handleMouseMove);
       
       if (canvas) {
         canvas.removeEventListener('contextmenu', handleContextMenu);
-        canvas.removeEventListener('mousemove', handleMouseMove);
         canvas.removeEventListener('mousedown', handleMouseDown);
         canvas.removeEventListener('mouseup', handleMouseUp);
         canvas.removeEventListener('touchstart', handleTouchStart);
@@ -3816,7 +4970,7 @@ export default function GameCanvas() {
                   animate={{ opacity: 1, scale: 1, y: 0 }}
                   exit={{ opacity: 0, scale: 0.96, y: -15 }}
                   transition={{ duration: 0.2, ease: "easeOut" }}
-                  className="w-full max-w-4xl max-h-[90vh] flex flex-col bg-[#0d0f1b]/95 border-2 border-[#00f0ff] shadow-[0_0_30px_rgba(0,240,255,0.15)] ring-1 ring-black pointer-events-auto overflow-hidden"
+                  className="relative w-full max-w-4xl max-h-[90vh] flex flex-col bg-[#0d0f1b]/95 border-2 border-[#00f0ff] shadow-[0_0_30px_rgba(0,240,255,0.15)] ring-1 ring-black pointer-events-auto overflow-hidden"
                 >
                   {/* Header */}
                   <div className="shrink-0 p-3 md:p-5 flex justify-between items-center border-b border-[#00f0ff]/30 bg-gradient-to-b from-[#00f0ff]/10 to-transparent">
@@ -3836,10 +4990,29 @@ export default function GameCanvas() {
                     
                     {/* Map List Area */}
                     <div className="flex-1 flex flex-col min-h-0 border border-[#00f0ff]/30 bg-black/40 overflow-hidden">
-                      <div className="flex-1 overflow-y-auto p-2 grid grid-cols-2 gap-2 content-start [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]">
-                        {Object.entries(MAPS).map(([id, mapDef]) => (
+                      <div 
+                        ref={mapListRef}
+                        className="flex-1 overflow-y-auto p-2 grid grid-cols-2 gap-2 content-start [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
+                      >
+                        {Object.entries(MAPS)
+                          .sort((a, b) => {
+                            const difficultyRank: Record<string, number> = {
+                              'EASY': 1,
+                              'MEDIUM': 2,
+                              'HARD': 3,
+                              'EXPERT': 4
+                            };
+                            const rankA = difficultyRank[a[1].difficulty] || 99;
+                            const rankB = difficultyRank[b[1].difficulty] || 99;
+                            if (rankA !== rankB) {
+                              return rankA - rankB;
+                            }
+                            return a[1].name.localeCompare(b[1].name);
+                          })
+                          .map(([id, mapDef]) => (
                           <button
                             key={id}
+                            data-map-id={id}
                             onClick={() => setUiState(prev => ({...prev, mapId: id}))}
                             className={`flex flex-col items-center justify-center p-2 md:p-3 font-bold uppercase transition-all border-2
                               ${uiState.mapId === id 
@@ -3848,7 +5021,14 @@ export default function GameCanvas() {
                               }`}
                           >
                             <div className="text-[10px] sm:text-xs md:text-sm tracking-[0.1em] text-center leading-tight">{mapDef.name}</div>
-                            <div className={`text-[8px] sm:text-[9px] md:text-[10px] mt-1 tracking-widest ${uiState.mapId === id ? 'text-black/80' : 'text-[#ff00a0]/60'}`}>
+                            <div className={`text-[8px] sm:text-[9px] md:text-[10px] mt-1 tracking-widest ${
+                              uiState.mapId === id 
+                                ? 'text-black/80' 
+                                : mapDef.difficulty === 'EASY' ? 'text-green-400' :
+                                  mapDef.difficulty === 'MEDIUM' ? 'text-yellow-400' :
+                                  mapDef.difficulty === 'HARD' ? 'text-red-400' :
+                                  'text-purple-400'
+                            }`}>
                                {mapDef.difficulty}
                             </div>
                           </button>
@@ -3917,6 +5097,22 @@ export default function GameCanvas() {
                                        strokeWidth="8"
                                      />
                                    ))}
+
+                                   {/* Render Spawn Area */}
+                                   {selMap.spawnArea && (
+                                     <g>
+                                       <rect
+                                         x={selMap.spawnArea.x}
+                                         y={selMap.spawnArea.y}
+                                         width={selMap.spawnArea.w}
+                                         height={selMap.spawnArea.h}
+                                         fill="rgba(255, 204, 0, 0.15)"
+                                         stroke="rgba(255, 204, 0, 0.6)"
+                                         strokeWidth="20"
+                                         strokeDasharray="40 20"
+                                       />
+                                     </g>
+                                   )}
                                  </svg>
                                </div>
                             </div>
@@ -3927,12 +5123,28 @@ export default function GameCanvas() {
                   </div>
 
                   {/* Footer / Action */}
-                  <div className="shrink-0 p-3 md:p-4 border-t border-[#00f0ff]/30 bg-[#0d0f1b] backdrop-blur-sm">
+                  <div className="shrink-0 p-3 md:p-4 border-t border-[#00f0ff]/30 bg-[#0d0f1b] backdrop-blur-sm flex gap-3">
                     <button 
-                      onClick={() => setIsMapSelectOpen(false)}
-                      className="w-full py-3 md:py-4 bg-[#00f0ff]/20 hover:bg-[#00f0ff]/40 text-[#00f0ff] border border-[#00f0ff]/50 font-black tracking-[0.2em] transition-all duration-200 uppercase text-sm md:text-base lg:text-lg cursor-pointer"
+                      onClick={() => {
+                        resetGame(isMobileRef.current ? 'mobile' : 'desktop', uiState.mapId, uiState.hardMode);
+                        setIsMapSelectOpen(false);
+                      }}
+                      className="flex-1 py-3 md:py-4 bg-[#00f0ff]/20 hover:bg-[#00f0ff]/40 text-[#00f0ff] border border-[#00f0ff]/50 font-black tracking-[0.2em] transition-all duration-200 uppercase text-sm md:text-base lg:text-lg cursor-pointer"
                     >
-                      CONFIRM SELECTION
+                      ENTER ARENA
+                    </button>
+                    <button
+                      onClick={() => {
+                        const keys = Object.keys(MAPS);
+                        if (keys.length > 0) {
+                          const randomKey = keys[Math.floor(Math.random() * keys.length)];
+                          selectAndScrollToMap(randomKey);
+                        }
+                      }}
+                      className="flex-none aspect-square py-3 md:py-4 px-3 md:px-4 flex items-center justify-center bg-[#00f0ff]/20 hover:bg-[#00f0ff]/40 text-[#00f0ff] border border-[#00f0ff]/50 transition-all duration-200 cursor-pointer"
+                      title="Select Random Map"
+                    >
+                      <Shuffle className="w-5 h-5 md:w-6 md:h-6" />
                     </button>
                   </div>
                 </motion.div>
@@ -4019,7 +5231,7 @@ export default function GameCanvas() {
                           </p>
                           <div className="flex w-full mb-3">
                             <div className="text-[10px] text-white/75 font-mono py-1.5 px-3 bg-black border border-r-0 border-white/10 text-left overflow-x-auto whitespace-nowrap [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden flex-1 flex items-center">
-                              {getInviteUrl(mpState.roomId)}
+                              {`${window.location.protocol}//${window.location.host}${window.location.pathname}?room=${mpState.roomId}`}
                             </div>
                             <button
                               onClick={handleCopyInviteLink}
@@ -4034,7 +5246,7 @@ export default function GameCanvas() {
                         {/* Centered larger QR Code card with cleaner neutral border */}
                         <div className="w-full flex flex-col items-center p-3 bg-black/40 border border-white/10 shadow-[inset_0_0_12px_rgba(255,204,0,0.02)]">
                           <img 
-                            src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(getInviteUrl(mpState.roomId))}`} 
+                            src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`${window.location.protocol}//${window.location.host}${window.location.pathname}?room=${mpState.roomId}`)}`} 
                             alt="Room QR Code"
                             className="w-28 h-28 p-1.5 bg-white mb-2 shadow-[0_0_15px_rgba(255,204,0,0.15)] shrink-0"
                             referrerPolicy="no-referrer"
@@ -4211,8 +5423,8 @@ export default function GameCanvas() {
 
       {(uiState.status === 'PLAYING' || uiState.status === 'PAUSED') && (() => {
         const toolsData = {
-          special: { label: 'SPECIAL', color: '#b500ff', mobile: 'TAP TO USE', desktop: 'RIGHT CLICK / SPACE TO USE' },
-          build: { label: 'BUILD', color: '#ffcc00', mobile: 'TAP TO USE', desktop: 'KEY "2" TO USE' }
+          special: { label: 'SPECIAL', color: '#b500ff', mobile: 'TAP TO USE', desktop: 'KEY "1" TO USE' },
+          build: { label: 'BUILD', color: '#0EA5E9', mobile: 'TAP TO USE', desktop: 'KEY "2" TO USE' }
         } as const;
         const activeT = toolsData[uiState.activeTool];
 
@@ -4226,81 +5438,89 @@ export default function GameCanvas() {
                 transition={{ duration: 0.6, ease: "easeInOut" }}
                 className="absolute inset-0 pointer-events-none z-10"
               >
-                <div className="absolute top-0 left-0 right-0 p-4 sm:p-6 flex flex-col sm:flex-row justify-start sm:justify-between items-start pointer-events-none z-10 w-full max-w-7xl mx-auto gap-4 sm:gap-0">
-              <div className="flex items-stretch gap-2 sm:gap-4">
-                <div className="flex flex-col justify-around py-1 pr-2 sm:pr-4 border-r-2 border-[#00f0ff]/30 pointer-events-auto h-full">
-                  <button
-                    onPointerDown={(e) => {
-                      e.stopPropagation();
-                      setUiState(prev => ({ ...prev, status: prev.status === 'PAUSED' ? 'PLAYING' : 'PAUSED' }));
-                      setConfirmResign(false);
-                    }}
-                    className="text-[#00f0ff]/60 font-bold tracking-[0.1em] sm:tracking-[0.2em] text-[10px] sm:text-[10px] uppercase transition-all duration-200 hover:text-[#00f0ff] hover:drop-shadow-[0_0_5px_rgba(0,240,255,0.8)] active:scale-95 text-left sm:text-right whitespace-nowrap"
-                  >
-                    {uiState.status === 'PAUSED' ? '▶ RES' : '॥ PAUSE'}
-                  </button>
-                  <button
-                    onPointerDown={(e) => {
-                      e.stopPropagation();
-                      setConfirmResign(true);
-                    }}
-                    className="text-[#ff003c]/60 font-bold tracking-[0.1em] sm:tracking-[0.2em] text-[10px] sm:text-[10px] uppercase transition-all duration-200 hover:text-[#ff003c] hover:drop-shadow-[0_0_5px_rgba(255,0,60,0.8)] active:scale-95 text-left sm:text-right whitespace-nowrap mt-1"
-                  >
-                    ⨯ QUIT
-                  </button>
+                <div className="absolute top-0 left-0 right-0 p-4 sm:p-6 flex flex-row justify-between items-start pointer-events-none z-10 w-full max-w-7xl mx-auto">
+                  {/* Left: Score & Spawners / Target Counters */}
+                  <div className="flex items-stretch gap-4 sm:gap-6 ml-4 sm:ml-8">
+                    <motion.div 
+                      animate={flashScore ? {
+                        filter: [
+                          "brightness(1) drop-shadow(0 0 0px rgba(0, 240, 255, 0))",
+                          "brightness(1.8) drop-shadow(0 0 15px rgba(0, 240, 255, 0.95))",
+                          "brightness(1) drop-shadow(0 0 0px rgba(0, 240, 255, 0))"
+                        ]
+                      } : {}}
+                      transition={flashScore ? {
+                        duration: 0.5,
+                        repeat: Infinity,
+                        ease: "easeInOut"
+                      } : {}}
+                      className="flex flex-col items-start justify-center gap-0 sm:gap-1 sm:w-[160px]"
+                    >
+                       <div className="hidden sm:block text-[11px] text-[#00f0ff] tracking-[0.3em] font-bold whitespace-nowrap">SYSTEM // SCORE</div>
+                       <div className="sm:hidden text-[9px] text-[#00f0ff] tracking-widest font-bold whitespace-nowrap">SCORE</div>
+                       <div className="text-white font-black text-2xl sm:text-[43px] tracking-tighter drop-shadow-[0_0_15px_rgba(0,240,255,0.8)] leading-none mt-1" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>
+                         {uiState.score.toString().padStart(6, '0')}
+                       </div>
+                    </motion.div>
+                    <motion.div 
+                      animate={flashSpawner ? {
+                        filter: [
+                          "brightness(1) drop-shadow(0 0 0px rgba(0,0,0,0))",
+                          `brightness(1.8) drop-shadow(0 0 15px ${uiState.hardMode ? 'rgba(255,51,0,0.95)' : 'rgba(255,0,255,0.95)'})`,
+                          "brightness(1) drop-shadow(0 0 0px rgba(0,0,0,0))"
+                        ]
+                      } : {}}
+                      transition={flashSpawner ? {
+                        duration: 0.5,
+                        repeat: Infinity,
+                        ease: "easeInOut"
+                      } : {}}
+                      className={`flex flex-col items-start justify-center gap-0 sm:gap-1 pl-4 sm:pl-6 border-l-2 h-full sm:w-[160px] ${uiState.hardMode ? 'border-[#ff3300]/30' : 'border-[#ff00ff]/30'}`}
+                    >
+                       <div className={`hidden sm:block text-[11px] tracking-[0.3em] font-bold whitespace-nowrap ${uiState.hardMode ? 'text-[#ff3300]' : 'text-[#ff00ff]'}`}>
+                         {mpState.roomId ? 'LEADERBOARD // RANK' : (uiState.hardMode ? 'TARGET // SPAWNERS (HARD)' : 'TARGET // SPAWNERS')}
+                       </div>
+                       <div className={`sm:hidden text-[9px] tracking-widest font-bold whitespace-nowrap ${uiState.hardMode ? 'text-[#ff3300]' : 'text-[#ff00ff]'}`}>
+                         {mpState.roomId ? 'RANK' : (uiState.hardMode ? 'TARGET (HARD)' : 'TARGET')}
+                       </div>
+                       <div className="text-white font-black text-2xl sm:text-[43px] tracking-tighter leading-none mt-1" 
+                            style={{ 
+                              fontFamily: 'var(--font-display, Anton, sans-serif)',
+                              textShadow: `0 0 15px ${uiState.hardMode ? '#ff3300' : '#ff00ff'}`
+                            }}>
+                         {mpState.roomId ? `#${getPlayerRank()}` : uiState.spawnersLeft}
+                       </div>
+                    </motion.div>
+                  </div>
+
+                  {/* Right: Pause & Quit buttons */}
+                  <div className="flex flex-col sm:flex-row items-end sm:items-center justify-center gap-3 sm:gap-4 pointer-events-auto h-full pr-2">
+                    <button
+                      onPointerDown={(e) => {
+                        e.stopPropagation();
+                        setUiState(prev => ({ ...prev, status: prev.status === 'PAUSED' ? 'PLAYING' : 'PAUSED' }));
+                        setConfirmResign(false);
+                      }}
+                      className="w-[84px] sm:w-[144px] h-[34px] sm:h-[48px] border-2 border-[#FBBF24] hover:bg-[#FBBF24] hover:text-black text-[#FBBF24] font-black tracking-[0.15em] sm:tracking-widest text-[9px] sm:text-xs uppercase transition-all duration-200 shadow-[0_0_8px_rgba(251,191,36,0.2)] hover:shadow-[0_0_15px_rgba(251,191,36,0.6)] active:scale-95 flex items-center justify-center -skew-x-12 focus:outline-none"
+                    >
+                      <span className="skew-x-12 whitespace-nowrap">
+                        {uiState.status === 'PAUSED' ? '▶ RESUME' : '|| PAUSE'}
+                      </span>
+                    </button>
+                    
+                    <button
+                      onPointerDown={(e) => {
+                        e.stopPropagation();
+                        setConfirmResign(true);
+                      }}
+                      className="w-[84px] sm:w-[144px] h-[34px] sm:h-[48px] border-2 border-[#ff003c] hover:bg-[#ff003c] hover:text-white text-[#ff003c] font-black tracking-[0.15em] sm:tracking-widest text-[9px] sm:text-xs uppercase transition-all duration-200 shadow-[0_0_8px_rgba(255,0,60,0.2)] hover:shadow-[0_0_15px_rgba(255,0,60,0.6)] active:scale-95 flex items-center justify-center -skew-x-12"
+                    >
+                      <span className="skew-x-12 whitespace-nowrap">
+                        <span className="inline-block scale-[1.3] -translate-y-[1px] mr-0.5">×</span> QUIT
+                      </span>
+                    </button>
+                  </div>
                 </div>
-                <motion.div 
-                  animate={flashScore ? {
-                    filter: [
-                      "brightness(1) drop-shadow(0 0 0px rgba(0, 240, 255, 0))",
-                      "brightness(1.8) drop-shadow(0 0 15px rgba(0, 240, 255, 0.95))",
-                      "brightness(1) drop-shadow(0 0 0px rgba(0, 240, 255, 0))"
-                    ]
-                  } : {}}
-                  transition={flashScore ? {
-                    duration: 0.5,
-                    repeat: Infinity,
-                    ease: "easeInOut"
-                  } : {}}
-                  className="flex flex-col items-start justify-center gap-0 sm:gap-1"
-                >
-                   <div className="hidden sm:block text-xs text-[#00f0ff] tracking-[0.3em] font-bold whitespace-nowrap">SYSTEM // SCORE</div>
-                   <div className="sm:hidden text-[9px] text-[#00f0ff] tracking-widest font-bold whitespace-nowrap">SCORE</div>
-                   <div className="text-white font-black text-2xl sm:text-5xl tracking-tighter drop-shadow-[0_0_15px_rgba(0,240,255,0.8)] leading-none mt-1" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>
-                     {uiState.score.toString().padStart(6, '0')}
-                   </div>
-                </motion.div>
-                <motion.div 
-                  animate={flashSpawner ? {
-                    filter: [
-                      "brightness(1) drop-shadow(0 0 0px rgba(0,0,0,0))",
-                      `brightness(1.8) drop-shadow(0 0 15px ${uiState.hardMode ? 'rgba(255,51,0,0.95)' : 'rgba(255,0,255,0.95)'})`,
-                      "brightness(1) drop-shadow(0 0 0px rgba(0,0,0,0))"
-                    ]
-                  } : {}}
-                  transition={flashSpawner ? {
-                    duration: 0.5,
-                    repeat: Infinity,
-                    ease: "easeInOut"
-                  } : {}}
-                  className={`flex flex-col items-start justify-center gap-0 sm:gap-1 pl-2 sm:pl-4 border-l-2 h-full ${uiState.hardMode ? 'border-[#ff3300]/30' : 'border-[#ff00ff]/30'}`}
-                >
-                   <div className={`hidden sm:block text-xs tracking-[0.3em] font-bold whitespace-nowrap ${uiState.hardMode ? 'text-[#ff3300]' : 'text-[#ff00ff]'}`}>
-                     {mpState.roomId ? 'LEADERBOARD // RANK' : (uiState.hardMode ? 'TARGET // SPAWNERS (HARD)' : 'TARGET // SPAWNERS')}
-                   </div>
-                   <div className={`sm:hidden text-[9px] tracking-widest font-bold whitespace-nowrap ${uiState.hardMode ? 'text-[#ff3300]' : 'text-[#ff00ff]'}`}>
-                     {mpState.roomId ? 'RANK' : (uiState.hardMode ? 'TARGET (HARD)' : 'TARGET')}
-                   </div>
-                   <div className="text-white font-black text-2xl sm:text-5xl tracking-tighter leading-none mt-1" 
-                        style={{ 
-                          fontFamily: 'var(--font-display, Anton, sans-serif)',
-                          textShadow: `0 0 15px ${uiState.hardMode ? '#ff3300' : '#ff00ff'}`
-                        }}>
-                     {mpState.roomId ? `#${getPlayerRank()}` : uiState.spawnersLeft}
-                   </div>
-                </motion.div>
-              </div>
-            </div>
 
             {uiState.status === 'PAUSED' && !confirmResign && (
               <div 
@@ -4373,7 +5593,7 @@ export default function GameCanvas() {
             {uiState.status !== 'PAUSED' && (
               <>
                 <div className="hidden sm:block absolute bottom-0 left-0 p-8 pointer-events-none z-10">
-                   <div className="text-sm text-[#00ccff] tracking-[0.2em] font-bold font-mono drop-shadow-[0_0_8px_rgba(0,204,255,0.8)]">
+                   <div className="text-sm text-[#94A3B8] tracking-[0.2em] font-bold font-mono">
                      {uiState.deviceType === 'mobile' ? 'JOYSTICK TO MOVE' : 'WASD TO MOVE'}
                    </div>
                 </div>
@@ -4381,7 +5601,7 @@ export default function GameCanvas() {
                 <div className={`absolute left-1/2 -translate-x-1/2 pointer-events-none z-10 flex gap-1 sm:gap-4 bottom-4 sm:bottom-6`}>
                    {(Object.keys(toolsData) as Array<keyof typeof toolsData>).map((toolKey) => {
                      const tool = toolsData[toolKey];
-                     const isActive = uiState.activeTool === toolKey;
+                     const isReady = uiState.buttonCounters[toolKey as 'special' | 'build'] === 0;
                      return (
                        <div key={toolKey} className="relative flex flex-col items-center gap-1 sm:gap-1.5">
                          <div className="h-4 sm:h-5 flex items-end">
@@ -4397,84 +5617,43 @@ export default function GameCanvas() {
                              e.stopPropagation();
                              const currentTime = performance.now();
                              if (toolKey === 'special') {
-                               if (currentTime - stateRef.current.player.dash.lastTime >= DASH_COOLDOWN) {
+                               if (!stateRef.current.player.dash.active && (stateRef.current.player.dash.endTime === 0 || currentTime - stateRef.current.player.dash.endTime >= DASH_COOLDOWN)) {
+                                  stateRef.current.player.dash.active = true;
+                                  stateRef.current.player.dash.endTime = currentTime + 6000;
                                   stateRef.current.player.dash.lastTime = currentTime;
                                   const isHostMode = !mpRef.current.roomId || mpRef.current.isHost;
                                   
-                                  let finalX = stateRef.current.mouse.worldX;
-                                  let finalY = stateRef.current.mouse.worldY;
-                                  
-                                  // For mobile or if mouse is on the button, use aim direction or default to player position
-                                  if (uiState.deviceType !== 'desktop') {
-                                     const aim = stateRef.current.touches.right;
-                                     if (aim.active) {
-                                        finalX = stateRef.current.player.x + aim.dirX * 300;
-                                        finalY = stateRef.current.player.y + aim.dirY * 300;
-                                     } else {
-                                        finalX = stateRef.current.player.x;
-                                        finalY = stateRef.current.player.y;
-                                     }
-                                  } else {
-                                     const dx = finalX - stateRef.current.player.x;
-                                     const dy = finalY - stateRef.current.player.y;
-                                     const dist = Math.sqrt(dx*dx + dy*dy);
-                                     if (dist > 300) {
-                                        finalX = stateRef.current.player.x + (dx / dist) * 300;
-                                        finalY = stateRef.current.player.y + (dy / dist) * 300;
-                                     }
-                                  }
+                                  const finalX = stateRef.current.player.x;
+                                  const finalY = stateRef.current.player.y;
 
                                   if (isHostMode) {
                                     const cIdx = playerProfileRef.current.colorIdx;
-                                    stateRef.current.zones.push({
-                                      x: finalX,
-                                      y: finalY,
-                                      innerRadius: 100,
-                                      outerRadius: 250,
-                                      duration: 3000,
-                                      spawnTime: currentTime,
-                                      ownerId: 'local',
-                                      colorIdx: cIdx
-                                    });
-                                    const pDef = PLAYER_COLORS[cIdx] || PLAYER_COLORS[0];
-                                    stateRef.current.shockwaves.push({ x: finalX, y: finalY, color: pDef.n, maxRadius: 250, age: 0, maxAge: 0.5, thickness: 15 });
+                                    applySpecialAbility(finalX, finalY, cIdx, 'local');
                                   } else {
                                     socketRef.current?.emit('client_action', mpRef.current.roomId, { type: 'special', x: finalX, y: finalY, colorIdx: playerProfileRef.current.colorIdx });
+                                    applySpecialAbility(finalX, finalY, playerProfileRef.current.colorIdx, socketRef.current?.id || 'local');
                                   }
                                }
                              } else if (toolKey === 'build') {
-                               if (currentTime - stateRef.current.player.build.lastTime >= BUILD_COOLDOWN) {
+                               if (!stateRef.current.player.build.active && (stateRef.current.player.build.endTime === 0 || currentTime - stateRef.current.player.build.endTime >= BUILD_COOLDOWN)) {
                                  stateRef.current.player.build.active = true;
-                                 stateRef.current.player.build.endTime = currentTime + 10000;
+                                 stateRef.current.player.build.endTime = currentTime + 8000;
                                  stateRef.current.player.build.lastTime = currentTime;
                                  const gridX = Math.round(stateRef.current.player.x / 40) * 40;
                                  const gridY = Math.round(stateRef.current.player.y / 40) * 40;
                                  stateRef.current.player.build.lastBlockX = gridX;
                                  stateRef.current.player.build.lastBlockY = gridY;
                                  const cIdx = playerProfileRef.current.colorIdx;
-                                 const existingIdx = stateRef.current.blocks.findIndex(b => b.x === gridX && b.y === gridY);
-                                 if (existingIdx !== -1) {
-                                    if (stateRef.current.blocks[existingIdx].colorIdx === cIdx) {
-                                       stateRef.current.blocks.splice(existingIdx, 1);
-                                       if (socketRef.current && mpRef.current.roomId && !mpRef.current.isHost) {
-                                          socketRef.current.emit('client_action', mpRef.current.roomId, { type: 'build_remove', x: gridX, y: gridY });
-                                       }
-                                    }
-                                 } else {
-                                    stateRef.current.blocks.push({ x: gridX, y: gridY, size: 40, createdAt: currentTime, colorIdx: cIdx });
-                                    if (socketRef.current && mpRef.current.roomId && !mpRef.current.isHost) {
-                                      socketRef.current.emit('client_action', mpRef.current.roomId, { type: 'build', x: gridX, y: gridY, colorIdx: cIdx });
-                                    }
-                                 }
+                                 tryPlaceBuildBlock(currentTime, gridX, gridY, cIdx);
                                }
                              }
                            }}
-                           className="pointer-events-auto w-16 sm:w-36 py-1 sm:py-2 border-2 font-black tracking-widest uppercase transition-all duration-200 text-[9px] sm:text-sm active:scale-95 relative overflow-hidden flex justify-center items-center gap-1 sm:gap-2"
+                           className="pointer-events-auto w-16 sm:w-36 py-1 sm:py-2 border-2 font-black tracking-widest uppercase transition-all duration-200 text-[9px] sm:text-sm active:scale-95 relative overflow-hidden flex justify-center items-center gap-1 sm:gap-2 focus:outline-none"
                            style={{
                              borderColor: tool.color,
-                             backgroundColor: isActive ? tool.color : 'transparent',
-                             color: isActive ? '#000' : tool.color,
-                             boxShadow: isActive ? `0 0 15px ${tool.color}` : 'none'
+                             backgroundColor: isReady ? `${tool.color}99` : 'transparent',
+                             color: isReady ? '#000' : tool.color,
+                             boxShadow: isReady ? `0 0 10px ${tool.color}99` : 'none'
                            }}
                          >
                            {uiState.deviceType === 'desktop' && (
@@ -4488,11 +5667,8 @@ export default function GameCanvas() {
                 </div>
                 
                 <div className="hidden sm:block absolute bottom-0 right-0 p-8 pointer-events-none z-10 text-right">
-                   <div 
-                     className="text-sm tracking-[0.2em] font-bold font-mono transition-all duration-300"
-                     style={{ color: activeT.color, textShadow: `0 0 8px ${activeT.color}` }}
-                   >
-                     {uiState.deviceType === 'mobile' ? activeT.mobile : activeT.desktop}
+                   <div className="text-sm text-[#94A3B8] tracking-[0.2em] font-bold font-mono">
+                     {uiState.deviceType === 'mobile' ? 'TAP TO SHOOT' : 'MOUSE TO SHOOT'}
                    </div>
                 </div>
               </>
@@ -4507,8 +5683,10 @@ export default function GameCanvas() {
         <div className="absolute inset-0 bg-[#00f0ff]/90 flex flex-col items-center justify-center p-4 sm:p-6 text-center backdrop-blur-md z-20">
           <div className="max-w-xl w-full bg-[#0a0000] border-2 border-[#00f0ff] p-6 sm:p-8 md:p-12 shadow-[10px_10px_0_#00f0ff]">
             <h2 className="text-5xl sm:text-6xl md:text-7xl font-black text-[#00f0ff] mb-2 sm:mb-4 tracking-tighter" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>VICTORY</h2>
-            <div className="text-xs sm:text-sm font-mono text-[#00f0ff]/80 mb-6 md:mb-10 uppercase tracking-widest border-t border-b border-[#00f0ff]/30 py-4 sm:py-6">
-              FINAL SCORE: <span className="text-white font-bold text-xl sm:text-2xl ml-2">{uiState.score}</span>
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-4 sm:gap-8 text-xs sm:text-sm font-mono text-[#00f0ff]/80 mb-6 md:mb-10 uppercase tracking-widest border-t border-b border-[#00f0ff]/30 py-4 sm:py-6">
+              <div>FINAL SCORE: <span className="text-white font-bold text-xl sm:text-2xl ml-2">{uiState.score}</span></div>
+              <div className="hidden sm:block w-px h-6 bg-[#00f0ff]/30"></div>
+              <div>SPAWNERS LEFT: <span className="text-white font-bold text-xl sm:text-2xl ml-2">{uiState.spawnersLeft}/{(MAPS[uiState.mapId] || MAPS.medium).spawners.length}</span></div>
             </div>
             <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center">
               <button 
@@ -4538,8 +5716,9 @@ export default function GameCanvas() {
         <div className="absolute inset-0 bg-red-950/90 flex flex-col items-center justify-center p-4 sm:p-6 text-center backdrop-blur-md z-20">
           <div className="max-w-xl w-full bg-[#0a0000] border-2 border-[#ff003c] p-6 sm:p-8 md:p-12 shadow-[10px_10px_0_#ff003c]">
             <h2 className="text-5xl sm:text-6xl md:text-7xl font-black text-[#ff003c] mb-2 sm:mb-4 tracking-tighter" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>ANNIHILATED</h2>
-            <div className="text-xs sm:text-sm font-mono text-red-200/80 mb-6 md:mb-10 uppercase tracking-widest border-t border-b border-red-500/30 py-4 sm:py-6">
-              FINAL SCORE: <span className="text-white font-bold text-xl sm:text-2xl ml-2">{uiState.score}</span>
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-4 sm:gap-8 text-xs sm:text-sm font-mono text-red-200/80 mb-6 md:mb-10 uppercase tracking-widest border-t border-b border-red-500/30 py-4 sm:py-6">
+              <div>FINAL SCORE: <span className="text-white font-bold text-xl sm:text-2xl ml-2">{uiState.score}</span></div>
+              <div>SPAWNERS LEFT: <span className="text-white font-bold text-xl sm:text-2xl ml-2">{uiState.spawnersLeft}/{(MAPS[uiState.mapId] || MAPS.medium).spawners.length}</span></div>
             </div>
             <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center">
               <button 
@@ -4798,3 +5977,4 @@ export default function GameCanvas() {
     </div>
   );
 }
+
