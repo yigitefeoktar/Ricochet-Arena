@@ -1,0 +1,33 @@
+--- src/components/GameCanvas.tsx
++++ src/components/GameCanvas.tsx
+@@ -5422,9 +5422,34 @@
+       })()}
+       {(uiState.status === 'PLAYING' || uiState.status === 'PAUSED') && (() => {
+         const toolsData = {
+-          special: { label: 'SPECIAL', color: '#b500ff', mobile: 'TAP TO USE', desktop: 'KEY "1" TO USE' },
+-          build: { label: 'BUILD', color: '#0EA5E9', mobile: 'TAP TO USE', desktop: 'KEY "2" TO USE' }
++          special: { 
++            label: 'SPECIAL', 
++            usableFill: 'rgba(139, 92, 246, 0.48)',
++            usableBorder: '#C4B5FD',
++            usableText: '#F5F3FF',
++            unusableFill: 'rgba(139, 92, 246, 0.05)',
++            unusableBorder: 'rgba(139, 92, 246, 0.42)',
++            unusableText: 'rgba(139, 92, 246, 0.52)',
++            usableGlow: '0 0 6px rgba(139, 92, 246, 0.32), 0 0 14px rgba(139, 92, 246, 0.12)',
++            mobile: 'TAP TO USE', 
++            desktop: 'KEY "1" TO USE' 
++          },
++          build: { 
++            label: 'BUILD', 
++            usableFill: 'rgba(14, 165, 233, 0.42)',
++            usableBorder: '#67E8F9',
++            usableText: '#ECFEFF',
++            unusableFill: 'rgba(14, 165, 233, 0.05)',
++            unusableBorder: 'rgba(14, 165, 233, 0.42)',
++            unusableText: 'rgba(14, 165, 233, 0.52)',
++            usableGlow: '0 0 6px rgba(14, 165, 233, 0.32), 0 0 14px rgba(14, 165, 233, 0.12)',
++            mobile: 'TAP TO USE', 
++            desktop: 'KEY "2" TO USE' 
++          }
+         } as const;

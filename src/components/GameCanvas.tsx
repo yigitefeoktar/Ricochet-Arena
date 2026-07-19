@@ -4891,7 +4891,7 @@ export default function GameCanvas() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="absolute inset-0 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm z-10 pointer-events-auto"
+            className="absolute inset-0 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm z-[70] pointer-events-auto"
           >
             <AnimatePresence mode="wait">
               {!isMapSelectOpen ? (
@@ -5161,7 +5161,7 @@ export default function GameCanvas() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="absolute inset-0 z-50 flex flex-col items-center justify-center p-4 sm:p-8 bg-[#050508]/80 backdrop-blur-md pointer-events-auto"
+            className="absolute inset-0 z-[70] flex flex-col items-center justify-center p-4 sm:p-8 bg-[#050508]/80 backdrop-blur-md pointer-events-auto"
           >
             <motion.div
               initial={{ scale: 0.9 * menuScale, y: 20 }}
@@ -5423,8 +5423,30 @@ export default function GameCanvas() {
 
       {(uiState.status === 'PLAYING' || uiState.status === 'PAUSED') && (() => {
         const toolsData = {
-          special: { label: 'SPECIAL', color: '#b500ff', mobile: 'TAP TO USE', desktop: 'KEY "1" TO USE' },
-          build: { label: 'BUILD', color: '#0EA5E9', mobile: 'TAP TO USE', desktop: 'KEY "2" TO USE' }
+          special: { 
+            label: 'SPECIAL', 
+            usableFill: 'linear-gradient(rgba(139, 92, 246, 0.52), rgba(139, 92, 246, 0.52)), rgba(6, 8, 14, 0.90)',
+            usableBorder: '#C4B5FD',
+            usableText: '#F5F7FF',
+            unusableFill: 'rgba(139, 92, 246, 0.05)',
+            unusableBorder: 'rgba(139, 92, 246, 0.42)',
+            unusableText: 'rgba(139, 92, 246, 0.52)',
+            usableGlow: '0 0 5px rgba(139, 92, 246, 0.24), 0 0 12px rgba(139, 92, 246, 0.08)',
+            mobile: 'TAP TO USE', 
+            desktop: 'KEY "1" TO USE' 
+          },
+          build: { 
+            label: 'BUILD', 
+            usableFill: 'linear-gradient(rgba(14, 165, 233, 0.60), rgba(14, 165, 233, 0.60)), rgba(6, 8, 14, 0.90)',
+            usableBorder: '#67E8F9',
+            usableText: '#F5F7FF',
+            unusableFill: 'rgba(14, 165, 233, 0.05)',
+            unusableBorder: 'rgba(14, 165, 233, 0.42)',
+            unusableText: 'rgba(14, 165, 233, 0.52)',
+            usableGlow: '0 0 5px rgba(14, 165, 233, 0.24), 0 0 12px rgba(14, 165, 233, 0.08)',
+            mobile: 'TAP TO USE', 
+            desktop: 'KEY "2" TO USE' 
+          }
         } as const;
         const activeT = toolsData[uiState.activeTool];
 
@@ -5436,7 +5458,7 @@ export default function GameCanvas() {
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
                 transition={{ duration: 0.6, ease: "easeInOut" }}
-                className="absolute inset-0 pointer-events-none z-10"
+                className="absolute inset-0 pointer-events-none z-[70]"
               >
                 <div className="absolute top-0 left-0 right-0 p-4 sm:p-6 flex flex-row justify-between items-start pointer-events-none z-10 w-full max-w-7xl mx-auto">
                   {/* Left: Score & Spawners / Target Counters */}
@@ -5486,7 +5508,7 @@ export default function GameCanvas() {
                        <div className="text-white font-black text-2xl sm:text-[43px] tracking-tighter leading-none mt-1" 
                             style={{ 
                               fontFamily: 'var(--font-display, Anton, sans-serif)',
-                              textShadow: `0 0 15px ${uiState.hardMode ? '#ff3300' : '#ff00ff'}`
+                              textShadow: `0 0 15px ${uiState.hardMode ? '#ff3300' : '#ff00ff'}` 
                             }}>
                          {mpState.roomId ? `#${getPlayerRank()}` : uiState.spawnersLeft}
                        </div>
@@ -5525,7 +5547,7 @@ export default function GameCanvas() {
             {uiState.status === 'PAUSED' && !confirmResign && (
               <div 
                 onPointerDown={() => setUiState(prev => ({ ...prev, status: 'PLAYING' }))}
-                className="absolute inset-0 bg-black/75 pointer-events-auto z-40 flex flex-col items-center justify-center backdrop-blur-md cursor-pointer select-none"
+                className="absolute inset-0 bg-black/75 pointer-events-auto z-[70] flex flex-col items-center justify-center backdrop-blur-md cursor-pointer select-none"
               >
                 {/* Clean, Simple Typography of old HALTED text */}
                 <div className="flex flex-col items-center text-center">
@@ -5543,7 +5565,7 @@ export default function GameCanvas() {
                 {/* Bottom Save Section (purple accent, simple style) */}
                 <div 
                   onPointerDown={(e) => e.stopPropagation()}
-                  className="absolute bottom-12 left-1/2 -translate-x-1/2 pointer-events-auto z-40"
+                  className="absolute bottom-12 left-1/2 -translate-x-1/2 pointer-events-auto z-[70]"
                 >
                   <button 
                     onClick={(e) => {
@@ -5559,7 +5581,7 @@ export default function GameCanvas() {
             )}
 
             {confirmResign && (
-              <div className="absolute inset-0 bg-black/80 pointer-events-auto z-50 flex flex-col items-center justify-center backdrop-blur-md">
+              <div className="absolute inset-0 bg-black/80 pointer-events-auto z-[70] flex flex-col items-center justify-center backdrop-blur-md">
                  <h2 className="text-4xl sm:text-6xl md:text-7xl font-black text-[#ff003c] tracking-tighter drop-shadow-[0_0_15px_rgba(255,0,60,0.8)] mb-8 text-center px-4" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>
                    CONFIRM RESIGNATION?
                  </h2>
@@ -5597,8 +5619,7 @@ export default function GameCanvas() {
                      {uiState.deviceType === 'mobile' ? 'JOYSTICK TO MOVE' : 'WASD TO MOVE'}
                    </div>
                 </div>
-
-                <div className={`absolute left-1/2 -translate-x-1/2 pointer-events-none z-10 flex gap-1 sm:gap-4 bottom-4 sm:bottom-6`}>
+                <div className={`absolute left-1/2 -translate-x-1/2 pointer-events-none z-10 flex gap-[14px] sm:gap-[16px] bottom-4 sm:bottom-6`}>
                    {(Object.keys(toolsData) as Array<keyof typeof toolsData>).map((toolKey) => {
                      const tool = toolsData[toolKey];
                      const isReady = uiState.buttonCounters[toolKey as 'special' | 'build'] === 0;
@@ -5606,7 +5627,7 @@ export default function GameCanvas() {
                        <div key={toolKey} className="relative flex flex-col items-center gap-1 sm:gap-1.5">
                          <div className="h-4 sm:h-5 flex items-end">
                            {uiState.buttonCounters[toolKey as 'special' | 'build'] > 0 && (
-                             <span className="text-[10px] sm:text-xs font-mono font-bold" style={{ color: tool.color }}>
+                             <span className="text-[10px] sm:text-xs font-mono font-bold" style={{ color: tool.unusableBorder }}>
                                {uiState.buttonCounters[toolKey as 'special' | 'build']}
                              </span>
                            )}
@@ -5625,7 +5646,6 @@ export default function GameCanvas() {
                                   
                                   const finalX = stateRef.current.player.x;
                                   const finalY = stateRef.current.player.y;
-
                                   if (isHostMode) {
                                     const cIdx = playerProfileRef.current.colorIdx;
                                     applySpecialAbility(finalX, finalY, cIdx, 'local');
@@ -5648,16 +5668,17 @@ export default function GameCanvas() {
                                }
                              }
                            }}
-                           className="pointer-events-auto w-16 sm:w-36 py-1 sm:py-2 border-2 font-black tracking-widest uppercase transition-all duration-200 text-[9px] sm:text-sm active:scale-95 relative overflow-hidden flex justify-center items-center gap-1 sm:gap-2 focus:outline-none"
+                           className="pointer-events-auto w-[162px] h-[44px] border-2 font-black tracking-widest uppercase text-[13px] sm:text-[14px] active:scale-95 relative overflow-hidden flex justify-center items-center gap-1 sm:gap-2 focus:outline-none hover:brightness-110 active:brightness-90"
                            style={{
-                             borderColor: tool.color,
-                             backgroundColor: isReady ? `${tool.color}99` : 'transparent',
-                             color: isReady ? '#000' : tool.color,
-                             boxShadow: isReady ? `0 0 10px ${tool.color}99` : 'none'
+                             borderColor: isReady ? tool.usableBorder : tool.unusableBorder,
+                             background: isReady ? tool.usableFill : tool.unusableFill,
+                             color: isReady ? tool.usableText : tool.unusableText,
+                             boxShadow: isReady ? tool.usableGlow : 'none',
+                             transition: isReady ? 'all 140ms ease-out' : 'all 100ms ease-in'
                            }}
                          >
                            {uiState.deviceType === 'desktop' && (
-                             <span className="hidden sm:inline-block relative z-10 opacity-50 font-mono">[{toolKey === 'special' ? 1 : 2}]</span>
+                             <span className="hidden sm:inline-block relative z-10 opacity-70 font-mono">[{toolKey === 'special' ? 1 : 2}]</span>
                            )}
                            <span className="relative z-10">{tool.label}</span>
                          </button>
@@ -5680,7 +5701,7 @@ export default function GameCanvas() {
       })()}
 
       {uiState.status === 'VICTORY' && !mpState.roomId && (
-        <div className="absolute inset-0 bg-[#00f0ff]/90 flex flex-col items-center justify-center p-4 sm:p-6 text-center backdrop-blur-md z-20">
+        <div className="absolute inset-0 bg-[#00f0ff]/90 flex flex-col items-center justify-center p-4 sm:p-6 text-center backdrop-blur-md z-[70]">
           <div className="max-w-xl w-full bg-[#0a0000] border-2 border-[#00f0ff] p-6 sm:p-8 md:p-12 shadow-[10px_10px_0_#00f0ff]">
             <h2 className="text-5xl sm:text-6xl md:text-7xl font-black text-[#00f0ff] mb-2 sm:mb-4 tracking-tighter" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>VICTORY</h2>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4 sm:gap-8 text-xs sm:text-sm font-mono text-[#00f0ff]/80 mb-6 md:mb-10 uppercase tracking-widest border-t border-b border-[#00f0ff]/30 py-4 sm:py-6">
@@ -5713,7 +5734,7 @@ export default function GameCanvas() {
       )}
 
       {uiState.status === 'GAME_OVER' && !mpState.roomId && (
-        <div className="absolute inset-0 bg-red-950/90 flex flex-col items-center justify-center p-4 sm:p-6 text-center backdrop-blur-md z-20">
+        <div className="absolute inset-0 bg-red-950/90 flex flex-col items-center justify-center p-4 sm:p-6 text-center backdrop-blur-md z-[70]">
           <div className="max-w-xl w-full bg-[#0a0000] border-2 border-[#ff003c] p-6 sm:p-8 md:p-12 shadow-[10px_10px_0_#ff003c]">
             <h2 className="text-5xl sm:text-6xl md:text-7xl font-black text-[#ff003c] mb-2 sm:mb-4 tracking-tighter" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>ANNIHILATED</h2>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-4 sm:gap-8 text-xs sm:text-sm font-mono text-red-200/80 mb-6 md:mb-10 uppercase tracking-widest border-t border-b border-red-500/30 py-4 sm:py-6">
@@ -5750,7 +5771,7 @@ export default function GameCanvas() {
         const myId = socketRef.current?.id || 'local';
 
         return (
-          <div className="absolute inset-0 bg-[#0a0000]/95 flex flex-col items-center justify-center p-2 sm:p-6 text-center backdrop-blur-md z-20 overflow-y-auto">
+          <div className="absolute inset-0 bg-[#0a0000]/95 flex flex-col items-center justify-center p-2 sm:p-6 text-center backdrop-blur-md z-[70] overflow-y-auto">
             <div className="max-w-xl w-full bg-[#0d0404] border-2 border-[#ff005c] p-5 sm:p-8 md:p-10 shadow-[10px_10px_0_#ff005c] my-auto">
               
               {/* GOAL display */}
@@ -5893,7 +5914,7 @@ export default function GameCanvas() {
 
       <AnimatePresence>
         {bannerState.show && bannerState.mode && (
-          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[90%] sm:w-[480px] z-50 pointer-events-none select-none">
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[90%] sm:w-[480px] z-[70] pointer-events-none select-none">
             <motion.div
               initial={{ scale: 0.9, opacity: 0, y: -40 }}
               animate={{ scale: 1, opacity: 1, y: 0 }}
