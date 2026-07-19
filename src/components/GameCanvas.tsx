@@ -5634,8 +5634,10 @@ export default function GameCanvas() {
                          </div>
                          <button
                            id={`tool-btn-${toolKey}`}
+                           aria-disabled={!isReady}
                            onPointerDown={(e) => {
                              e.stopPropagation();
+                             if (!isReady) return;
                              const currentTime = performance.now();
                              if (toolKey === 'special') {
                                if (!stateRef.current.player.dash.active && (stateRef.current.player.dash.endTime === 0 || currentTime - stateRef.current.player.dash.endTime >= DASH_COOLDOWN)) {
@@ -5668,7 +5670,7 @@ export default function GameCanvas() {
                                }
                              }
                            }}
-                           className="pointer-events-auto w-[162px] h-[44px] border-2 font-black tracking-widest uppercase text-[13px] sm:text-[14px] active:scale-95 relative overflow-hidden flex justify-center items-center gap-1 sm:gap-2 focus:outline-none hover:brightness-110 active:brightness-90"
+                           className={`pointer-events-auto w-[162px] h-[44px] border-2 font-black tracking-widest uppercase text-[13px] sm:text-[14px] relative overflow-hidden flex justify-center items-center gap-1 sm:gap-2 focus:outline-none ${isReady ? 'hover:brightness-110 active:brightness-90 active:scale-95 cursor-pointer' : 'cursor-default'}`}
                            style={{
                              borderColor: isReady ? tool.usableBorder : tool.unusableBorder,
                              background: isReady ? tool.usableFill : tool.unusableFill,
