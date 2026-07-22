@@ -177,8 +177,8 @@ const MAPS: Record<string, MapDefinition> = {
 
       // Bottom-Left: Diagonal-like stairs
       { x: 300, y: 2100, w: 200, h: 50 },
-      { x: 500, y: 2300, w: 200, h: 50 },
-      { x: 700, y: 2500, w: 200, h: 50 },
+      { x: 500, y: 2150, w: 200, h: 50 },
+      { x: 800, y: 2650, w: 200, h: 50 },
 
       // Bottom-Right: 4 Pillars
       { x: 2150, y: 2150, w: 100, h: 100 },
@@ -216,7 +216,7 @@ const MAPS: Record<string, MapDefinition> = {
       { x: 150, y: 1750, w: 400, h: 50 },
 
       // Right Spawner Cover
-      { x: 2700, y: 1300, w: 50, h: 400 },
+      { x: 2800, y: 1300, w: 50, h: 400 },
       { x: 2400, y: 1200, w: 100, h: 100 },
       { x: 2400, y: 1700, w: 100, h: 100 },
 
@@ -279,7 +279,7 @@ const MAPS: Record<string, MapDefinition> = {
       { x: 1000, y: 2100, w: 100, h: 900 },
       { x: 0, y: 1900, w: 800, h: 100 },
       { x: 300, y: 2200, w: 50, h: 400 },
-      { x: 600, y: 2400, w: 50, h: 400 },
+      { x: 750, y: 2400, w: 50, h: 400 },
 
       // Bottom-Right corner structure
       { x: 1900, y: 1900, w: 100, h: 700 },
@@ -292,7 +292,7 @@ const MAPS: Record<string, MapDefinition> = {
       { x: 1900, y: 1000, w: 100, h: 700 },
       { x: 1200, y: 800, w: 600, h: 100 },
       { x: 1200, y: 1900, w: 800, h: 100 },
-      { x: 1300, y: 1300, w: 100, h: 400 },
+      { x: 1200, y: 1300, w: 100, h: 400 },
     ],
     spawners: [
       { x: 500, y: 500, radius: 40, hp: 100, maxHp: 100 },
@@ -576,8 +576,8 @@ const MAPS: Record<string, MapDefinition> = {
 
       // Room 2 (Top-Right) Inner
       { x: 2200, y: 200, w: 100, h: 100 },
-      { x: 2400, y: 400, w: 100, h: 100 },
-      { x: 2600, y: 600, w: 100, h: 100 },
+      { x: 2350, y: 200, w: 100, h: 100 },
+      { x: 2650, y: 700, w: 100, h: 100 },
       { x: 2800, y: 800, w: 100, h: 100 },
 
       // Room 3 (Center) Inner
@@ -588,7 +588,8 @@ const MAPS: Record<string, MapDefinition> = {
 
       // Room 4 (Bottom-Right) Inner
       { x: 2300, y: 2200, w: 400, h: 50 },
-      { x: 2475, y: 2250, w: 50, h: 400 },
+      { x: 2475, y: 2250, w: 50, h: 50 },
+      { x: 2475, y: 2700, w: 50, h: 200 },
 
       // Room 5 (Bottom-Left - Start) Inner
       { x: 700, y: 2200, w: 100, h: 50 }
