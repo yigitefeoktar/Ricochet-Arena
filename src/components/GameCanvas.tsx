@@ -126,7 +126,7 @@ const MAPS: Record<string, MapDefinition> = {
       { x: 2850, y: 150, radius: 40, hp: 100, maxHp: 100 },
       { x: 150, y: 2850, radius: 40, hp: 100, maxHp: 100 },
       { x: 2850, y: 2850, radius: 40, hp: 100, maxHp: 100 },
-      { x: 1500, y: 1000, radius: 40, hp: 100, maxHp: 100 }
+      { x: 1500, y: 1000, radius: 40, hp: 100, maxHp: 100, specialType: 'singularity' }
     ]
   },
 
@@ -252,7 +252,7 @@ const MAPS: Record<string, MapDefinition> = {
       { x: 1600, y: 1000, w: 400, h: 100 },
     ],
     spawners: [
-      { x: 1500, y: 1500, radius: 40, hp: 100, maxHp: 100 },
+      { x: 1500, y: 1500, radius: 40, hp: 100, maxHp: 100, specialType: 'shield' },
       { x: 1200, y: 1500, radius: 40, hp: 100, maxHp: 100 },
       { x: 1800, y: 1500, radius: 40, hp: 100, maxHp: 100 },
       { x: 1500, y: 1200, radius: 40, hp: 100, maxHp: 100 },
@@ -365,7 +365,7 @@ const MAPS: Record<string, MapDefinition> = {
       { x: 1700, y: 1700, w: 150, h: 150 },
     ],
     spawners: [
-      { x: 1500, y: 1500, radius: 40, hp: 100, maxHp: 100 },
+      { x: 1500, y: 1500, radius: 40, hp: 100, maxHp: 100, specialType: 'kinetic' },
       { x: 400, y: 400, radius: 40, hp: 100, maxHp: 100 },
       { x: 2600, y: 400, radius: 40, hp: 100, maxHp: 100 },
       { x: 400, y: 2600, radius: 40, hp: 100, maxHp: 100 },
@@ -457,7 +457,7 @@ const MAPS: Record<string, MapDefinition> = {
   },
   sector_control: {
     name: "Sector Control",
-    difficulty: "MEDIUM",
+    difficulty: "HARD",
     description: "Divided into 4 quadrants. Each room's spawner is fortified with a unique defensive layout and cosmic relic—from kinetic deflectors to rotating magma gates.",
     walls: [
       ...BASE_WALLS,
@@ -532,10 +532,10 @@ const MAPS: Record<string, MapDefinition> = {
     ],
     spawners: [
       { x: 1500, y: 1500, radius: 40, hp: 100, maxHp: 100 },
-      { x: 700, y: 700, radius: 40, hp: 100, maxHp: 100 },
-      { x: 2300, y: 700, radius: 40, hp: 100, maxHp: 100 },
-      { x: 700, y: 2300, radius: 40, hp: 100, maxHp: 100 },
-      { x: 2300, y: 2300, radius: 40, hp: 100, maxHp: 100 }
+      { x: 700, y: 700, radius: 40, hp: 100, maxHp: 100, specialType: 'shield' },
+      { x: 2300, y: 700, radius: 40, hp: 100, maxHp: 100, specialType: 'kinetic' },
+      { x: 700, y: 2300, radius: 40, hp: 100, maxHp: 100, specialType: 'magma_gates' },
+      { x: 2300, y: 2300, radius: 40, hp: 100, maxHp: 100, specialType: 'crystal' }
     ],
     spawnArea: { x: 1150, y: 1150, w: 700, h: 700 }
   },
@@ -596,10 +596,10 @@ const MAPS: Record<string, MapDefinition> = {
     ],
     spawners: [
       { x: 500, y: 2500, radius: 40, hp: 100, maxHp: 100 },
-      { x: 500, y: 500, radius: 40, hp: 100, maxHp: 100 },
-      { x: 2500, y: 500, radius: 40, hp: 100, maxHp: 100 },
-      { x: 1500, y: 1500, radius: 40, hp: 100, maxHp: 100 },
-      { x: 2500, y: 2500, radius: 40, hp: 100, maxHp: 100 }
+      { x: 500, y: 500, radius: 40, hp: 100, maxHp: 100, specialType: 'shield' },
+      { x: 2500, y: 500, radius: 40, hp: 100, maxHp: 100, specialType: 'kinetic' },
+      { x: 1500, y: 1500, radius: 40, hp: 100, maxHp: 100, specialType: 'singularity' },
+      { x: 2500, y: 2500, radius: 40, hp: 100, maxHp: 100, specialType: 'crystal' }
     ],
     spawnArea: { x: 50, y: 2050, w: 900, h: 900 }
   },
@@ -712,7 +712,7 @@ const MAPS: Record<string, MapDefinition> = {
       { x: 2750, y: 230, radius: 40, hp: 100, maxHp: 100 }, // Cell (7,0)
       { x: 1310, y: 1670, radius: 40, hp: 100, maxHp: 100 }, // Cell (3,4)
       { x: 230, y: 2750, radius: 40, hp: 100, maxHp: 100 }, // Cell (0,7)
-      { x: 2750, y: 2750, radius: 40, hp: 100, maxHp: 100 } // Cell (7,7) - the exact far end of the maze
+      { x: 2750, y: 2750, radius: 40, hp: 100, maxHp: 100, specialType: 'crystal' } // Cell (7,7) - the exact far end of the maze
     ],
     spawnArea: { x: 50, y: 50, w: 360, h: 360 }
   },
@@ -774,8 +774,8 @@ const MAPS: Record<string, MapDefinition> = {
     ],
     spawners: [
       { x: 300, y: 300, radius: 40, hp: 100, maxHp: 100 },
-      { x: 2700, y: 300, radius: 40, hp: 100, maxHp: 100 },
-      { x: 1500, y: 1500, radius: 40, hp: 100, maxHp: 100 },
+      { x: 2700, y: 300, radius: 40, hp: 100, maxHp: 100, specialType: 'crystal' },
+      { x: 1500, y: 1500, radius: 40, hp: 100, maxHp: 100, specialType: 'kinetic' },
       { x: 300, y: 2700, radius: 40, hp: 100, maxHp: 100 },
       { x: 2700, y: 2700, radius: 40, hp: 100, maxHp: 100 }
     ],
