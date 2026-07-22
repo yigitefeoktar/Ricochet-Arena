@@ -161,11 +161,30 @@ const MAPS: Record<string, MapDefinition> = {
     description: "Four distinct quarters divided by large walls. Predict ricochets at the central intersection.",
     walls: [
       ...BASE_WALLS,
+      // Main cross
       { x: 1200, y: 0, w: 600, h: 900 },
       { x: 1200, y: 2100, w: 600, h: 900 },
       { x: 0, y: 1200, w: 900, h: 600 },
       { x: 2100, y: 1200, w: 900, h: 600 },
-      // Center is open for intersection combat
+      
+      // Top-Left: L-Shape
+      { x: 300, y: 300, w: 500, h: 50 },
+      { x: 300, y: 300, w: 50, h: 500 },
+      
+      // Top-Right: Parallel horizontal shields
+      { x: 2150, y: 300, w: 500, h: 50 },
+      { x: 2150, y: 850, w: 500, h: 50 },
+
+      // Bottom-Left: Diagonal-like stairs
+      { x: 300, y: 2100, w: 200, h: 50 },
+      { x: 500, y: 2300, w: 200, h: 50 },
+      { x: 700, y: 2500, w: 200, h: 50 },
+
+      // Bottom-Right: 4 Pillars
+      { x: 2150, y: 2150, w: 100, h: 100 },
+      { x: 2650, y: 2150, w: 100, h: 100 },
+      { x: 2150, y: 2650, w: 100, h: 100 },
+      { x: 2650, y: 2650, w: 100, h: 100 },
     ],
     spawners: [
       { x: 600, y: 600, radius: 40, hp: 100, maxHp: 100 },
@@ -191,11 +210,23 @@ const MAPS: Record<string, MapDefinition> = {
       { x: 1850, y: 1100, w: 50, h: 300 },
       { x: 1850, y: 1600, w: 50, h: 300 },
       
-      // Outer rim covers
-      { x: 500, y: 500, w: 200, h: 200 },
-      { x: 2300, y: 500, w: 200, h: 200 },
-      { x: 500, y: 2300, w: 200, h: 200 },
-      { x: 2300, y: 2300, w: 200, h: 200 },
+      // Left Spawner Cover
+      { x: 150, y: 1200, w: 50, h: 600 },
+      { x: 150, y: 1200, w: 400, h: 50 },
+      { x: 150, y: 1750, w: 400, h: 50 },
+
+      // Right Spawner Cover
+      { x: 2700, y: 1300, w: 50, h: 400 },
+      { x: 2400, y: 1200, w: 100, h: 100 },
+      { x: 2400, y: 1700, w: 100, h: 100 },
+
+      // Top Spawner Cover
+      { x: 1300, y: 650, w: 400, h: 50 },
+      { x: 1475, y: 700, w: 50, h: 200 },
+
+      // Bottom Spawner Cover
+      { x: 1250, y: 2300, w: 50, h: 500 },
+      { x: 1700, y: 2300, w: 50, h: 500 },
     ],
     spawners: [
       { x: 400, y: 1500, radius: 40, hp: 100, maxHp: 100 },
@@ -234,21 +265,34 @@ const MAPS: Record<string, MapDefinition> = {
     description: "Several narrow pathways restrict movement. Position yourself carefully or be overrun.",
     walls: [
       ...BASE_WALLS,
-      { x: 1000, y: 0, w: 100, h: 800 },
-      { x: 1000, y: 1000, w: 100, h: 1000 },
-      { x: 1000, y: 2200, w: 100, h: 800 },
-      
-      { x: 1900, y: 0, w: 100, h: 800 },
-      { x: 1900, y: 1000, w: 100, h: 1000 },
-      { x: 1900, y: 2200, w: 100, h: 800 },
+      // Top-Left corner structure
+      { x: 1000, y: 0, w: 100, h: 600 },
+      { x: 0, y: 800, w: 600, h: 100 },
+      { x: 300, y: 300, w: 400, h: 50 },
 
-      { x: 0, y: 800, w: 800, h: 100 },
-      { x: 1200, y: 800, w: 800, h: 100 },
+      // Top-Right corner structure
+      { x: 1900, y: 200, w: 100, h: 600 },
       { x: 2200, y: 800, w: 800, h: 100 },
-      
+      { x: 2200, y: 300, w: 50, h: 400 },
+
+      // Bottom-Left corner structure
+      { x: 1000, y: 2100, w: 100, h: 900 },
       { x: 0, y: 1900, w: 800, h: 100 },
+      { x: 300, y: 2200, w: 50, h: 400 },
+      { x: 600, y: 2400, w: 50, h: 400 },
+
+      // Bottom-Right corner structure
+      { x: 1900, y: 1900, w: 100, h: 700 },
+      { x: 2400, y: 1900, w: 600, h: 100 },
+      { x: 2200, y: 2200, w: 300, h: 50 },
+      { x: 2200, y: 2200, w: 50, h: 300 },
+
+      // Center enclosure
+      { x: 1000, y: 1000, w: 100, h: 900 },
+      { x: 1900, y: 1000, w: 100, h: 700 },
+      { x: 1200, y: 800, w: 600, h: 100 },
       { x: 1200, y: 1900, w: 800, h: 100 },
-      { x: 2200, y: 1900, w: 800, h: 100 },
+      { x: 1300, y: 1300, w: 100, h: 400 },
     ],
     spawners: [
       { x: 500, y: 500, radius: 40, hp: 100, maxHp: 100 },
@@ -284,15 +328,25 @@ const MAPS: Record<string, MapDefinition> = {
     description: "Chaos incarnate. Bullets bounce off a multitude of scattered bumpers in the center.",
     walls: [
       ...BASE_WALLS,
-      // Corner guards
-      { x: 200, y: 200, w: 400, h: 50 },
-      { x: 200, y: 200, w: 50, h: 400 },
-      { x: 2400, y: 200, w: 400, h: 50 },
-      { x: 2750, y: 200, w: 50, h: 400 },
-      { x: 200, y: 2750, w: 400, h: 50 },
-      { x: 200, y: 2400, w: 50, h: 400 },
-      { x: 2400, y: 2750, w: 400, h: 50 },
-      { x: 2750, y: 2400, w: 50, h: 400 },
+      // Top-Left Guard
+      { x: 200, y: 600, w: 200, h: 50 },
+      { x: 400, y: 700, w: 200, h: 50 },
+      { x: 600, y: 200, w: 50, h: 200 },
+      { x: 700, y: 400, w: 50, h: 200 },
+
+      // Top-Right Guard
+      { x: 2300, y: 200, w: 50, h: 400 },
+      { x: 2300, y: 600, w: 400, h: 50 },
+
+      // Bottom-Left Guard
+      { x: 200, y: 2300, w: 400, h: 30 },
+      { x: 200, y: 2450, w: 400, h: 30 },
+      { x: 200, y: 2800, w: 400, h: 30 },
+
+      // Bottom-Right Guard
+      { x: 2400, y: 2400, w: 400, h: 50 },
+      { x: 2400, y: 2400, w: 50, h: 400 },
+      { x: 2400, y: 2800, w: 400, h: 50 },
       
       // Bumpers (small walls)
       { x: 900, y: 900, w: 100, h: 100 },
@@ -324,11 +378,26 @@ const MAPS: Record<string, MapDefinition> = {
     description: "Begin in a secured bottom-left starting quadrant containing an integrated spawner, allowing you to prepare before venturing out into the wild arena.",
     walls: [
       ...BASE_WALLS,
+      // Safe Start Room
       { x: 0, y: 1800, w: 700, h: 50 },
       { x: 1000, y: 2100, w: 50, h: 900 },
-      { x: 2000, y: 800, w: 150, h: 150 },
-      { x: 800, y: 800, w: 150, h: 150 },
-      { x: 2000, y: 2000, w: 150, h: 150 }
+
+      // Center Spawner Brackets
+      { x: 1200, y: 1300, w: 50, h: 400 },
+      { x: 1750, y: 1300, w: 50, h: 400 },
+
+      // Top-Left L Cover
+      { x: 200, y: 800, w: 600, h: 50 },
+      { x: 800, y: 200, w: 50, h: 600 },
+
+      // Top-Right Massive Wall
+      { x: 2100, y: 700, w: 600, h: 50 },
+
+      // Bottom-Right Dispersed Dots
+      { x: 2200, y: 2200, w: 50, h: 50 },
+      { x: 2800, y: 2200, w: 50, h: 50 },
+      { x: 2200, y: 2800, w: 50, h: 50 },
+      { x: 2800, y: 2800, w: 50, h: 50 }
     ],
     spawners: [
       { x: 500, y: 2400, radius: 40, hp: 100, maxHp: 100 },
@@ -430,6 +499,7 @@ const MAPS: Record<string, MapDefinition> = {
     description: "High-intensity tactical layout. Start within a tight central bunker that contains a spawner but is surrounded by an active outer ring of hostiles.",
     walls: [
       ...BASE_WALLS,
+      // Central bunker
       { x: 1100, y: 1100, w: 300, h: 50 },
       { x: 1600, y: 1100, w: 300, h: 50 },
       { x: 1100, y: 1850, w: 300, h: 50 },
@@ -437,7 +507,28 @@ const MAPS: Record<string, MapDefinition> = {
       { x: 1100, y: 1100, w: 50, h: 300 },
       { x: 1100, y: 1600, w: 50, h: 300 },
       { x: 1850, y: 1100, w: 50, h: 300 },
-      { x: 1850, y: 1600, w: 50, h: 300 }
+      { x: 1850, y: 1600, w: 50, h: 300 },
+
+      // Top-Left Cage
+      { x: 400, y: 400, w: 500, h: 50 },
+      { x: 400, y: 400, w: 50, h: 500 },
+      { x: 900, y: 450, w: 50, h: 200 },
+      { x: 450, y: 900, w: 200, h: 50 },
+
+      // Top-Right Chevron
+      { x: 2100, y: 500, w: 50, h: 300 },
+      { x: 2150, y: 800, w: 300, h: 50 },
+      { x: 2500, y: 400, w: 50, h: 200 },
+
+      // Bottom-Left Corridor
+      { x: 300, y: 2100, w: 600, h: 50 },
+      { x: 300, y: 2500, w: 600, h: 50 },
+
+      // Bottom-Right Crossfire Blocks
+      { x: 2000, y: 2250, w: 200, h: 100 },
+      { x: 2400, y: 2250, w: 200, h: 100 },
+      { x: 2250, y: 2000, w: 100, h: 200 },
+      { x: 2250, y: 2400, w: 100, h: 200 }
     ],
     spawners: [
       { x: 1500, y: 1500, radius: 40, hp: 100, maxHp: 100 },
@@ -476,7 +567,31 @@ const MAPS: Record<string, MapDefinition> = {
       { x: 50, y: 1950, w: 350, h: 100 },
       { x: 600, y: 1950, w: 800, h: 100 },
       { x: 1600, y: 1950, w: 800, h: 100 },
-      { x: 2600, y: 1950, w: 350, h: 100 }
+      { x: 2600, y: 1950, w: 350, h: 100 },
+
+      // Room 1 (Top-Left) Inner
+      { x: 200, y: 200, w: 600, h: 50 },
+      { x: 200, y: 200, w: 50, h: 600 },
+      { x: 200, y: 750, w: 400, h: 50 },
+
+      // Room 2 (Top-Right) Inner
+      { x: 2200, y: 200, w: 100, h: 100 },
+      { x: 2400, y: 400, w: 100, h: 100 },
+      { x: 2600, y: 600, w: 100, h: 100 },
+      { x: 2800, y: 800, w: 100, h: 100 },
+
+      // Room 3 (Center) Inner
+      { x: 1200, y: 1200, w: 100, h: 100 },
+      { x: 1700, y: 1200, w: 100, h: 100 },
+      { x: 1200, y: 1700, w: 100, h: 100 },
+      { x: 1700, y: 1700, w: 100, h: 100 },
+
+      // Room 4 (Bottom-Right) Inner
+      { x: 2300, y: 2200, w: 400, h: 50 },
+      { x: 2475, y: 2250, w: 50, h: 400 },
+
+      // Room 5 (Bottom-Left - Start) Inner
+      { x: 700, y: 2200, w: 100, h: 50 }
     ],
     spawners: [
       { x: 500, y: 2500, radius: 40, hp: 100, maxHp: 100 },
@@ -1019,6 +1134,8 @@ export default function GameCanvas() {
 
   const isMobileRef = useRef(typeof window !== 'undefined' && /Mobi|Android|iPhone|iPad|iPod|Windows Phone/i.test(navigator.userAgent));
   const [confirmResign, setConfirmResign] = useState(false);
+  const confirmResignRef = useRef(confirmResign);
+  confirmResignRef.current = confirmResign;
   const [isMapSelectOpen, setIsMapSelectOpen] = useState(false);
   const [mpTick, setMpTick] = useState(0);
   const [confirmLeaveMatches, setConfirmLeaveMatches] = useState(false);
@@ -1248,7 +1365,7 @@ export default function GameCanvas() {
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 100);
   };
 
   const handleLoadMatch = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -1956,9 +2073,16 @@ export default function GameCanvas() {
          }
       }
       if (key === 'escape') {
+        if (uiRef.current.status === 'PAUSED' && confirmResignRef.current) return;
         setUiState(prev => {
-           if (prev.status === 'PLAYING') return { ...prev, status: 'PAUSED' };
-           if (prev.status === 'PAUSED') return { ...prev, status: 'PLAYING' };
+           let newStatus = prev.status;
+           if (prev.status === 'PLAYING') newStatus = 'PAUSED';
+           else if (prev.status === 'PAUSED') newStatus = 'PLAYING';
+           
+           if (newStatus !== prev.status) {
+             uiRef.current = { ...prev, status: newStatus };
+             return uiRef.current;
+           }
            return prev;
         });
       }
@@ -4525,10 +4649,20 @@ export default function GameCanvas() {
          const pGlow = pDef.g;
          const pName = pData.name || 'PLAYER';
          
-         ctx.fillStyle = pData.isDash ? 'rgba(181, 0, 255, 0.4)' : pGlow;
-         ctx.beginPath();
-         ctx.arc(pData.x, pData.y, pData.radius * 2, 0, Math.PI * 2);
-         ctx.fill();
+         if (pData.isDash) {
+           ctx.fillStyle = pGlow;
+           ctx.beginPath();
+           ctx.arc(pData.x, pData.y, pData.radius * 3.75, 0, Math.PI * 2);
+           ctx.fill();
+           ctx.strokeStyle = pColor;
+           ctx.lineWidth = 2;
+           ctx.stroke();
+         } else {
+           ctx.fillStyle = pGlow;
+           ctx.beginPath();
+           ctx.arc(pData.x, pData.y, pData.radius * 2, 0, Math.PI * 2);
+           ctx.fill();
+         }
 
          ctx.fillStyle = pColor;
          ctx.beginPath();
@@ -4590,9 +4724,9 @@ export default function GameCanvas() {
           // Draw shield
           ctx.beginPath();
           ctx.arc(state.player.x, state.player.y, state.player.dash.shieldRadius, 0, Math.PI * 2);
-          ctx.fillStyle = 'rgba(181, 0, 255, 0.3)';
+          ctx.fillStyle = pGlow;
           ctx.fill();
-          ctx.strokeStyle = '#b500ff';
+          ctx.strokeStyle = pColor;
           ctx.lineWidth = 2;
           ctx.stroke();
         } else {
@@ -5520,7 +5654,11 @@ export default function GameCanvas() {
                     <button
                       onPointerDown={(e) => {
                         e.stopPropagation();
-                        setUiState(prev => ({ ...prev, status: prev.status === 'PAUSED' ? 'PLAYING' : 'PAUSED' }));
+                        setUiState(prev => {
+                          const newStatus = prev.status === 'PAUSED' ? 'PLAYING' : 'PAUSED';
+                          uiRef.current = { ...prev, status: newStatus };
+                          return uiRef.current;
+                        });
                         setConfirmResign(false);
                       }}
                       className="w-[84px] sm:w-[144px] h-[34px] sm:h-[48px] border-2 border-[#FBBF24] hover:bg-[#FBBF24] hover:text-black text-[#FBBF24] font-black tracking-[0.15em] sm:tracking-widest text-[9px] sm:text-xs uppercase transition-all duration-200 shadow-[0_0_8px_rgba(251,191,36,0.2)] hover:shadow-[0_0_15px_rgba(251,191,36,0.6)] active:scale-95 flex items-center justify-center -skew-x-12 focus:outline-none"
@@ -5533,6 +5671,10 @@ export default function GameCanvas() {
                     <button
                       onPointerDown={(e) => {
                         e.stopPropagation();
+                        setUiState(prev => {
+                          uiRef.current = { ...prev, status: 'PAUSED' };
+                          return uiRef.current;
+                        });
                         setConfirmResign(true);
                       }}
                       className="w-[84px] sm:w-[144px] h-[34px] sm:h-[48px] border-2 border-[#ff003c] hover:bg-[#ff003c] hover:text-white text-[#ff003c] font-black tracking-[0.15em] sm:tracking-widest text-[9px] sm:text-xs uppercase transition-all duration-200 shadow-[0_0_8px_rgba(255,0,60,0.2)] hover:shadow-[0_0_15px_rgba(255,0,60,0.6)] active:scale-95 flex items-center justify-center -skew-x-12"
@@ -5546,35 +5688,50 @@ export default function GameCanvas() {
 
             {uiState.status === 'PAUSED' && !confirmResign && (
               <div 
-                onPointerDown={() => setUiState(prev => ({ ...prev, status: 'PLAYING' }))}
-                className="absolute inset-0 bg-black/75 pointer-events-auto z-[70] flex flex-col items-center justify-center backdrop-blur-md cursor-pointer select-none"
+                className="absolute inset-0 bg-black/[0.78] pointer-events-auto z-[70] flex flex-col items-center justify-center backdrop-blur-sm select-none"
               >
-                {/* Clean, Simple Typography of old HALTED text */}
-                <div className="flex flex-col items-center text-center">
+                <div className="flex flex-col items-center">
                   <h2 
-                    className="text-5xl sm:text-6xl md:text-7xl font-black text-white/95 tracking-[0.1em] uppercase mb-4" 
-                    style={{ fontFamily: 'var(--font-display, Anton, sans-serif)', textShadow: '0 0 10px rgba(255,255,255,0.4)' }}
+                    className="text-[48px] md:text-[68px] font-black text-[#F5F7FF] uppercase drop-shadow-[0_0_10px_rgba(255,255,255,0.28)] leading-none"
+                    style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}
                   >
                     HALTED
                   </h2>
-                  <p className="text-white/60 font-mono text-xs sm:text-sm tracking-[0.25em] uppercase font-bold animate-pulse">
-                    CLICK ANYWHERE TO RESUME
+                  <p className="text-[#F5F7FF]/55 font-mono text-[12px] md:text-[14px] tracking-[0.25em] uppercase mt-3">
+                    SYSTEM PAUSED
                   </p>
                 </div>
-
-                {/* Bottom Save Section (purple accent, simple style) */}
-                <div 
-                  onPointerDown={(e) => e.stopPropagation()}
-                  className="absolute bottom-12 left-1/2 -translate-x-1/2 pointer-events-auto z-[70]"
-                >
-                  <button 
+                
+                <div className="flex flex-col gap-3 mt-11 w-[calc(100vw-48px)] max-w-[280px]">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setUiState(prev => {
+                        uiRef.current = { ...prev, status: 'PLAYING' };
+                        return uiRef.current;
+                      });
+                    }}
+                    className="h-12 w-full bg-[#FBBF24] border-2 border-[#FBBF24] text-[#080A0F] font-mono font-black tracking-widest uppercase text-xs sm:text-sm shadow-[0_0_6px_rgba(251,191,36,0.30),0_0_14px_rgba(251,191,36,0.12)] hover:bg-[#FBBF24]/90 hover:border-[#FBBF24]/90 active:scale-[0.98] transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#FBBF24] focus-visible:ring-offset-black"
+                  >
+                    RESUME
+                  </button>
+                  <button
                     onClick={(e) => {
                       e.stopPropagation();
                       handleSaveMatch();
-                    }} 
-                    className="px-8 py-3.5 bg-[#b500ff]/15 border-2 border-[#b500ff] text-[#b500ff] hover:bg-[#b500ff] hover:text-black font-mono font-black tracking-widest uppercase text-xs sm:text-sm shadow-[0_0_15px_rgba(181,0,255,0.3)] active:scale-95 transition-all duration-150 cursor-pointer"
+                    }}
+                    className="h-12 w-full bg-[#8B5CF6]/[0.12] border-2 border-[#8B5CF6] text-[#C4B5FD] hover:bg-[#8B5CF6]/20 font-mono font-black tracking-widest uppercase text-xs sm:text-sm shadow-[0_0_8px_rgba(139,92,246,0.15)] active:scale-[0.98] transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#8B5CF6] focus-visible:ring-offset-black"
                   >
                     DOWNLOAD SAVE FILE
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setConfirmResign(true);
+                    }}
+                    className="h-12 w-full bg-transparent border-2 border-[#FF003C] text-[#FF003C] hover:bg-[#FF003C]/10 font-mono font-black tracking-widest uppercase text-xs sm:text-sm active:scale-[0.98] transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#FF003C] focus-visible:ring-offset-black"
+                  >
+                    QUIT TO MENU
                   </button>
                 </div>
               </div>
