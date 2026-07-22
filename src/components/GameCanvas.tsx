@@ -844,6 +844,116 @@ function getSafeSpawn(minDistToWalls = 50, spawnArea?: { x: number; y: number; w
   return { x: spawnX, y: spawnY };
 }
 
+function lineIntersectsLine(x1: number, y1: number, x2: number, y2: number, x3: number, y3: number, x4: number, y4: number) {
+  const denom = (y4-y3)*(x2-x1) - (x4-x3)*(y2-y1);
+  if (denom === 0) return false;
+  const uA = ((x4-x3)*(y1-y3) - (y4-y3)*(x1-x3)) / denom;
+  const uB = ((x2-x1)*(y1-y3) - (y2-y1)*(x1-x3)) / denom;
+  return uA >= 0 && uA <= 1 && uB >= 0 && uB <= 1;
+}
+
+function lineIntersectsRect(x1: number, y1: number, x2: number, y2: number, rx: number, ry: number, rw: number, rh: number) {
+  if (x1 >= rx && x1 <= rx + rw && y1 >= ry && y1 <= ry + rh) return true;
+  if (x2 >= rx && x2 <= rx + rw && y2 >= ry && y2 <= ry + rh) return true;
+  return lineIntersectsLine(x1,y1,x2,y2, rx,ry, rx+rw,ry) ||
+         lineIntersectsLine(x1,y1,x2,y2, rx,ry+rh, rx+rw,ry+rh) ||
+         lineIntersectsLine(x1,y1,x2,y2, rx,ry, rx,ry+rh) ||
+         lineIntersectsLine(x1,y1,x2,y2, rx+rw,ry, rx+rw,ry+rh);
+}
+
+function isValidPlayerSpawnPos(px: number, py: number, targetSpawner: {x: number, y: number} | null, mapDef: MapDefinition): boolean {
+  const MIN_DIST = 60; // 20 radius + 40 padding
+  
+  if (px < MIN_DIST || px > MAP_WIDTH - MIN_DIST || py < MIN_DIST || py > MAP_HEIGHT - MIN_DIST) {
+    return false;
+  }
+  
+  for (const wall of activeWalls) {
+    if (px > wall.x - MIN_DIST && px < wall.x + wall.w + MIN_DIST &&
+        py > wall.y - MIN_DIST && py < wall.y + wall.h + MIN_DIST) {
+      return false;
+    }
+  }
+  
+  for (const spawner of mapDef.spawners) {
+    const dx = px - spawner.x;
+    const dy = py - spawner.y;
+    if (Math.sqrt(dx*dx + dy*dy) < 160) {
+      return false;
+    }
+  }
+  
+  if (targetSpawner) {
+    for (const wall of activeWalls) {
+      if (lineIntersectsRect(px, py, targetSpawner.x, targetSpawner.y, wall.x, wall.y, wall.w, wall.h)) {
+        return false;
+      }
+    }
+  }
+  
+  return true;
+}
+
+function getPlayerSpawn(mapDef: MapDefinition): { x: number; y: number } {
+  if (mapDef.spawnArea) {
+    let spawnX = 500;
+    let spawnY = 500;
+    let validSpawn = false;
+    let attempts = 0;
+    const MIN_DIST = 100;
+    
+    while (!validSpawn && attempts < 100) {
+      spawnX = mapDef.spawnArea.x + MIN_DIST + Math.random() * (mapDef.spawnArea.w - 2 * MIN_DIST);
+      spawnY = mapDef.spawnArea.y + MIN_DIST + Math.random() * (mapDef.spawnArea.h - 2 * MIN_DIST);
+      
+      if (isValidPlayerSpawnPos(spawnX, spawnY, null, mapDef)) {
+        validSpawn = true;
+      }
+      attempts++;
+    }
+    return validSpawn ? { x: spawnX, y: spawnY } : getSafeSpawn(100, mapDef.spawnArea);
+  }
+
+  const spawnerIndices = Array.from({length: mapDef.spawners.length}, (_, i) => i);
+  // Fisher-Yates shuffle
+  for (let i = spawnerIndices.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [spawnerIndices[i], spawnerIndices[j]] = [spawnerIndices[j], spawnerIndices[i]];
+  }
+
+  for (const idx of spawnerIndices) {
+    const spawner = mapDef.spawners[idx];
+    
+    // try random angles/distances first
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const angle = Math.random() * Math.PI * 2;
+      const dist = 220 + Math.random() * 100; // 220 to 320
+      const px = spawner.x + Math.cos(angle) * dist;
+      const py = spawner.y + Math.sin(angle) * dist;
+      
+      if (isValidPlayerSpawnPos(px, py, spawner, mapDef)) {
+        return { x: px, y: py };
+      }
+    }
+    
+    // deterministic sweep if random fails
+    for (let dist = 220; dist <= 320; dist += 20) {
+      for (let a = 0; a < 360; a += 15) {
+        const angle = a * Math.PI / 180;
+        const px = spawner.x + Math.cos(angle) * dist;
+        const py = spawner.y + Math.sin(angle) * dist;
+        if (isValidPlayerSpawnPos(px, py, spawner, mapDef)) {
+          return { x: px, y: py };
+        }
+      }
+    }
+  }
+
+  // Fallback
+  console.warn("No valid player spawn found for map:", mapDef.name);
+  return getSafeSpawn(100);
+}
+
 function getBulletRelicCollision(
   bulletX: number,
   bulletY: number,
@@ -1467,7 +1577,7 @@ export default function GameCanvas() {
     const state = stateRef.current;
     state.hardMode = isHardMode;
     state.nextEntityId = 1;
-    const spawn = getSafeSpawn(100, mapDef.spawnArea);
+    const spawn = isMultiplayer ? getSafeSpawn(100, mapDef.spawnArea) : getPlayerSpawn(mapDef);
     state.player.x = spawn.x;
     state.player.y = spawn.y;
     state.player.vx = 0;
