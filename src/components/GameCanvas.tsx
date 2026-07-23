@@ -877,8 +877,8 @@ function lineIntersectsLine(x1: number, y1: number, x2: number, y2: number, x3: 
 }
 
 function lineIntersectsRect(x1: number, y1: number, x2: number, y2: number, rx: number, ry: number, rw: number, rh: number) {
-  if (x1 >= rx && x1 <= rx + rw && y1 >= ry && y1 <= rx + rw) return true; // simplified check
-  if (x2 >= rx && x2 <= rx + rw && y2 >= ry && y2 <= rx + rw) return true;
+  if (x1 >= rx && x1 <= rx + rw && y1 >= ry && y1 <= ry + rh) return true;
+  if (x2 >= rx && x2 <= rx + rw && y2 >= ry && y2 <= ry + rh) return true;
   return lineIntersectsLine(x1,y1,x2,y2, rx,ry, rx+rw,ry) ||
          lineIntersectsLine(x1,y1,x2,y2, rx,ry+rh, rx+rw,ry+rh) ||
          lineIntersectsLine(x1,y1,x2,y2, rx,ry, rx,ry+rh) ||
@@ -2841,6 +2841,15 @@ export default function GameCanvas() {
   }, [mpState.isConnected]);
 
   useEffect(() => {
+    if (uiState.status === 'GAME_OVER' || uiState.status === 'VICTORY' || uiState.status === 'MENU') {
+      setMpMenuOpen(false);
+      mpMenuOpenRef.current = false;
+      setConfirmResign(false);
+      confirmResignRef.current = false;
+    }
+  }, [uiState.status]);
+
+  useEffect(() => {
     const canvas = canvasRef.current;
     const wrapper = wrapperRef.current;
     if (!canvas || !wrapper) return;
@@ -2878,15 +2887,26 @@ export default function GameCanvas() {
       
       if (key === 'escape') {
         if (mpRef.current.roomId) {
-          // Toggle multiplayer menu
-          setMpMenuOpen(prev => {
-            const next = !prev;
-            mpMenuOpenRef.current = next;
-            if (next) {
-              stateRef.current.keys = { w: false, a: false, s: false, d: false };
-            }
-            return next;
-          });
+          if (confirmResignRef.current) {
+            setConfirmResign(false);
+            confirmResignRef.current = false;
+            setMpMenuOpen(true);
+            mpMenuOpenRef.current = true;
+          } else {
+            setMpMenuOpen(prev => {
+              const next = !prev;
+              mpMenuOpenRef.current = next;
+              if (next) {
+                stateRef.current.keys = { w: false, a: false, s: false, d: false };
+                stateRef.current.mouse.down = false;
+                stateRef.current.mouse.rightDown = false;
+                stateRef.current.mouse.rightJustDown = false;
+                stateRef.current.touches.left.active = false;
+                stateRef.current.touches.right.active = false;
+              }
+              return next;
+            });
+          }
         } else {
           if (uiRef.current.status === 'PAUSED' && confirmResignRef.current) return;
           setUiState(prev => {
@@ -2981,6 +3001,9 @@ export default function GameCanvas() {
     const handleMouseDown = (e: MouseEvent) => {
       if (e.target !== canvas) return;
       if (uiRef.current.status !== 'PLAYING') return;
+      if (mpRef.current.roomId && (mpMenuOpenRef.current || confirmResignRef.current)) {
+         return;
+      }
       if (e.button === 2) {
          state.mouse.rightDown = true;
          state.mouse.rightJustDown = true;
@@ -3000,6 +3023,9 @@ export default function GameCanvas() {
 
     const handleTouchStart = (e: TouchEvent) => {
       if (uiRef.current.status !== 'PLAYING') return; // let normal touches pass
+      if (mpRef.current.roomId && (mpMenuOpenRef.current || confirmResignRef.current)) {
+         return;
+      }
       e.preventDefault();
       const rect = canvas.getBoundingClientRect();
       const isMobile = uiRef.current.deviceType === 'mobile';
@@ -3799,7 +3825,6 @@ export default function GameCanvas() {
           if (state.tutorial.active && !state.tutorial.enemySpawned && state.tutorial.spawnerIndex !== null && !mpRef.current.roomId) {
             state.tutorial.timer += dt * 1000;
             if (state.tutorial.timer > 1500) {
-              state.tutorial.enemySpawned = true;
               const tutSpawnerDef = mapDef.spawners[state.tutorial.spawnerIndex];
               const tutSpawner = state.spawners.find(s => s.x === tutSpawnerDef.x && s.y === tutSpawnerDef.y);
               if (tutSpawner) {
@@ -3865,20 +3890,23 @@ export default function GameCanvas() {
                   }
                 }
 
-                // If even the grid search somehow fails (extremely unlikely), fall back to spawner center with a small offset
-                if (!foundSpawn) {
-                  spawnX = tutSpawner.x;
-                  spawnY = tutSpawner.y + tutSpawner.radius + ENEMY_RADIUS + 10;
+                if (foundSpawn) {
+                  state.enemies.push({ 
+                    id: 'e_' + state.nextEntityId++, 
+                    x: spawnX, y: spawnY, 
+                    radius: ENEMY_RADIUS, 
+                    lastShoot: currentTime, 
+                    speed: ENEMY_SPEED 
+                  });
+                  spawnParticles(tutSpawner.x, tutSpawner.y, state.hardMode ? '#ff3300' : '#ff00ff', 10);
+                  state.tutorial.enemySpawned = true;
+                } else {
+                  // Throttle retry to 250ms from now
+                  state.tutorial.timer = 1250;
                 }
-
-                state.enemies.push({ 
-                  id: 'e_' + state.nextEntityId++, 
-                  x: spawnX, y: spawnY, 
-                  radius: ENEMY_RADIUS, 
-                  lastShoot: currentTime, 
-                  speed: ENEMY_SPEED 
-                });
-                spawnParticles(tutSpawner.x, tutSpawner.y, state.hardMode ? '#ff3300' : '#ff00ff', 10);
+              } else {
+                // Spawner does not exist, deactivate tutorial to avoid infinite checks
+                state.tutorial.active = false;
               }
             }
           }
@@ -4761,6 +4789,9 @@ export default function GameCanvas() {
                     state.tutorial.active = false;
                     triggerSpawnerPulse();
                   }
+                  // Force a broadcast immediately of the updated state
+                  state.forceBroadcast = true;
+
                   let pts = 0;
                   if (bullet.isPlayer && !bullet.isNeutral) pts = 1000;
                   
@@ -4777,12 +4808,17 @@ export default function GameCanvas() {
                       }
                       return uiRef.current;
                     });
-                  } else if (state.multiplayerPlayers[bOwner]) {
-                    state.multiplayerPlayers[bOwner].score = (state.multiplayerPlayers[bOwner].score || 0) + pts;
-                    if (state.spawners.length === 0 && !mpRef.current.roomId) {
-                      uiRef.current.status = 'VICTORY';
-                      setUiState(prev => ({ ...prev, status: 'VICTORY', spawnersLeft: 0 }));
+                  } else {
+                    if (state.multiplayerPlayers[bOwner]) {
+                      state.multiplayerPlayers[bOwner].score = (state.multiplayerPlayers[bOwner].score || 0) + pts;
                     }
+                    setUiState(prev => {
+                      uiRef.current = { ...prev, spawnersLeft: state.spawners.length };
+                      if (state.spawners.length === 0 && !mpRef.current.roomId) {
+                         uiRef.current.status = 'VICTORY';
+                      }
+                      return uiRef.current;
+                    });
                   }
                 }
                 break;
@@ -6788,28 +6824,60 @@ export default function GameCanvas() {
                     <button
                       onPointerDown={(e) => {
                         e.stopPropagation();
-                        setUiState(prev => {
-                          const newStatus = prev.status === 'PAUSED' ? 'PLAYING' : 'PAUSED';
-                          uiRef.current = { ...prev, status: newStatus };
-                          return uiRef.current;
-                        });
-                        setConfirmResign(false);
+                        if (mpState.roomId) {
+                          setMpMenuOpen(prev => {
+                            const next = !prev;
+                            mpMenuOpenRef.current = next;
+                            if (next) {
+                              stateRef.current.keys = { w: false, a: false, s: false, d: false };
+                              stateRef.current.mouse.down = false;
+                              stateRef.current.mouse.rightDown = false;
+                              stateRef.current.mouse.rightJustDown = false;
+                              stateRef.current.touches.left.active = false;
+                              stateRef.current.touches.right.active = false;
+                            }
+                            return next;
+                          });
+                          setConfirmResign(false);
+                          confirmResignRef.current = false;
+                        } else {
+                          setUiState(prev => {
+                            const newStatus = prev.status === 'PAUSED' ? 'PLAYING' : 'PAUSED';
+                            uiRef.current = { ...prev, status: newStatus };
+                            return uiRef.current;
+                          });
+                          setConfirmResign(false);
+                        }
                       }}
                       className="w-[84px] sm:w-[144px] h-[34px] sm:h-[48px] border-2 border-[#FBBF24] hover:bg-[#FBBF24] hover:text-black text-[#FBBF24] font-black tracking-[0.15em] sm:tracking-widest text-[9px] sm:text-xs uppercase transition-all duration-200 shadow-[0_0_8px_rgba(251,191,36,0.2)] hover:shadow-[0_0_15px_rgba(251,191,36,0.6)] active:scale-95 flex items-center justify-center -skew-x-12 focus:outline-none"
                     >
                       <span className="skew-x-12 whitespace-nowrap">
-                        {uiState.status === 'PAUSED' ? '▶ RESUME' : '|| PAUSE'}
+                        {mpState.roomId ? (mpMenuOpen ? '▶ RESUME' : '|| MENU') : (uiState.status === 'PAUSED' ? '▶ RESUME' : '|| PAUSE')}
                       </span>
                     </button>
                     
                     <button
                       onPointerDown={(e) => {
                         e.stopPropagation();
-                        setUiState(prev => {
-                          uiRef.current = { ...prev, status: 'PAUSED' };
-                          return uiRef.current;
-                        });
-                        setConfirmResign(true);
+                        if (mpState.roomId) {
+                          stateRef.current.keys = { w: false, a: false, s: false, d: false };
+                          stateRef.current.mouse.down = false;
+                          stateRef.current.mouse.rightDown = false;
+                          stateRef.current.mouse.rightJustDown = false;
+                          stateRef.current.touches.left.active = false;
+                          stateRef.current.touches.right.active = false;
+
+                          setConfirmResign(true);
+                          confirmResignRef.current = true;
+                          setMpMenuOpen(false);
+                          mpMenuOpenRef.current = false;
+                        } else {
+                          setUiState(prev => {
+                            uiRef.current = { ...prev, status: 'PAUSED' };
+                            return uiRef.current;
+                          });
+                          setConfirmResign(true);
+                        }
                       }}
                       className="w-[84px] sm:w-[144px] h-[34px] sm:h-[48px] border-2 border-[#ff003c] hover:bg-[#ff003c] hover:text-white text-[#ff003c] font-black tracking-[0.15em] sm:tracking-widest text-[9px] sm:text-xs uppercase transition-all duration-200 shadow-[0_0_8px_rgba(255,0,60,0.2)] hover:shadow-[0_0_15px_rgba(255,0,60,0.6)] active:scale-95 flex items-center justify-center -skew-x-12"
                     >
@@ -6897,15 +6965,6 @@ export default function GameCanvas() {
                     className="h-12 w-full bg-[#FBBF24] border-2 border-[#FBBF24] text-[#080A0F] font-mono font-black tracking-widest uppercase text-xs sm:text-sm shadow-[0_0_6px_rgba(251,191,36,0.30),0_0_14px_rgba(251,191,36,0.12)] hover:bg-[#FBBF24]/90 hover:border-[#FBBF24]/90 active:scale-[0.98] transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#FBBF24] focus-visible:ring-offset-black"
                   >
                     RESUME
-                  </button>
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleSaveMatch();
-                    }}
-                    className="h-12 w-full bg-[#8B5CF6]/[0.12] border-2 border-[#8B5CF6] text-[#C4B5FD] hover:bg-[#8B5CF6]/20 font-mono font-black tracking-widest uppercase text-xs sm:text-sm shadow-[0_0_8px_rgba(139,92,246,0.15)] active:scale-[0.98] transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#8B5CF6] focus-visible:ring-offset-black"
-                  >
-                    DOWNLOAD SAVE FILE
                   </button>
                   <button
                     onClick={(e) => {

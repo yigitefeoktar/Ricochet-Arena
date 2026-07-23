@@ -29,6 +29,7 @@ async function startServer() {
     roomId: string;
     players: Player[];
     lastHostStateTime?: number; // Server-side tracker of last valid host game state emit
+    matchActive?: boolean;
   }
 
   const rooms = new Map<string, RoomInfo>();
@@ -54,11 +55,13 @@ async function startServer() {
           rooms.delete(roomIdUpper);
         } else {
           // If the host left or no host is present, assign the first player as the new host
+          let hostChanged = false;
           let foundHost = false;
           room.players.forEach(p => {
             if (p.isHost) {
               if (foundHost) {
                 p.isHost = false; // Never allow multiple hosts
+                hostChanged = true;
               } else {
                 foundHost = true;
               }
@@ -66,6 +69,10 @@ async function startServer() {
           });
           if (!foundHost && room.players.length > 0) {
             room.players[0].isHost = true;
+            hostChanged = true;
+          }
+          if (hostChanged) {
+            room.lastHostStateTime = Date.now();
           }
           io.to(roomIdUpper).emit("lobby_players", room.players);
           io.to(roomIdUpper).emit("player_left", socketId);
@@ -101,7 +108,8 @@ async function startServer() {
       rooms.set(roomId, {
         roomId,
         players: [hostPlayer],
-        lastHostStateTime: Date.now()
+        lastHostStateTime: Date.now(),
+        matchActive: false
       });
 
       io.to(roomId).emit("lobby_players", [hostPlayer]);
@@ -123,7 +131,7 @@ async function startServer() {
 
         let room = rooms.get(roomIdUpper);
         if (!room) {
-          room = { roomId: roomIdUpper, players: [], lastHostStateTime: Date.now() };
+          room = { roomId: roomIdUpper, players: [], lastHostStateTime: Date.now(), matchActive: false };
           rooms.set(roomIdUpper, room);
         }
 
@@ -258,9 +266,10 @@ async function startServer() {
       const currentHost = room.players.find(p => p.isHost);
       const now = Date.now();
 
-      // Permit claim only when host is absent or hasn't emitted state for 1000ms
+      // Permit claim only when host is absent or, during an active match, hasn't emitted state for 1000ms
       const isHostAbsent = !currentHost || !io.sockets.sockets.has(currentHost.id);
-      const stoppedStateBroadcast = room.lastHostStateTime !== undefined && (now - room.lastHostStateTime > 1000);
+      const isMatchActive = !!room.matchActive;
+      const stoppedStateBroadcast = isMatchActive && room.lastHostStateTime !== undefined && (now - room.lastHostStateTime > 1000);
 
       if (isHostAbsent || stoppedStateBroadcast) {
         // Demote other hosts completely
@@ -367,6 +376,8 @@ async function startServer() {
         }
       }
 
+      room.matchActive = true;
+      room.lastHostStateTime = Date.now();
       socket.to(roomIdUpper).emit("start_game", gameConfig);
       if (cb) cb({ success: true });
     });
