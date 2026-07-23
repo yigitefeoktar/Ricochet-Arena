@@ -2553,7 +2553,44 @@ export default function GameCanvas() {
         }
         if (state.winnerId !== undefined) stateRef.current.winnerId = state.winnerId;
         if (state.matchPlayers !== undefined) stateRef.current.matchPlayers = state.matchPlayers;
-        if (state.playerActionAuthority !== undefined) stateRef.current.playerActionAuthority = state.playerActionAuthority;
+        if (state.playerActionAuthority !== undefined) {
+          const hostNow = state.hostTime;
+          if (hostNow !== undefined && typeof hostNow === 'number' && Number.isFinite(hostNow)) {
+            const localNow = performance.now();
+            const mappedAuth: Record<string, any> = {};
+            for (const pid in state.playerActionAuthority) {
+              const hostAuth = state.playerActionAuthority[pid];
+              if (hostAuth && typeof hostAuth === 'object') {
+                const mapDeadline = (deadline: any) => {
+                  if (deadline !== undefined && typeof deadline === 'number' && Number.isFinite(deadline)) {
+                    return localNow + (deadline - hostNow);
+                  }
+                  return 0;
+                };
+
+                const mapLastShootAt = (lastShoot: any) => {
+                  if (lastShoot !== undefined && typeof lastShoot === 'number' && Number.isFinite(lastShoot)) {
+                    return localNow - (hostNow - lastShoot);
+                  }
+                  return 0;
+                };
+
+                mappedAuth[pid] = {
+                  specialActiveUntil: mapDeadline(hostAuth.specialActiveUntil),
+                  specialReadyAt: mapDeadline(hostAuth.specialReadyAt),
+                  buildActiveUntil: mapDeadline(hostAuth.buildActiveUntil),
+                  buildReadyAt: mapDeadline(hostAuth.buildReadyAt),
+                  lastShootAt: mapLastShootAt(hostAuth.lastShootAt)
+                };
+              }
+            }
+            stateRef.current.playerActionAuthority = mappedAuth;
+          } else {
+            if (!stateRef.current.playerActionAuthority) {
+              stateRef.current.playerActionAuthority = {};
+            }
+          }
+        }
 
         if (state.matchPhase === 'FINAL_RUN' && state.finalRunDeadline !== null && state.finalRunDeadline !== undefined && state.hostTime !== undefined) {
           const remainingHostMs = state.finalRunDeadline - state.hostTime;
@@ -2716,22 +2753,58 @@ export default function GameCanvas() {
     });
 
     socket.on('client_input', (clientId, input) => {
-      if (mpRef.current.isHost) {
-        const isProtected = isOpeningProtectionActiveForHost(performance.now());
-        const prev = stateRef.current.multiplayerPlayers[clientId];
-        if (prev && !prev.isDead && input.isDead && !isProtected) {
-          triggerEliminationRef.current?.(input.x, input.y, input.colorIdx !== undefined ? input.colorIdx : 0, input.name || 'PLAYER');
-        }
-        const mergedInput = { ...input };
-        if (isProtected) {
-          mergedInput.isDead = false;
-        }
-        if (prev && prev.score > (input.score || 0)) {
-          mergedInput.score = prev.score;
-        }
-        stateRef.current.multiplayerPlayers[clientId] = mergedInput;
-        setMpTick(t => t + 1);
+      // A. Authority checks
+      if (!mpRef.current.isHost) return;
+
+      const matchPlayer = stateRef.current.matchPlayers[clientId];
+      const prevPlayer = stateRef.current.multiplayerPlayers[clientId];
+      if (!matchPlayer || !prevPlayer) return;
+
+      if (matchPlayer.isDead || matchPlayer.isDisconnected) return;
+      if (prevPlayer.isDead) return;
+
+      // B. Coordinate validation
+      if (!input || typeof input !== 'object') return;
+      if (typeof input.x !== 'number' || !Number.isFinite(input.x)) return;
+      if (typeof input.y !== 'number' || !Number.isFinite(input.y)) return;
+
+      const clampedX = clamp(input.x, PLAYER_RADIUS, MAP_WIDTH - PLAYER_RADIUS);
+      const clampedY = clamp(input.y, PLAYER_RADIUS, MAP_HEIGHT - PLAYER_RADIUS);
+
+      const currentTime = performance.now();
+
+      // D. Authoritative dash state
+      const authority = getOrInitializeAuthority(clientId);
+      const isDash = currentTime < authority.specialActiveUntil;
+
+      // E. One-way death
+      const reportedDeath = input.isDead === true;
+      const isProtected = isOpeningProtectionActiveForHost(currentTime);
+      
+      let isDead = false;
+      if (reportedDeath && !isProtected) {
+        isDead = true;
+        triggerEliminationRef.current?.(clampedX, clampedY, matchPlayer.colorIdx, matchPlayer.name);
+        matchPlayer.isDead = true;
+        stateRef.current.forceBroadcast = true;
       }
+
+      // C. Preserve authoritative fields
+      const score = (prevPlayer.score !== undefined) ? prevPlayer.score : (matchPlayer.score || 0);
+
+      stateRef.current.multiplayerPlayers[clientId] = {
+        ...prevPlayer,
+        x: clampedX,
+        y: clampedY,
+        isDead: isDead || prevPlayer.isDead,
+        isDash,
+        radius: PLAYER_RADIUS,
+        name: matchPlayer.name,
+        colorIdx: matchPlayer.colorIdx,
+        score
+      };
+
+      setMpTick(t => t + 1);
     });
 
     socket.on('client_action', (clientId, action) => {
@@ -2890,6 +2963,7 @@ export default function GameCanvas() {
               // Check occupancy by multiplayer players
               if (!blockOccupied) {
                   for (const pid in stateRef.current.multiplayerPlayers) {
+                     if (pid === clientId) continue;
                      const p = stateRef.current.multiplayerPlayers[pid];
                      if (!p.isDead && p.x > action.x - 20 - p.radius && p.x < action.x + 20 + p.radius &&
                          p.y > action.y - 20 - p.radius && p.y < action.y + 20 + p.radius) {
@@ -3128,6 +3202,14 @@ export default function GameCanvas() {
                if (isHostMode) {
                  const cIdx = playerProfileRef.current.colorIdx;
                  applySpecialAbility(finalX, finalY, cIdx, 'local');
+                 if (mpRef.current.roomId && mpRef.current.isHost) {
+                   const myId = socketRef.current?.id;
+                   if (myId) {
+                     const auth = getOrInitializeAuthority(myId);
+                     auth.specialActiveUntil = currentTime + 6000;
+                     auth.specialReadyAt = currentTime + 6000 + DASH_COOLDOWN;
+                   }
+                 }
                } else {
                  socketRef.current?.emit('client_action', mpRef.current.roomId, { type: 'special', x: finalX, y: finalY, colorIdx: playerProfileRef.current.colorIdx });
                  applySpecialAbility(finalX, finalY, playerProfileRef.current.colorIdx, socketRef.current?.id || 'local');
@@ -3144,7 +3226,15 @@ export default function GameCanvas() {
             stateRef.current.player.build.active = true;
             stateRef.current.player.build.endTime = currentTime + 8000;
             stateRef.current.player.build.lastTime = currentTime;
-            const gridX = Math.round(stateRef.current.player.x / 40) * 40;
+            if (mpRef.current.roomId && mpRef.current.isHost) {
+                                    const myId = socketRef.current?.id;
+                                    if (myId) {
+                                      const auth = getOrInitializeAuthority(myId);
+                                      auth.buildActiveUntil = currentTime + 8000;
+                                      auth.buildReadyAt = currentTime + 8000 + BUILD_COOLDOWN;
+                                    }
+                                  }
+                                  const gridX = Math.round(stateRef.current.player.x / 40) * 40;
             const gridY = Math.round(stateRef.current.player.y / 40) * 40;
             stateRef.current.player.build.lastBlockX = gridX;
             stateRef.current.player.build.lastBlockY = gridY;
@@ -3478,12 +3568,7 @@ export default function GameCanvas() {
         socketRef.current?.emit('client_input', mpRef.current.roomId, {
           x: state.player.x,
           y: state.player.y,
-          radius: state.player.radius,
-          isDash: state.player.dash.active,
-          isDead: STATUS === 'GAME_OVER',
-          name: playerProfileRef.current.name,
-          colorIdx: playerProfileRef.current.colorIdx,
-          score: uiRef.current.score
+          isDead: STATUS === 'GAME_OVER'
         });
       }
 
@@ -5141,7 +5226,7 @@ export default function GameCanvas() {
                 trails: [],
                 shockwaves: [],
                 score: uiRef.current.score,
-                spawnersLeft: uiRef.current.spawnersLeft,
+                spawnersLeft: state.spawners.length,
                 blocksLeft: uiRef.current.blocks,
                 cameraZ: state.camera.z,
                 hostTime: currentTime
@@ -7236,6 +7321,14 @@ export default function GameCanvas() {
                                   if (isHostMode) {
                                     const cIdx = playerProfileRef.current.colorIdx;
                                     applySpecialAbility(finalX, finalY, cIdx, 'local');
+                                    if (mpRef.current.roomId && mpRef.current.isHost) {
+                                      const myId = socketRef.current?.id;
+                                      if (myId) {
+                                        const auth = getOrInitializeAuthority(myId);
+                                        auth.specialActiveUntil = currentTime + 6000;
+                                        auth.specialReadyAt = currentTime + 6000 + DASH_COOLDOWN;
+                                      }
+                                    }
                                   } else {
                                     socketRef.current?.emit('client_action', mpRef.current.roomId, { type: 'special', x: finalX, y: finalY, colorIdx: playerProfileRef.current.colorIdx });
                                     applySpecialAbility(finalX, finalY, playerProfileRef.current.colorIdx, socketRef.current?.id || 'local');
@@ -7249,6 +7342,14 @@ export default function GameCanvas() {
                                  stateRef.current.player.build.active = true;
                                  stateRef.current.player.build.endTime = currentTime + 8000;
                                  stateRef.current.player.build.lastTime = currentTime;
+                                 if (mpRef.current.roomId && mpRef.current.isHost) {
+                                   const myId = socketRef.current?.id;
+                                   if (myId) {
+                                     const auth = getOrInitializeAuthority(myId);
+                                     auth.buildActiveUntil = currentTime + 8000;
+                                     auth.buildReadyAt = currentTime + 8000 + BUILD_COOLDOWN;
+                                   }
+                                 }
                                  const gridX = Math.round(stateRef.current.player.x / 40) * 40;
                                  const gridY = Math.round(stateRef.current.player.y / 40) * 40;
                                  stateRef.current.player.build.lastBlockX = gridX;
