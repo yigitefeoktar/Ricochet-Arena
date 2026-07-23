@@ -236,16 +236,30 @@ async function startServer() {
       const player = room.players.find(p => p.id === socket.id);
       if (!player) return;
 
-      // Reject non-finite coordinate values
-      if (input) {
-        if (input.x !== undefined && (typeof input.x !== "number" || !Number.isFinite(input.x))) return;
-        if (input.y !== undefined && (typeof input.y !== "number" || !Number.isFinite(input.y))) return;
+      // Sanitization:
+      // Require input to be a non-null object.
+      if (!input || typeof input !== "object") return;
+
+      // Require x and y to be finite numbers.
+      if (typeof input.x !== "number" || !Number.isFinite(input.x)) return;
+      if (typeof input.y !== "number" || !Number.isFinite(input.y)) return;
+
+      // Require isDead to be a boolean when supplied.
+      if (input.isDead !== undefined && typeof input.isDead !== "boolean") return;
+
+      const sanitizedInput: { x: number; y: number; isDead?: boolean } = {
+        x: input.x,
+        y: input.y
+      };
+
+      if (input.isDead !== undefined) {
+        sanitizedInput.isDead = input.isDead;
       }
 
       // Send gameplay input strictly to the room's host
       const host = room.players.find(p => p.isHost);
       if (host && host.id !== socket.id) {
-        io.to(host.id).volatile.emit("client_input", socket.id, input);
+        io.to(host.id).volatile.emit("client_input", socket.id, sanitizedInput);
       }
     });
 
@@ -296,7 +310,7 @@ async function startServer() {
       if (!player) return;
 
       // Reject unknown action types
-      const knownActionTypes = ["lobby_update", "lobby_request_sync", "shoot", "build", "build_remove", "special"];
+      const knownActionTypes = ["lobby_update", "lobby_request_sync", "shoot", "build", "build_remove", "special", "build_start"];
       if (typeof action.type !== "string" || !knownActionTypes.includes(action.type)) return;
 
       // Reject non-finite coordinates or directions

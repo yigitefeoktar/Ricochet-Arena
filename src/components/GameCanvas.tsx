@@ -1782,8 +1782,15 @@ export default function GameCanvas() {
     openingProtectionDeadline: null as number | null,
     winnerId: null as string | null,
     matchPlayers: {} as Record<string, { id: string, name: string, colorIdx: number, score: number, isDead: boolean, isDisconnected?: boolean }>,
+    playerActionAuthority: {} as Record<string, {
+      lastShootAt: number;
+      specialActiveUntil: number;
+      specialReadyAt: number;
+      buildActiveUntil: number;
+      buildReadyAt: number;
+    }>,
     forceBroadcast: false,
-    blocks: [] as { x: number; y: number; size: number; createdAt: number, colorIdx?: number }[],
+    blocks: [] as { x: number; y: number; size: number; createdAt: number, colorIdx?: number, ownerId?: string }[],
     nextBlockScore: 100,
     bullets: [] as { id?: string; x: number; y: number; dx: number; dy: number; radius: number, isPlayer: boolean, bounceCount: number, spawnTime: number, isNeutral: boolean, ownerId?: string, colorIdx?: number, targetX?: number, targetY?: number, repelMultiplied?: boolean, allowedBlockKeys?: string[], leftBlockKeys?: string[] }[],
     enemies: [] as { id?: string; x: number; y: number; radius: number; lastShoot: number, speed: number, targetX?: number, targetY?: number, kbvx?: number, kbvy?: number, processedZoneKbs?: number[] }[],
@@ -1818,6 +1825,22 @@ export default function GameCanvas() {
     hardMode: false,
     tutorial: { active: false, spawnerIndex: null as number | null, enemySpawned: false, timer: 0 },
   });
+
+  const getOrInitializeAuthority = (clientId: string) => {
+    if (!stateRef.current.playerActionAuthority) {
+      stateRef.current.playerActionAuthority = {};
+    }
+    if (!stateRef.current.playerActionAuthority[clientId]) {
+      stateRef.current.playerActionAuthority[clientId] = {
+        lastShootAt: 0,
+        specialActiveUntil: 0,
+        specialReadyAt: 0,
+        buildActiveUntil: 0,
+        buildReadyAt: 0
+      };
+    }
+    return stateRef.current.playerActionAuthority[clientId];
+  };
 
   const handleCopyCode = () => {
     if (mpState.roomId) {
@@ -2161,6 +2184,16 @@ export default function GameCanvas() {
       }
 
       state.matchPlayers = initialMatchPlayers;
+      state.playerActionAuthority = {};
+      for (const pid in initialMatchPlayers) {
+        state.playerActionAuthority[pid] = {
+          lastShootAt: 0,
+          specialActiveUntil: 0,
+          specialReadyAt: 0,
+          buildActiveUntil: 0,
+          buildReadyAt: 0
+        };
+      }
       state.forceBroadcast = true;
     } else {
       state.openingProtectionDeadline = null;
@@ -2331,7 +2364,7 @@ export default function GameCanvas() {
             }
          }
          
-         s.blocks.push({ x: gridX, y: gridY, size: 40, createdAt: currentTime, colorIdx: cIdx });
+         s.blocks.push({ x: gridX, y: gridY, size: 40, createdAt: currentTime, colorIdx: cIdx, ownerId: mpRef.current.roomId ? (socketRef.current?.id || 'local') : 'local' });
          if (socketRef.current && mpRef.current.roomId && !mpRef.current.isHost) {
             socketRef.current.emit('client_action', mpRef.current.roomId, { type: 'build', x: gridX, y: gridY, colorIdx: cIdx });
          }
@@ -2520,6 +2553,7 @@ export default function GameCanvas() {
         }
         if (state.winnerId !== undefined) stateRef.current.winnerId = state.winnerId;
         if (state.matchPlayers !== undefined) stateRef.current.matchPlayers = state.matchPlayers;
+        if (state.playerActionAuthority !== undefined) stateRef.current.playerActionAuthority = state.playerActionAuthority;
 
         if (state.matchPhase === 'FINAL_RUN' && state.finalRunDeadline !== null && state.finalRunDeadline !== undefined && state.hostTime !== undefined) {
           const remainingHostMs = state.finalRunDeadline - state.hostTime;
@@ -2718,70 +2752,210 @@ export default function GameCanvas() {
            isHost: mpRef.current.isHost
          });
        } else if (mpRef.current.isHost) {
-         if (isOpeningProtectionActiveForHost(performance.now())) {
-           if (action.type === 'shoot' || action.type === 'special' || action.type === 'build' || action.type === 'build_remove') {
-             return;
-           }
-         }
-         if (action.type === 'shoot') {
-              const clientAllowedKeys: string[] = [];
-              const clientPlayer = stateRef.current.multiplayerPlayers[clientId];
-              if (clientPlayer && clientPlayer.recentBlocks) {
-                for (const rb of clientPlayer.recentBlocks) {
-                  const blockObj = stateRef.current.blocks.find(b => b.x === rb.x && b.y === rb.y);
-                  if (blockObj) {
-                    const comp = getConnectedComponent(blockObj, stateRef.current.blocks.filter(b => b.colorIdx === blockObj.colorIdx));
-                    for (const cb of comp) {
-                      const cbKey = `${cb.x}_${cb.y}`;
-                      if (!clientAllowedKeys.includes(cbKey)) {
-                        clientAllowedKeys.push(cbKey);
-                      }
-                    }
+          // Confirm clientId exists in matchPlayers and multiplayerPlayers
+          const matchPlayer = stateRef.current.matchPlayers[clientId];
+          const clientPlayer = stateRef.current.multiplayerPlayers[clientId];
+          if (!matchPlayer || !clientPlayer) return;
+
+          // Reject if dead or disconnected
+          if (matchPlayer.isDead || matchPlayer.isDisconnected) return;
+          if (clientPlayer.isDead) return;
+
+          if (isOpeningProtectionActiveForHost(performance.now())) {
+            if (action.type === 'shoot' || action.type === 'special' || action.type === 'build' || action.type === 'build_remove' || action.type === 'build_start') {
+              return;
+            }
+          }
+
+          if (action.type === 'shoot') {
+               if (action.dx === undefined || typeof action.dx !== 'number' || !Number.isFinite(action.dx) ||
+                   action.dy === undefined || typeof action.dy !== 'number' || !Number.isFinite(action.dy)) return;
+               
+               const len = Math.sqrt(action.dx * action.dx + action.dy * action.dy);
+               if (len < 0.0001) return;
+
+               const currentTime = performance.now();
+               const auth = getOrInitializeAuthority(clientId);
+               if (currentTime - auth.lastShootAt < FIRE_RATE) return;
+
+               auth.lastShootAt = currentTime;
+
+               const clientAllowedKeys: string[] = [];
+               if (clientPlayer.recentBlocks) {
+                 for (const rb of clientPlayer.recentBlocks) {
+                   const blockObj = stateRef.current.blocks.find(b => b.x === rb.x && b.y === rb.y);
+                   if (blockObj) {
+                     const comp = getConnectedComponent(blockObj, stateRef.current.blocks.filter(b => b.colorIdx === blockObj.colorIdx));
+                     for (const cb of comp) {
+                       const cbKey = `${cb.x}_${cb.y}`;
+                       if (!clientAllowedKeys.includes(cbKey)) {
+                         clientAllowedKeys.push(cbKey);
+                       }
+                     }
+                   }
+                 }
+               }
+
+               const bvx = (action.dx / len) * BULLET_SPEED;
+               const bvy = (action.dy / len) * BULLET_SPEED;
+
+               stateRef.current.bullets.push({
+                 id: 'bl_' + stateRef.current.nextEntityId++,
+                 x: clientPlayer.x,
+                 y: clientPlayer.y,
+                 dx: bvx,
+                 dy: bvy,
+                 radius: BULLET_RADIUS,
+                 isPlayer: true,
+                 bounceCount: 0,
+                 spawnTime: currentTime,
+                 isNeutral: false,
+                 ownerId: clientId,
+                 colorIdx: matchPlayer.colorIdx,
+                 allowedBlockKeys: clientAllowedKeys,
+                 leftBlockKeys: []
+               });
+          } else if (action.type === 'special') {
+              const currentTime = performance.now();
+              const auth = getOrInitializeAuthority(clientId);
+
+              if (currentTime >= auth.specialReadyAt) {
+                  auth.specialActiveUntil = currentTime + 6000;
+                  auth.specialReadyAt = currentTime + 6000 + DASH_COOLDOWN;
+                  clientPlayer.isDash = true;
+
+                  // Use authoritative player position and frozen color
+                  applySpecialAbility(clientPlayer.x, clientPlayer.y, matchPlayer.colorIdx, clientId);
+              }
+          } else if (action.type === 'build_start') {
+              const currentTime = performance.now();
+              const auth = getOrInitializeAuthority(clientId);
+
+              if (currentTime >= auth.buildReadyAt) {
+                  auth.buildActiveUntil = currentTime + 8000;
+                  auth.buildReadyAt = currentTime + 8000 + BUILD_COOLDOWN;
+              }
+          } else if (action.type === 'build') {
+              const currentTime = performance.now();
+              const auth = getOrInitializeAuthority(clientId);
+              if (currentTime >= auth.buildActiveUntil) return;
+
+              if (action.x === undefined || typeof action.x !== 'number' || !Number.isFinite(action.x) ||
+                  action.y === undefined || typeof action.y !== 'number' || !Number.isFinite(action.y)) return;
+              
+              if (action.x % 40 !== 0 || action.y % 40 !== 0) return;
+
+              const dx = action.x - clientPlayer.x;
+              const dy = action.y - clientPlayer.y;
+              if (dx * dx + dy * dy > 160 * 160) return;
+
+              let blockOccupied = false;
+              // Check occupancy by enemies
+              for (const enemy of stateRef.current.enemies) {
+                 if (enemy.x > action.x - 20 - enemy.radius && enemy.x < action.x + 20 + enemy.radius &&
+                     enemy.y > action.y - 20 - enemy.radius && enemy.y < action.y + 20 + enemy.radius) {
+                    blockOccupied = true;
+                    break;
+                 }
+              }
+              // Check occupancy by bouncers
+              if (!blockOccupied) {
+                  for (const b of stateRef.current.bouncers) {
+                     if (b.x > action.x - 20 - b.radius && b.x < action.x + 20 + b.radius &&
+                         b.y > action.y - 20 - b.radius && b.y < action.y + 20 + b.radius) {
+                        blockOccupied = true;
+                        break;
+                     }
                   }
-                }
+              }
+              // Check occupancy by spawners
+              if (!blockOccupied) {
+                  for (const spawner of stateRef.current.spawners) {
+                      if (spawner.hp > 0 && spawner.x > action.x - 20 - spawner.radius && spawner.x < action.x + 20 + spawner.radius &&
+                          spawner.y > action.y - 20 - spawner.radius && spawner.y < action.y + 20 + spawner.radius) {
+                          blockOccupied = true;
+                          break;
+                      }
+                  }
+              }
+              // Check occupancy by local player
+              if (!blockOccupied) {
+                  const lp = stateRef.current.player;
+                  const status = uiRef.current.status;
+                  if (status === 'PLAYING' && lp.x > action.x - 20 - lp.radius && lp.x < action.x + 20 + lp.radius &&
+                      lp.y > action.y - 20 - lp.radius && lp.y < action.y + 20 + lp.radius) {
+                     blockOccupied = true;
+                  }
+              }
+              // Check occupancy by multiplayer players
+              if (!blockOccupied) {
+                  for (const pid in stateRef.current.multiplayerPlayers) {
+                     const p = stateRef.current.multiplayerPlayers[pid];
+                     if (!p.isDead && p.x > action.x - 20 - p.radius && p.x < action.x + 20 + p.radius &&
+                         p.y > action.y - 20 - p.radius && p.y < action.y + 20 + p.radius) {
+                        blockOccupied = true;
+                        break;
+                     }
+                  }
+              }
+              // Check overlap with static walls of the map
+              if (!blockOccupied) {
+                  const walls = (MAPS[uiRef.current.mapId] || MAPS.medium).walls;
+                  for (const w of walls) {
+                     if (action.x > w.x - 20 && action.x < w.x + w.w + 20 &&
+                         action.y > w.y - 20 && action.y < w.y + w.h + 20) {
+                        blockOccupied = true;
+                        break;
+                     }
+                  }
               }
 
-              stateRef.current.bullets.push({
-                id: 'bl_' + stateRef.current.nextEntityId++,
-                x: action.x,
-                y: action.y,
-                dx: action.dx,
-                dy: action.dy,
-                radius: BULLET_RADIUS,
-                isPlayer: true,
-                bounceCount: 0,
-                spawnTime: performance.now(),
-                isNeutral: false,
-                ownerId: clientId,
-                colorIdx: action.colorIdx,
-                allowedBlockKeys: clientAllowedKeys,
-                leftBlockKeys: []
+              if (blockOccupied) return;
+
+              // Check existing block at same location
+              const existingIdx = stateRef.current.blocks.findIndex(b => b.x === action.x && b.y === action.y);
+              if (existingIdx !== -1) {
+                  return;
+              }
+
+              stateRef.current.blocks.push({
+                  x: action.x,
+                  y: action.y,
+                  size: 40,
+                  createdAt: currentTime,
+                  colorIdx: matchPlayer.colorIdx,
+                  ownerId: clientId
               });
-         } else if (action.type === 'special') {
-             applySpecialAbility(action.x, action.y, action.colorIdx, clientId);
-         } else if (action.type === 'build') {
-             stateRef.current.blocks.push({
-                 x: action.x,
-                 y: action.y,
-                 size: 40,
-                 createdAt: performance.now(),
-                 colorIdx: action.colorIdx
-             });
-             if (mpRef.current.isHost) {
-                 for (let i = stateRef.current.bullets.length - 1; i >= 0; i--) {
-                    const b = stateRef.current.bullets[i];
-                    if (b.x > action.x - 20 && b.x < action.x + 20 && b.y > action.y - 20 && b.y < action.y + 20) {
-                       stateRef.current.bullets.splice(i, 1);
-                    }
+
+              for (let i = stateRef.current.bullets.length - 1; i >= 0; i--) {
+                 const b = stateRef.current.bullets[i];
+                 if (b.x > action.x - 20 && b.x < action.x + 20 && b.y > action.y - 20 && b.y < action.y + 20) {
+                    stateRef.current.bullets.splice(i, 1);
                  }
-             }
-         } else if (action.type === 'build_remove') {
-             const idx = stateRef.current.blocks.findIndex(b => b.x === action.x && b.y === action.y);
-             if (idx !== -1) {
-                 stateRef.current.blocks.splice(idx, 1);
-             }
-         }
-       }
+              }
+          } else if (action.type === 'build_remove') {
+              const currentTime = performance.now();
+              const auth = getOrInitializeAuthority(clientId);
+              if (currentTime >= auth.buildActiveUntil) return;
+
+              if (action.x === undefined || typeof action.x !== 'number' || !Number.isFinite(action.x) ||
+                  action.y === undefined || typeof action.y !== 'number' || !Number.isFinite(action.y)) return;
+              
+              if (action.x % 40 !== 0 || action.y % 40 !== 0) return;
+
+              const dx = action.x - clientPlayer.x;
+              const dy = action.y - clientPlayer.y;
+              if (dx * dx + dy * dy > 160 * 160) return;
+
+              const idx = stateRef.current.blocks.findIndex(b => b.x === action.x && b.y === action.y);
+              if (idx !== -1) {
+                  const targetBlock = stateRef.current.blocks[idx];
+                  if (targetBlock.ownerId === clientId) {
+                      stateRef.current.blocks.splice(idx, 1);
+                  }
+              }
+          }
+        }
     });
 
     return () => {
@@ -2964,6 +3138,9 @@ export default function GameCanvas() {
       if (key === '2') {
          if (isOpeningProtectionActiveLocal(currentTime)) return;
          if (!stateRef.current.player.build.active && (stateRef.current.player.build.endTime === 0 || currentTime - stateRef.current.player.build.endTime >= BUILD_COOLDOWN)) {
+            if (socketRef.current && mpRef.current.roomId && !mpRef.current.isHost) {
+               socketRef.current.emit('client_action', mpRef.current.roomId, { type: 'build_start' });
+            }
             stateRef.current.player.build.active = true;
             stateRef.current.player.build.endTime = currentTime + 8000;
             stateRef.current.player.build.lastTime = currentTime;
@@ -3369,6 +3546,10 @@ export default function GameCanvas() {
             }
           }
           mpPlayer.recentBlocks = mpPlayer.recentBlocks.filter((b: any) => currentTime - b.timestamp <= 1000);
+          if (mpRef.current.isHost && state.playerActionAuthority && state.playerActionAuthority[pid]) {
+            const auth = state.playerActionAuthority[pid];
+            mpPlayer.isDash = (currentTime < auth.specialActiveUntil);
+          }
         }
 
         const mouseJustDown = state.mouse.justDown;
@@ -4949,6 +5130,7 @@ export default function GameCanvas() {
                 winnerId: state.winnerId,
                 finalWinner: state.winnerId,
                 matchPlayers: state.matchPlayers,
+                 playerActionAuthority: state.playerActionAuthority,
                 blocks: state.blocks,
                 bullets: state.bullets,
                 enemies: state.enemies,
@@ -7061,6 +7243,9 @@ export default function GameCanvas() {
                                }
                              } else if (toolKey === 'build') {
                                if (!stateRef.current.player.build.active && (stateRef.current.player.build.endTime === 0 || currentTime - stateRef.current.player.build.endTime >= BUILD_COOLDOWN)) {
+                                 if (socketRef.current && mpRef.current.roomId && !mpRef.current.isHost) {
+                                   socketRef.current.emit('client_action', mpRef.current.roomId, { type: 'build_start' });
+                                 }
                                  stateRef.current.player.build.active = true;
                                  stateRef.current.player.build.endTime = currentTime + 8000;
                                  stateRef.current.player.build.lastTime = currentTime;
