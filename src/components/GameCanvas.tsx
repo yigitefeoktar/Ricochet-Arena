@@ -1450,8 +1450,43 @@ export default function GameCanvas() {
   const [confirmLeaveMatches, setConfirmLeaveMatches] = useState(false);
 
   const mappedClientDeadlineRef = useRef<number | null>(null);
+  const mappedProtectionDeadlineRef = useRef<number | null>(null);
   const [currentMatchPhase, setCurrentMatchPhase] = useState<'PLAYING' | 'FINAL_RUN' | 'FINISHED'>('PLAYING');
   const [, setFinalRunTick] = useState<number>(0);
+  const [, setProtectionTick] = useState<number>(0);
+
+  const isOpeningProtectionActiveForHost = useCallback((currentTime: number = performance.now()) => {
+    if (!mpRef.current.roomId || !mpRef.current.isHost) return false;
+    if (stateRef.current.openingProtectionDeadline === null) return false;
+    return currentTime < stateRef.current.openingProtectionDeadline;
+  }, []);
+
+  const getRemainingProtectionSeconds = useCallback((currentTime: number = performance.now()) => {
+    if (!mpRef.current.roomId) return 0;
+    let remMs = 0;
+    if (mpRef.current.isHost) {
+      if (stateRef.current.openingProtectionDeadline === null) return 0;
+      remMs = stateRef.current.openingProtectionDeadline - currentTime;
+    } else {
+      if (mappedProtectionDeadlineRef.current === null) return 0;
+      remMs = mappedProtectionDeadlineRef.current - currentTime;
+    }
+    return Math.max(0, remMs / 1000);
+  }, []);
+
+  const isOpeningProtectionActiveLocal = useCallback((currentTime: number = performance.now()) => {
+    return getRemainingProtectionSeconds(currentTime) > 0;
+  }, [getRemainingProtectionSeconds]);
+
+  useEffect(() => {
+    if (!mpState.roomId) return;
+    const timer = setInterval(() => {
+      if (getRemainingProtectionSeconds() > 0) {
+        setProtectionTick(t => t + 1);
+      }
+    }, 50);
+    return () => clearInterval(timer);
+  }, [mpState.roomId, getRemainingProtectionSeconds]);
 
   const getRemainingFinalRunSeconds = useCallback(() => {
     let remMs = 0;
@@ -1711,6 +1746,7 @@ export default function GameCanvas() {
     matchPhase: 'PLAYING' as 'PLAYING' | 'FINAL_RUN' | 'FINISHED',
     finalRunnerId: null as string | null,
     finalRunDeadline: null as number | null,
+    openingProtectionDeadline: null as number | null,
     winnerId: null as string | null,
     matchPlayers: {} as Record<string, { id: string, name: string, colorIdx: number, score: number, isDead: boolean, isDisconnected?: boolean }>,
     forceBroadcast: false,
@@ -2017,6 +2053,14 @@ export default function GameCanvas() {
       mappedClientDeadlineRef.current = null;
       setCurrentMatchPhase('PLAYING');
 
+      if (mpRef.current.isHost) {
+        state.openingProtectionDeadline = performance.now() + 1500;
+        mappedProtectionDeadlineRef.current = null;
+      } else {
+        state.openingProtectionDeadline = null;
+        mappedProtectionDeadlineRef.current = performance.now() + 1500;
+      }
+
       const initialMatchPlayers: Record<string, { id: string, name: string, colorIdx: number, score: number, isDead: boolean, isDisconnected?: boolean }> = {};
 
       initialMatchPlayers[myId] = {
@@ -2083,6 +2127,9 @@ export default function GameCanvas() {
 
       state.matchPlayers = initialMatchPlayers;
       state.forceBroadcast = true;
+    } else {
+      state.openingProtectionDeadline = null;
+      mappedProtectionDeadlineRef.current = null;
     }
 
     return true;
@@ -2181,6 +2228,7 @@ export default function GameCanvas() {
   };
 
   const tryPlaceBuildBlock = useCallback((currentTime: number, gridX: number, gridY: number, cIdx: number) => {
+     if (isOpeningProtectionActiveLocal(currentTime)) return;
      try {
          const s = stateRef.current;
          let blockOccupied = false;
@@ -2251,6 +2299,7 @@ export default function GameCanvas() {
   }, []);
 
   const applySpecialAbility = useCallback((x: number, y: number, colorIdx: number, ownerId: string) => {
+     if (isOpeningProtectionActiveLocal()) return;
      const radius = 240;
      const s = stateRef.current;
      
@@ -2358,6 +2407,19 @@ export default function GameCanvas() {
               mappedClientDeadlineRef.current = null;
               stateRef.current.forceBroadcast = true;
             }
+
+            if (becameHost) {
+              if (mappedProtectionDeadlineRef.current !== null) {
+                const rem = mappedProtectionDeadlineRef.current - performance.now();
+                if (rem > 0) {
+                  stateRef.current.openingProtectionDeadline = performance.now() + rem;
+                } else {
+                  stateRef.current.openingProtectionDeadline = null;
+                }
+              }
+              mappedProtectionDeadlineRef.current = null;
+              stateRef.current.forceBroadcast = true;
+            }
           }
         } else {
           otherPlayers[p.id] = {
@@ -2397,6 +2459,19 @@ export default function GameCanvas() {
         }
         if (state.finalRunnerId !== undefined) stateRef.current.finalRunnerId = state.finalRunnerId;
         if (state.finalRunDeadline !== undefined) stateRef.current.finalRunDeadline = state.finalRunDeadline;
+        if (state.openingProtectionDeadline !== undefined) {
+          stateRef.current.openingProtectionDeadline = state.openingProtectionDeadline;
+          if (state.openingProtectionDeadline !== null && state.hostTime !== undefined) {
+            const remainingHostMs = state.openingProtectionDeadline - state.hostTime;
+            if (remainingHostMs > 0) {
+              mappedProtectionDeadlineRef.current = performance.now() + remainingHostMs;
+            } else {
+              mappedProtectionDeadlineRef.current = null;
+            }
+          } else if (state.openingProtectionDeadline === null) {
+            mappedProtectionDeadlineRef.current = null;
+          }
+        }
         if (state.winnerId !== undefined) stateRef.current.winnerId = state.winnerId;
         if (state.matchPlayers !== undefined) stateRef.current.matchPlayers = state.matchPlayers;
 
@@ -2562,11 +2637,15 @@ export default function GameCanvas() {
 
     socket.on('client_input', (clientId, input) => {
       if (mpRef.current.isHost) {
+        const isProtected = isOpeningProtectionActiveForHost(performance.now());
         const prev = stateRef.current.multiplayerPlayers[clientId];
-        if (prev && !prev.isDead && input.isDead) {
+        if (prev && !prev.isDead && input.isDead && !isProtected) {
           triggerEliminationRef.current?.(input.x, input.y, input.colorIdx !== undefined ? input.colorIdx : 0, input.name || 'PLAYER');
         }
         const mergedInput = { ...input };
+        if (isProtected) {
+          mergedInput.isDead = false;
+        }
         if (prev && prev.score > (input.score || 0)) {
           mergedInput.score = prev.score;
         }
@@ -2593,6 +2672,11 @@ export default function GameCanvas() {
            isHost: mpRef.current.isHost
          });
        } else if (mpRef.current.isHost) {
+         if (isOpeningProtectionActiveForHost(performance.now())) {
+           if (action.type === 'shoot' || action.type === 'special' || action.type === 'build' || action.type === 'build_remove') {
+             return;
+           }
+         }
          if (action.type === 'shoot') {
               const clientAllowedKeys: string[] = [];
               const clientPlayer = stateRef.current.multiplayerPlayers[clientId];
@@ -2754,6 +2838,7 @@ export default function GameCanvas() {
       
       if (key === '1') {
          if (uiRef.current.status === 'PLAYING') {
+            if (isOpeningProtectionActiveLocal(currentTime)) return;
             const dash = stateRef.current.player.dash;
             const endTime = dash.endTime || 0;
             if (!dash.active && (endTime === 0 || currentTime - endTime >= DASH_COOLDOWN)) {
@@ -2776,6 +2861,7 @@ export default function GameCanvas() {
          }
       }
       if (key === '2') {
+         if (isOpeningProtectionActiveLocal(currentTime)) return;
          if (!stateRef.current.player.build.active && (stateRef.current.player.build.endTime === 0 || currentTime - stateRef.current.player.build.endTime >= BUILD_COOLDOWN)) {
             stateRef.current.player.build.active = true;
             stateRef.current.player.build.endTime = currentTime + 8000;
@@ -3442,7 +3528,7 @@ export default function GameCanvas() {
           const localColor = PLAYER_COLORS[localColorIdx]?.n || '#00f0ff';
 
           // 1. Collide with Enemies (state.enemies)
-          if (!state.player.dash.active) {
+          if (!state.player.dash.active && !isOpeningProtectionActiveLocal(currentTime)) {
             for (const enemy of state.enemies) {
               const dx = state.player.x - enemy.x;
               const dy = state.player.y - enemy.y;
@@ -3459,7 +3545,7 @@ export default function GameCanvas() {
           }
 
           // 2. Collide with Bouncers (state.bouncers)
-          if (uiRef.current.status === 'PLAYING' && !state.player.dash.active) {
+          if (uiRef.current.status === 'PLAYING' && !state.player.dash.active && !isOpeningProtectionActiveLocal(currentTime)) {
             for (const b of state.bouncers) {
               const pdx = state.player.x - b.x;
               const pdy = state.player.y - b.y;
@@ -3476,7 +3562,7 @@ export default function GameCanvas() {
           }
 
           // 3. Collide with Spawner Orbiting Special Obstacles (Shield, Kinetic, Singularity, Magma gates, Crystal)
-          if (uiRef.current.status === 'PLAYING' && !state.player.dash.active) {
+          if (uiRef.current.status === 'PLAYING' && !state.player.dash.active && !isOpeningProtectionActiveLocal(currentTime)) {
             for (const spawner of state.spawners) {
               if (spawner.specialType) {
                 const collision = getBulletRelicCollision(state.player.x, state.player.y, state.player.radius, spawner, currentTime);
@@ -3494,7 +3580,7 @@ export default function GameCanvas() {
           }
 
           // 4. Collide with Enemy / Neutral / Player Bullets
-          if (uiRef.current.status === 'PLAYING') {
+          if (uiRef.current.status === 'PLAYING' && !isOpeningProtectionActiveLocal(currentTime)) {
             for (const bullet of state.bullets) {
               let bulletColor = '#ff0066';
               if (bullet.isNeutral) {
@@ -3536,11 +3622,16 @@ export default function GameCanvas() {
               const isStandingOn = (block.x === gridX && block.y === gridY);
 
               if (state.player.build.active) {
-                // When build mode is active:
-                // - If standing on empty tile: place one of that player's blocks (handled by tryPlaceBuildBlock).
-                // - If standing on another player's block: replace it (handled by tryPlaceBuildBlock).
-                // - If standing on one of their own blocks: do nothing.
-                // We do not destroy any blocks via physical overlap when build mode is active.
+                if (!isOpeningProtectionActiveLocal(currentTime)) {
+                  const gridX = Math.round(state.player.x / 40) * 40;
+                  const gridY = Math.round(state.player.y / 40) * 40;
+                  if (gridX !== state.player.build.lastBlockX || gridY !== state.player.build.lastBlockY) {
+                     state.player.build.lastBlockX = gridX;
+                     state.player.build.lastBlockY = gridY;
+                     const cIdx = playerProfileRef.current.colorIdx;
+                     tryPlaceBuildBlock(currentTime, gridX, gridY, cIdx);
+                  }
+                }
               } else {
                 // When build mode is inactive:
                 // - If the player is standing on any block, remove that block.
@@ -3973,7 +4064,7 @@ export default function GameCanvas() {
                  // Wait, let's just bounce
                  b.dx *= -1;
                  b.dy *= -1;
-              } else {
+              } else if (!isOpeningProtectionActiveForHost(currentTime)) {
                 const localColorIdx = playerProfileRef.current.colorIdx;
                 const localColor = PLAYER_COLORS[localColorIdx]?.n || '#00f0ff';
                 spawnParticles(state.player.x, state.player.y, localColor, 50);
@@ -4026,7 +4117,7 @@ export default function GameCanvas() {
           }
         }
 
-        if (isShooting && currentTime - state.player.lastShoot > FIRE_RATE) {
+        if (isShooting && !isOpeningProtectionActiveLocal(currentTime) && currentTime - state.player.lastShoot > FIRE_RATE) {
           state.player.lastShoot = currentTime;
           
           let bvx = 0;
@@ -4587,7 +4678,7 @@ export default function GameCanvas() {
             if (bulletColor !== hostColor) {
               const dx = state.player.x - bullet.x;
               const dy = state.player.y - bullet.y;
-              const isProtected = state.player.dash.active;
+              const isProtected = state.player.dash.active || isOpeningProtectionActiveForHost(currentTime);
               if (!isProtected && dx * dx + dy * dy < (state.player.radius + bullet.radius * 0.5) ** 2) {
                 // Game Over!
                 spawnParticles(state.player.x, state.player.y, hostColor, 50);
@@ -4612,7 +4703,7 @@ export default function GameCanvas() {
                 if (bulletColor !== mpColor) {
                   const dx = mpPlayer.x - bullet.x;
                   const dy = mpPlayer.y - bullet.y;
-                  const isProtected = mpPlayer.isDash;
+                  const isProtected = mpPlayer.isDash || isOpeningProtectionActiveForHost(currentTime);
                   if (!isProtected && dx * dx + dy * dy < (mpPlayer.radius + bullet.radius * 0.5) ** 2) {
                     // Explode bullet on hit, remote player triggers death locally based on color sync
                     spawnParticles(mpPlayer.x, mpPlayer.y, mpColor, 50);
@@ -4697,6 +4788,7 @@ export default function GameCanvas() {
                 matchPhase: state.matchPhase,
                 finalRunnerId: state.finalRunnerId,
                 finalRunDeadline: state.finalRunDeadline,
+                openingProtectionDeadline: state.openingProtectionDeadline,
                 deadline: state.finalRunDeadline,
                 winnerId: state.winnerId,
                 finalWinner: state.winnerId,
@@ -5448,6 +5540,18 @@ export default function GameCanvas() {
          ctx.font = '10px "Space Grotesk", sans-serif';
          ctx.textAlign = 'center';
          ctx.fillText(pName, pData.x, pData.y - pData.radius - 8);
+
+         if (isOpeningProtectionActiveLocal(currentTime)) {
+           ctx.save();
+           ctx.beginPath();
+           const shieldRadius = pData.radius + 8 + Math.sin(currentTime * 0.008) * 2;
+           ctx.arc(pData.x, pData.y, shieldRadius, 0, Math.PI * 2);
+           ctx.strokeStyle = pColor;
+           ctx.lineWidth = 2;
+           ctx.globalAlpha = 0.6 + 0.2 * Math.sin(currentTime * 0.01);
+           ctx.stroke();
+           ctx.restore();
+         }
       }
 
       // Draw Player
@@ -5505,6 +5609,18 @@ export default function GameCanvas() {
           ctx.beginPath();
           ctx.arc(state.player.x, state.player.y, state.player.radius * 2, 0, Math.PI * 2);
           ctx.fill();
+        }
+
+        if (isOpeningProtectionActiveLocal(currentTime)) {
+          ctx.save();
+          ctx.beginPath();
+          const shieldRadius = state.player.radius + 8 + Math.sin(currentTime * 0.008) * 2;
+          ctx.arc(state.player.x, state.player.y, shieldRadius, 0, Math.PI * 2);
+          ctx.strokeStyle = pColor;
+          ctx.lineWidth = 2;
+          ctx.globalAlpha = 0.6 + 0.2 * Math.sin(currentTime * 0.01);
+          ctx.stroke();
+          ctx.restore();
         }
 
         ctx.fillStyle = pColor;
@@ -6474,6 +6590,17 @@ export default function GameCanvas() {
                   </div>
                 )}
 
+                {/* Active-player HUD for START SHIELD */}
+                {mpState.roomId && getRemainingProtectionSeconds(performance.now()) > 0 && (
+                  <div className="absolute top-[116px] sm:top-6 left-1/2 -translate-x-1/2 pointer-events-none z-20">
+                    <div className="bg-[#0a0000]/85 border border-[#00f0ff] text-[#00f0ff] shadow-[0_0_12px_rgba(0,240,255,0.35)] px-3 sm:px-4 py-1.5 sm:py-2 rounded-md font-mono font-black text-xs sm:text-sm tracking-widest uppercase flex items-center gap-2 backdrop-blur-sm">
+                      <span>START SHIELD</span>
+                      <span className="text-[#00f0ff]/50">//</span>
+                      <span className="text-white font-bold">{getRemainingProtectionSeconds(performance.now()).toFixed(1)}s</span>
+                    </div>
+                  </div>
+                )}
+
                 <div className="absolute top-0 left-0 right-0 p-4 sm:p-6 flex flex-row justify-between items-start pointer-events-none z-10 w-full max-w-7xl mx-auto">
                   {/* Left: Score & Spawners / Target Counters */}
                   <div className="flex items-stretch gap-4 sm:gap-6 ml-4 sm:ml-8">
@@ -6662,7 +6789,8 @@ export default function GameCanvas() {
                 <div className={`absolute left-1/2 -translate-x-1/2 pointer-events-none z-10 flex gap-[14px] sm:gap-[16px] bottom-4 sm:bottom-6`}>
                    {(Object.keys(toolsData) as Array<keyof typeof toolsData>).map((toolKey) => {
                      const tool = toolsData[toolKey];
-                     const isReady = uiState.buttonCounters[toolKey as 'special' | 'build'] === 0;
+                     const isProtected = isOpeningProtectionActiveLocal(performance.now());
+                     const isReady = !isProtected && uiState.buttonCounters[toolKey as 'special' | 'build'] === 0;
                      return (
                        <div key={toolKey} className="relative flex flex-col items-center gap-1 sm:gap-1.5">
                          <div className="h-4 sm:h-5 flex items-end">
