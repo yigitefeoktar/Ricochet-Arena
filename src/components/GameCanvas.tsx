@@ -1264,7 +1264,29 @@ export default function GameCanvas() {
     mode: null,
   });
   const [bannerCountdown, setBannerCountdown] = useState(3);
-  const [flashSpawner, setFlashSpawner] = useState(false);
+  const pulseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  
+  const triggerSpawnerPulse = useCallback(() => {
+    if (pulseTimeoutRef.current) clearTimeout(pulseTimeoutRef.current);
+    setPulseSpawnerCounter(true);
+    pulseTimeoutRef.current = setTimeout(() => {
+      setPulseSpawnerCounter(false);
+      pulseTimeoutRef.current = null;
+    }, 800);
+  }, []);
+
+  useEffect(() => {
+    if (uiState.status !== 'PLAYING') {
+      if (pulseTimeoutRef.current) clearTimeout(pulseTimeoutRef.current);
+      setPulseSpawnerCounter(false);
+    }
+  }, [uiState.status]);
+
+  useEffect(() => {
+    return () => {
+      if (pulseTimeoutRef.current) clearTimeout(pulseTimeoutRef.current);
+    };
+  }, []);
   const [pulseSpawnerCounter, setPulseSpawnerCounter] = useState(false);
   const [flashScore, setFlashScore] = useState(false);
 
@@ -1278,7 +1300,7 @@ export default function GameCanvas() {
       if (!enableObjectiveBanner) {
         setBannerState({ show: false, isLeaving: false, mode: null });
         bannerShowingRef.current = false;
-        setFlashSpawner(false);
+        
         setFlashScore(false);
         return;
       }
@@ -1286,7 +1308,7 @@ export default function GameCanvas() {
       setBannerState({ show: true, isLeaving: false, mode });
       bannerShowingRef.current = true;
       setBannerCountdown(3);
-      setFlashSpawner(false);
+      
       setFlashScore(false);
 
       const interval = setInterval(() => {
@@ -1303,8 +1325,8 @@ export default function GameCanvas() {
         setBannerState({ show: false, isLeaving: false, mode: null });
         bannerShowingRef.current = false;
         if (mode === 'single') {
-          setFlashSpawner(true);
-          setTimeout(() => setFlashSpawner(false), 2000);
+          
+          
         } else {
           setFlashScore(true);
           setTimeout(() => setFlashScore(false), 2000);
@@ -1318,7 +1340,7 @@ export default function GameCanvas() {
     } else {
       setBannerState({ show: false, isLeaving: false, mode: null });
       bannerShowingRef.current = false;
-      setFlashSpawner(false);
+      
       setFlashScore(false);
     }
   }, [uiState.status, mpState.roomId]);
@@ -1496,6 +1518,8 @@ export default function GameCanvas() {
       try {
         const data = JSON.parse(event.target?.result as string);
         if (data && data.ui && data.state) {
+            if (pulseTimeoutRef.current) clearTimeout(pulseTimeoutRef.current);
+            setPulseSpawnerCounter(false);
             setUiState({ ...data.ui, status: 'PAUSED' });
             stateRef.current = data.state;
         }
@@ -1576,6 +1600,8 @@ export default function GameCanvas() {
   };
 
   const resetGame = (deviceType?: 'desktop' | 'mobile', mapId?: string, hardMode?: boolean) => {
+    if (pulseTimeoutRef.current) clearTimeout(pulseTimeoutRef.current);
+    setPulseSpawnerCounter(false);
     const dType = deviceType || uiRef.current.deviceType;
     const selectedMapId = mapId || uiRef.current.mapId;
     const isMultiplayer = !!mpRef.current.roomId;
@@ -3969,8 +3995,7 @@ export default function GameCanvas() {
                   state.spawners.splice(s, 1);
                   if (state.tutorial.active) {
                     state.tutorial.active = false;
-                    setPulseSpawnerCounter(true);
-                    setTimeout(() => setPulseSpawnerCounter(false), 800);
+                    triggerSpawnerPulse();
                   }
                   let pts = 0;
                   if (bullet.isPlayer && !bullet.isNeutral) pts = 1000;
@@ -5902,22 +5927,12 @@ export default function GameCanvas() {
                           `brightness(1.5) drop-shadow(0 0 20px ${uiState.hardMode ? 'rgba(255,51,0,1)' : 'rgba(255,0,255,1)'})`,
                           "brightness(1) drop-shadow(0 0 0px rgba(0,0,0,0))"
                         ]
-                      } : flashSpawner ? {
-                        filter: [
-                          "brightness(1) drop-shadow(0 0 0px rgba(0,0,0,0))",
-                          `brightness(1.8) drop-shadow(0 0 15px ${uiState.hardMode ? 'rgba(255,51,0,0.95)' : 'rgba(255,0,255,0.95)'})`,
-                          "brightness(1) drop-shadow(0 0 0px rgba(0,0,0,0))"
-                        ]
                       } : {
                         scale: 1,
                         filter: "brightness(1) drop-shadow(0 0 0px rgba(0,0,0,0))"
                       }}
                       transition={pulseSpawnerCounter ? {
                         duration: 0.8,
-                        ease: "easeInOut"
-                      } : flashSpawner ? {
-                        duration: 0.5,
-                        repeat: Infinity,
                         ease: "easeInOut"
                       } : {}}
                       className={`flex flex-col items-start justify-center gap-0 sm:gap-1 pl-4 sm:pl-6 border-l-2 h-full sm:w-[160px] ${uiState.hardMode ? 'border-[#ff3300]/30' : 'border-[#ff00ff]/30'}`}
