@@ -5345,8 +5345,28 @@ export default function GameCanvas() {
                                      />
                                    ))}
 
-                                   {/* Render Spawn Area */}
-                                   
+                                   {/* Render Spawn Point */}
+                                   {selMap.spawnPoint && (
+                                     <g transform={`translate(${selMap.spawnPoint.x}, ${selMap.spawnPoint.y})`} pointerEvents="none" aria-hidden="true">
+                                       <circle r={70} fill="rgba(255, 204, 0, 0.10)" stroke="#FFCC00" strokeWidth={18} />
+                                       <circle r={18} fill="#FFCC00" />
+                                       <line x1={0} y1={-110} x2={0} y2={-80} stroke="#FFCC00" strokeWidth={18} />
+                                       <line x1={0} y1={80} x2={0} y2={110} stroke="#FFCC00" strokeWidth={18} />
+                                       <line x1={-110} y1={0} x2={-80} y2={0} stroke="#FFCC00" strokeWidth={18} />
+                                       <line x1={80} y1={0} x2={110} y2={0} stroke="#FFCC00" strokeWidth={18} />
+                                       <text 
+                                         x={100} 
+                                         y={-80} 
+                                         fill="#FFCC00" 
+                                         fontSize={120} 
+                                         fontFamily="monospace" 
+                                         fontWeight="bold" 
+                                         style={{ letterSpacing: '0.1em', filter: 'drop-shadow(0px 2px 2px rgba(255, 204, 0, 0.35))' }}
+                                       >
+                                         START
+                                       </text>
+                                     </g>
+                                   )}
                                  </svg>
                                </div>
                             </div>
