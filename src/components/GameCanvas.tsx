@@ -1260,7 +1260,7 @@ export default function GameCanvas() {
 
   const mappedClientDeadlineRef = useRef<number | null>(null);
   const [currentMatchPhase, setCurrentMatchPhase] = useState<'PLAYING' | 'FINAL_RUN' | 'FINISHED'>('PLAYING');
-  const [finalRunSeconds, setFinalRunSeconds] = useState<number>(0);
+  const [, setFinalRunTick] = useState<number>(0);
 
   const getRemainingFinalRunSeconds = useCallback(() => {
     let remMs = 0;
@@ -1274,29 +1274,26 @@ export default function GameCanvas() {
     return Math.max(0, Math.ceil(remMs / 1000));
   }, []);
 
+  const displayFinalRunSeconds = currentMatchPhase === 'FINAL_RUN' ? getRemainingFinalRunSeconds() : 0;
+
   useEffect(() => {
     if (!mpState.roomId || currentMatchPhase !== 'FINAL_RUN') {
-      setFinalRunSeconds(0);
       return;
     }
 
-    const updateSecs = () => {
-      setFinalRunSeconds(getRemainingFinalRunSeconds());
-    };
-
-    updateSecs();
-    const timer = setInterval(updateSecs, 100);
+    const timer = setInterval(() => {
+      setFinalRunTick(t => t + 1);
+    }, 100);
 
     return () => {
       clearInterval(timer);
     };
-  }, [mpState.roomId, currentMatchPhase, getRemainingFinalRunSeconds]);
+  }, [mpState.roomId, currentMatchPhase]);
 
   useEffect(() => {
     if (!mpState.roomId) {
       mappedClientDeadlineRef.current = null;
       setCurrentMatchPhase('PLAYING');
-      setFinalRunSeconds(0);
     }
   }, [mpState.roomId]);
 
@@ -1760,7 +1757,6 @@ export default function GameCanvas() {
       state.winnerId = null;
       mappedClientDeadlineRef.current = null;
       setCurrentMatchPhase('PLAYING');
-      setFinalRunSeconds(0);
 
       const myId = socketRef.current?.id || 'host';
       const initialMatchPlayers: Record<string, { id: string, name: string, colorIdx: number, score: number, isDead: boolean, isDisconnected?: boolean }> = {};
@@ -2063,8 +2059,17 @@ export default function GameCanvas() {
           // Also set our local host status directly from server-authoritative list!
           const hostAssigned = p.isHost;
           if (mpRef.current.isHost !== hostAssigned) {
+            const becameHost = !mpRef.current.isHost && hostAssigned;
             setMpState(prev => ({ ...prev, isHost: hostAssigned }));
             mpRef.current.isHost = hostAssigned;
+
+            if (becameHost && stateRef.current.matchPhase === 'FINAL_RUN') {
+              if (mappedClientDeadlineRef.current !== null) {
+                stateRef.current.finalRunDeadline = mappedClientDeadlineRef.current;
+              }
+              mappedClientDeadlineRef.current = null;
+              stateRef.current.forceBroadcast = true;
+            }
           }
         } else {
           otherPlayers[p.id] = {
@@ -6168,11 +6173,11 @@ export default function GameCanvas() {
               >
                 {/* Active-player HUD for FINAL_RUN */}
                 {mpState.roomId && currentMatchPhase === 'FINAL_RUN' && (
-                  <div className="absolute top-16 sm:top-6 left-1/2 -translate-x-1/2 pointer-events-none z-20">
+                  <div className="absolute top-[116px] sm:top-6 left-1/2 -translate-x-1/2 pointer-events-none z-20">
                     <div className="bg-[#0a0000]/85 border border-[#FFCC00] text-[#FFCC00] shadow-[0_0_12px_rgba(255,204,0,0.35)] px-3 sm:px-4 py-1.5 sm:py-2 rounded-md font-mono font-black text-xs sm:text-sm tracking-widest uppercase flex items-center gap-2 backdrop-blur-sm">
                       <span>FINAL RUN</span>
                       <span className="text-[#FFCC00]/50">//</span>
-                      <span className="text-white font-bold">{finalRunSeconds}</span>
+                      <span className="text-white font-bold">{displayFinalRunSeconds}</span>
                     </div>
                   </div>
                 )}
@@ -6549,7 +6554,7 @@ export default function GameCanvas() {
                   <div className="bg-black/80 border border-[#FFCC00] text-[#FFCC00] shadow-[0_0_12px_rgba(255,204,0,0.3)] px-3 py-1.5 rounded-md font-mono font-black text-xs sm:text-sm tracking-widest uppercase flex items-center gap-2">
                     <span>FINAL RUN</span>
                     <span className="text-[#FFCC00]/50">//</span>
-                    <span className="text-white font-bold">{finalRunSeconds}</span>
+                    <span className="text-white font-bold">{displayFinalRunSeconds}</span>
                   </div>
                 </div>
               )}
