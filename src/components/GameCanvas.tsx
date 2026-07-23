@@ -4533,6 +4533,13 @@ export default function GameCanvas() {
         const isLocalMenuOpen = mpRef.current.roomId && (mpMenuOpenRef.current || confirmResignRef.current);
         if (isShooting && !isOpeningProtectionActiveLocal(currentTime) && !isLocalMenuOpen && currentTime - state.player.lastShoot > FIRE_RATE) {
           state.player.lastShoot = currentTime;
+          if (mpRef.current.roomId && mpRef.current.isHost) {
+            const myId = socketRef.current?.id;
+            if (myId) {
+              const auth = getOrInitializeAuthority(myId);
+              auth.lastShootAt = currentTime;
+            }
+          }
           
           let bvx = 0;
           let bvy = 0;
