@@ -1346,36 +1346,68 @@ export default function GameCanvas() {
   }, [uiState.status, mpState.roomId]);
 
   const getMultiplayerStandings = () => {
-    const list = [];
+    const list: Array<{
+      id: string;
+      name: string;
+      score: number;
+      isDead: boolean;
+      colorIdx: number;
+      isLocal: boolean;
+    }> = [];
     const myId = socketRef.current?.id || 'local';
 
-    // Local player
-    list.push({
-      id: myId,
-      name: playerProfileRef.current.name || 'PLAYER 1',
-      score: uiRef.current.score || 0,
-      isDead: uiRef.current.status === 'GAME_OVER',
-      colorIdx: playerProfileRef.current.colorIdx || 0,
-      isLocal: true,
-    });
+    const matchPlayers = stateRef.current?.matchPlayers;
 
-    // Remote players
-    const mpPlayers = stateRef.current?.multiplayerPlayers || {};
-    for (const pid in mpPlayers) {
-      if (mpPlayers[pid]) {
+    if (mpRef.current.roomId && matchPlayers && Object.keys(matchPlayers).length > 0) {
+      for (const pid in matchPlayers) {
+        const mp = matchPlayers[pid];
         list.push({
-          id: pid,
-          name: mpPlayers[pid].name || 'PLAYER',
-          score: mpPlayers[pid].score || 0,
-          isDead: !!mpPlayers[pid].isDead,
-          colorIdx: mpPlayers[pid].colorIdx || 0,
-          isLocal: false,
+          id: mp.id,
+          name: mp.name || 'PLAYER',
+          score: mp.score || 0,
+          isDead: !!mp.isDead,
+          colorIdx: mp.colorIdx || 0,
+          isLocal: mp.id === myId,
         });
+      }
+    } else {
+      // Local player
+      list.push({
+        id: myId,
+        name: playerProfileRef.current.name || 'PLAYER 1',
+        score: uiRef.current.score || 0,
+        isDead: uiRef.current.status === 'GAME_OVER',
+        colorIdx: playerProfileRef.current.colorIdx || 0,
+        isLocal: true,
+      });
+
+      // Remote players
+      const mpPlayers = stateRef.current?.multiplayerPlayers || {};
+      for (const pid in mpPlayers) {
+        if (mpPlayers[pid]) {
+          list.push({
+            id: pid,
+            name: mpPlayers[pid].name || 'PLAYER',
+            score: mpPlayers[pid].score || 0,
+            isDead: !!mpPlayers[pid].isDead,
+            colorIdx: mpPlayers[pid].colorIdx || 0,
+            isLocal: false,
+          });
+        }
       }
     }
 
-    list.sort((a, b) => b.score - a.score);
-    const isWholeGameEnded = list.every(p => p.isDead);
+    list.sort((a, b) => {
+      if (b.score !== a.score) {
+        return b.score - a.score;
+      }
+      return a.id.localeCompare(b.id);
+    });
+
+    const isWholeGameEnded = mpRef.current.roomId
+      ? stateRef.current?.matchPhase === 'FINISHED'
+      : list.every(p => p.isDead);
+
     return { list, isWholeGameEnded };
   };
 
@@ -1400,6 +1432,12 @@ export default function GameCanvas() {
   const stateRef = useRef({
     player: { x: initialSpawn.x, y: initialSpawn.y, vx: 0, vy: 0, kbvx: 0, kbvy: 0, processedZoneKbs: [] as number[], radius: PLAYER_RADIUS, lastShoot: 0, dash: { active: false, endTime: 0, targetX: 0, targetY: 0, shieldRadius: 60, lastTime: performance.now() - DASH_COOLDOWN, wasReady: true }, build: { active: false, endTime: 0, lastBlockX: 0, lastBlockY: 0, lastTime: performance.now() - BUILD_COOLDOWN }, recentBlocks: [] as { key: string, x: number, y: number, timestamp: number }[] },
     multiplayerPlayers: {} as Record<string, { x: number, y: number, radius: number, isDash: boolean, name?: string, colorIdx?: number, isDead?: boolean, kbvx?: number, kbvy?: number, recentBlocks?: { key: string, x: number, y: number, timestamp: number }[] }>,
+    matchPhase: 'PLAYING' as 'PLAYING' | 'FINAL_RUN' | 'FINISHED',
+    finalRunnerId: null as string | null,
+    finalRunDeadline: null as number | null,
+    winnerId: null as string | null,
+    matchPlayers: {} as Record<string, { id: string, name: string, colorIdx: number, score: number, isDead: boolean, isDisconnected?: boolean }>,
+    forceBroadcast: false,
     blocks: [] as { x: number; y: number; size: number; createdAt: number, colorIdx?: number }[],
     nextBlockScore: 100,
     bullets: [] as { id?: string; x: number; y: number; dx: number; dy: number; radius: number, isPlayer: boolean, bounceCount: number, spawnTime: number, isNeutral: boolean, ownerId?: string, colorIdx?: number, targetX?: number, targetY?: number, repelMultiplied?: boolean, allowedBlockKeys?: string[], leftBlockKeys?: string[] }[],
@@ -1672,6 +1710,167 @@ export default function GameCanvas() {
     const newUi = { status: 'PLAYING' as const, score: 0, deviceType: dType, activeTool: 'special' as const, blocks: 50, spawnersLeft: state.spawners.length, mapId: selectedMapId, hardMode: uiHardMode, buttonCounters: { special: 0, build: 0 } };
     uiRef.current = newUi;
     setUiState(newUi);
+
+    if (isMultiplayer) {
+      state.matchPhase = 'PLAYING';
+      state.finalRunnerId = null;
+      state.finalRunDeadline = null;
+      state.winnerId = null;
+
+      const myId = socketRef.current?.id || 'host';
+      const initialMatchPlayers: Record<string, { id: string, name: string, colorIdx: number, score: number, isDead: boolean, isDisconnected?: boolean }> = {};
+
+      initialMatchPlayers[myId] = {
+        id: myId,
+        name: playerProfileRef.current.name || 'PLAYER 1',
+        colorIdx: playerProfileRef.current.colorIdx || 0,
+        score: 0,
+        isDead: false,
+      };
+
+      for (const pid in state.multiplayerPlayers) {
+        if (state.multiplayerPlayers[pid]) {
+          state.multiplayerPlayers[pid].score = 0;
+          state.multiplayerPlayers[pid].isDead = false;
+          initialMatchPlayers[pid] = {
+            id: pid,
+            name: state.multiplayerPlayers[pid].name || 'PLAYER',
+            colorIdx: state.multiplayerPlayers[pid].colorIdx || 0,
+            score: 0,
+            isDead: false,
+          };
+        }
+      }
+
+      for (const lpid in lobbyPlayers) {
+        if (!initialMatchPlayers[lpid]) {
+          initialMatchPlayers[lpid] = {
+            id: lpid,
+            name: lobbyPlayers[lpid].name || 'PLAYER',
+            colorIdx: lobbyPlayers[lpid].colorIdx || 0,
+            score: 0,
+            isDead: false,
+          };
+        }
+      }
+
+      state.matchPlayers = initialMatchPlayers;
+      state.forceBroadcast = true;
+    }
+  };
+
+  const evaluateMatchState = (currentTime: number) => {
+    if (!mpRef.current.isConnected || !mpRef.current.roomId || !mpRef.current.isHost) {
+      return;
+    }
+
+    const state = stateRef.current;
+    if (state.matchPhase === 'FINISHED') {
+      return;
+    }
+
+    const hostId = socketRef.current?.id || 'host';
+
+    // Synchronize host player state
+    if (state.matchPlayers[hostId]) {
+      state.matchPlayers[hostId].score = uiRef.current.score || 0;
+      state.matchPlayers[hostId].isDead = (uiRef.current.status === 'GAME_OVER');
+    } else {
+      state.matchPlayers[hostId] = {
+        id: hostId,
+        name: playerProfileRef.current.name || 'PLAYER 1',
+        colorIdx: playerProfileRef.current.colorIdx || 0,
+        score: uiRef.current.score || 0,
+        isDead: (uiRef.current.status === 'GAME_OVER')
+      };
+    }
+
+    // Synchronize remote players state
+    for (const pid in state.multiplayerPlayers) {
+      const mpP = state.multiplayerPlayers[pid];
+      if (mpP) {
+        if (state.matchPlayers[pid]) {
+          state.matchPlayers[pid].score = Math.max(state.matchPlayers[pid].score || 0, mpP.score || 0);
+          state.matchPlayers[pid].isDead = state.matchPlayers[pid].isDead || !!mpP.isDead;
+        } else {
+          state.matchPlayers[pid] = {
+            id: pid,
+            name: mpP.name || 'PLAYER',
+            colorIdx: mpP.colorIdx || 0,
+            score: mpP.score || 0,
+            isDead: !!mpP.isDead
+          };
+        }
+      }
+    }
+
+    type MatchPlayer = { id: string; name: string; colorIdx: number; score: number; isDead: boolean; isDisconnected?: boolean };
+    const allMatchPlayers: MatchPlayer[] = Object.values(state.matchPlayers) as MatchPlayer[];
+    const alivePlayers = allMatchPlayers.filter(p => !p.isDead);
+    const eliminatedPlayers = allMatchPlayers.filter(p => p.isDead);
+
+    const getSortedMatchPlayers = (): MatchPlayer[] => {
+      return [...allMatchPlayers].sort((a, b) => {
+        if (b.score !== a.score) {
+          return b.score - a.score;
+        }
+        return a.id.localeCompare(b.id);
+      });
+    };
+
+    const previousPhase = state.matchPhase;
+
+    if (state.matchPhase === 'PLAYING') {
+      if (alivePlayers.length === 0) {
+        state.matchPhase = 'FINISHED';
+        const sorted = getSortedMatchPlayers();
+        state.winnerId = sorted.length > 0 ? sorted[0].id : hostId;
+      } else if (alivePlayers.length === 1) {
+        const remainingPlayer = alivePlayers[0];
+        const maxEliminatedScore = eliminatedPlayers.length > 0
+          ? Math.max(...eliminatedPlayers.map(p => p.score))
+          : -Infinity;
+
+        if (remainingPlayer.score > maxEliminatedScore) {
+          state.matchPhase = 'FINISHED';
+          state.winnerId = remainingPlayer.id;
+        } else {
+          state.matchPhase = 'FINAL_RUN';
+          state.finalRunnerId = remainingPlayer.id;
+          state.finalRunDeadline = currentTime + 20000;
+        }
+      }
+    }
+
+    if (state.matchPhase === 'FINAL_RUN') {
+      const runnerId = state.finalRunnerId;
+      const runner = runnerId ? state.matchPlayers[runnerId] : null;
+
+      const isRunnerDead = !runner || runner.isDead;
+      const maxEliminatedScore = eliminatedPlayers.length > 0
+        ? Math.max(...eliminatedPlayers.map(p => p.score))
+        : -Infinity;
+
+      const didSurpass = !!(runner && !runner.isDead && runner.score > maxEliminatedScore);
+      const isExpired = state.finalRunDeadline !== null && currentTime >= state.finalRunDeadline;
+
+      if (isRunnerDead) {
+        state.matchPhase = 'FINISHED';
+        const sorted = getSortedMatchPlayers();
+        state.winnerId = sorted.length > 0 ? sorted[0].id : hostId;
+      } else if (didSurpass) {
+        state.matchPhase = 'FINISHED';
+        state.winnerId = runner.id;
+      } else if (isExpired) {
+        state.matchPhase = 'FINISHED';
+        const sorted = getSortedMatchPlayers();
+        state.winnerId = sorted.length > 0 ? sorted[0].id : hostId;
+      }
+    }
+
+    if (state.matchPhase !== previousPhase) {
+      state.forceBroadcast = true;
+    }
   };
 
   const tryPlaceBuildBlock = useCallback((currentTime: number, gridX: number, gridY: number, cIdx: number) => {
@@ -1805,6 +2004,17 @@ export default function GameCanvas() {
     });
 
     socket.on('player_left', (id) => {
+      if (mpRef.current.isHost) {
+        const state = stateRef.current;
+        if (state.matchPlayers[id]) {
+          state.matchPlayers[id].isDead = true;
+          state.matchPlayers[id].isDisconnected = true;
+        }
+        if (state.multiplayerPlayers[id]) {
+          state.multiplayerPlayers[id].isDead = true;
+        }
+        evaluateMatchState(performance.now());
+      }
       delete stateRef.current.multiplayerPlayers[id];
       setLobbyPlayers(prev => {
         const next = { ...prev };
@@ -1858,6 +2068,16 @@ export default function GameCanvas() {
     socket.on('game_state', (state) => {
       lastReceivedGameStateTimeRef.current = performance.now();
       if (!mpRef.current.isHost) {
+        if (state.matchPhase !== undefined) stateRef.current.matchPhase = state.matchPhase;
+        if (state.finalRunnerId !== undefined) stateRef.current.finalRunnerId = state.finalRunnerId;
+        if (state.finalRunDeadline !== undefined) stateRef.current.finalRunDeadline = state.finalRunDeadline;
+        if (state.winnerId !== undefined) stateRef.current.winnerId = state.winnerId;
+        if (state.matchPlayers !== undefined) stateRef.current.matchPlayers = state.matchPlayers;
+
+        if (state.matchPhase === 'FINISHED' && uiRef.current.status === 'PLAYING') {
+          setUiState(prev => ({ ...prev, status: 'GAME_OVER' }));
+        }
+
         // Delta tracking for client-side visual particle effects on death
         const prevEnemies = stateRef.current.enemies || [];
         const prevSpawners = stateRef.current.spawners || [];
@@ -4124,14 +4344,30 @@ export default function GameCanvas() {
           }
         }
 
+      // Host evaluates match state
+      if (mpRef.current.isConnected && mpRef.current.roomId && mpRef.current.isHost) {
+        evaluateMatchState(currentTime);
+        if (state.matchPhase === 'FINISHED' && uiRef.current.status === 'PLAYING') {
+          setUiState(prev => ({ ...prev, status: 'GAME_OVER' }));
+        }
+      }
+
       // Host broadcasts state
       if (mpRef.current.isConnected && mpRef.current.roomId && mpRef.current.isHost && (STATUS === 'PLAYING' || STATUS === 'GAME_OVER')) {
-          if (currentTime - state.lastBroadcastTime > 50) {
+          if (currentTime - state.lastBroadcastTime > 50 || state.forceBroadcast) {
               state.lastBroadcastTime = currentTime;
+              state.forceBroadcast = false;
               socketRef.current?.emit('host_game_state', mpRef.current.roomId, {
                 hostId: socketRef.current?.id,
                 hostPlayer: { ...state.player, isDead: STATUS === 'GAME_OVER', name: playerProfileRef.current.name, colorIdx: playerProfileRef.current.colorIdx, score: uiRef.current.score },
                 multiplayerPlayers: state.multiplayerPlayers,
+                matchPhase: state.matchPhase,
+                finalRunnerId: state.finalRunnerId,
+                finalRunDeadline: state.finalRunDeadline,
+                deadline: state.finalRunDeadline,
+                winnerId: state.winnerId,
+                finalWinner: state.winnerId,
+                matchPlayers: state.matchPlayers,
                 blocks: state.blocks,
                 bullets: state.bullets,
                 enemies: state.enemies,
