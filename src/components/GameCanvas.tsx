@@ -908,14 +908,19 @@ function getValidatedFallbackSpawn(mapDef: MapDefinition): {x: number, y: number
   throw new Error(`No valid player spawn position exists anywhere in the arena for map: ${mapDef.name}`);
 }
 
-function getPlayerSpawn(mapDef: MapDefinition): { x: number; y: number } {
+function getPlayerSpawn(mapDef: MapDefinition): { pos: { x: number; y: number }, tutorialSpawnerIndex: number | null } {
   if (mapDef.spawnPoint) {
+    let tutorialSpawnerIndex: number | null = null;
+    if (mapDef.name === "Fortress") tutorialSpawnerIndex = 3;
+    if (mapDef.name === "The Gauntlet") tutorialSpawnerIndex = 4;
+    if (mapDef.name === "Serpentine Labyrinth") tutorialSpawnerIndex = 0;
+
     if (isValidPlayerSpawnPos(mapDef.spawnPoint.x, mapDef.spawnPoint.y, null, mapDef)) {
-      return mapDef.spawnPoint;
+      return { pos: mapDef.spawnPoint, tutorialSpawnerIndex };
     }
     // @ts-ignore
     if (import.meta.env.DEV) console.warn("Fallback: Configured spawnPoint is invalid for map:", mapDef.name);
-    return getValidatedFallbackSpawn(mapDef);
+    return { pos: getValidatedFallbackSpawn(mapDef), tutorialSpawnerIndex };
   }
 
   const spawnerIndices = Array.from({length: mapDef.spawners.length}, (_, i) => i);
@@ -936,7 +941,7 @@ function getPlayerSpawn(mapDef: MapDefinition): { x: number; y: number } {
       const py = spawner.y + Math.sin(angle) * dist;
       
       if (isValidPlayerSpawnPos(px, py, spawner, mapDef)) {
-        return { x: px, y: py };
+        return { pos: { x: px, y: py }, tutorialSpawnerIndex: idx };
       }
     }
     
@@ -947,13 +952,13 @@ function getPlayerSpawn(mapDef: MapDefinition): { x: number; y: number } {
         const px = spawner.x + Math.cos(angle) * dist;
         const py = spawner.y + Math.sin(angle) * dist;
         if (isValidPlayerSpawnPos(px, py, spawner, mapDef)) {
-          return { x: px, y: py };
+          return { pos: { x: px, y: py }, tutorialSpawnerIndex: idx };
         }
       }
     }
   }
 
-  return getValidatedFallbackSpawn(mapDef);
+  return { pos: getValidatedFallbackSpawn(mapDef), tutorialSpawnerIndex: null };
 }
 
 function getBulletRelicCollision(
@@ -1405,6 +1410,7 @@ export default function GameCanvas() {
     lastEnemySpawn: 0,
     enemySpawnRate: 3000,
     hardMode: false,
+    tutorial: { active: false, spawnerIndex: null as number | null, enemySpawned: false, timer: 0, firstSpawnerDestroyedTime: null as number | null },
   });
 
   const handleCopyCode = () => {
@@ -1579,9 +1585,27 @@ export default function GameCanvas() {
     const state = stateRef.current;
     state.hardMode = isHardMode;
     state.nextEntityId = 1;
-    const spawn = isMultiplayer ? getSafeSpawn(100) : getPlayerSpawn(mapDef);
-    state.player.x = spawn.x;
-    state.player.y = spawn.y;
+    
+    let startPos = { x: 500, y: 500 };
+    let tutIdx: number | null = null;
+    if (isMultiplayer) {
+      startPos = getSafeSpawn(100);
+    } else {
+      const pSpawn = getPlayerSpawn(mapDef);
+      startPos = pSpawn.pos;
+      tutIdx = pSpawn.tutorialSpawnerIndex;
+    }
+    
+    state.tutorial = {
+      active: !isMultiplayer,
+      spawnerIndex: tutIdx,
+      enemySpawned: false,
+      timer: 0,
+      firstSpawnerDestroyedTime: null
+    };
+
+    state.player.x = startPos.x;
+    state.player.y = startPos.y;
     state.player.vx = 0;
     state.player.vy = 0;
     state.player.kbvx = 0;
@@ -3036,6 +3060,41 @@ export default function GameCanvas() {
           const mapDef = MAPS[uiRef.current.mapId] || MAPS.medium;
           const initialSpawners = mapDef.spawners.length;
           
+          // Tutorial opening enemy
+          if (state.tutorial.active && !state.tutorial.enemySpawned && state.tutorial.spawnerIndex !== null) {
+            state.tutorial.timer += dt * 1000;
+            if (state.tutorial.timer > 1500) {
+              state.tutorial.enemySpawned = true;
+              const tutSpawnerDef = mapDef.spawners[state.tutorial.spawnerIndex];
+              const tutSpawner = state.spawners.find(s => s.x === tutSpawnerDef.x && s.y === tutSpawnerDef.y);
+              if (tutSpawner) {
+                const angle = Math.random() * Math.PI * 2;
+                const spawnDist = tutSpawner.radius + ENEMY_RADIUS + 10;
+                const spawnX = tutSpawner.x + Math.cos(angle) * spawnDist;
+                const spawnY = tutSpawner.y + Math.sin(angle) * spawnDist;
+                
+                let inWall = false;
+                for (const wall of activeWalls) {
+                  if (spawnX > wall.x - ENEMY_RADIUS && spawnX < wall.x + wall.w + ENEMY_RADIUS &&
+                      spawnY > wall.y - ENEMY_RADIUS && spawnY < wall.y + wall.h + ENEMY_RADIUS) {
+                    inWall = true;
+                    break;
+                  }
+                }
+                if (!inWall) {
+                  state.enemies.push({ 
+                    id: 'e_' + state.nextEntityId++, 
+                    x: spawnX, y: spawnY, 
+                    radius: ENEMY_RADIUS, 
+                    lastShoot: currentTime, 
+                    speed: ENEMY_SPEED 
+                  });
+                  spawnParticles(tutSpawner.x, tutSpawner.y, state.hardMode ? '#ff3300' : '#ff00ff', 10);
+                }
+              }
+            }
+          }
+          
           let effectiveRate = state.enemySpawnRate;
           if (state.hardMode) {
             // Hard Mode: Total spawn rate does not diminish when spawners are destroyed.
@@ -3908,6 +3967,10 @@ export default function GameCanvas() {
                   state.shockwaves.push({ x: spawner.x, y: spawner.y, color: spawnerColor, maxRadius: 200, age: 0, maxAge: 0.5, thickness: 20 });
                   state.shake = 30;
                   state.spawners.splice(s, 1);
+                  if (state.tutorial.active) {
+                    state.tutorial.active = false;
+                    state.tutorial.firstSpawnerDestroyedTime = state.lastTime;
+                  }
                   let pts = 0;
                   if (bullet.isPlayer && !bullet.isNeutral) pts = 1000;
                   
@@ -4918,7 +4981,81 @@ export default function GameCanvas() {
         ctx.globalAlpha = 1.0;
       }
 
+      // Floating Tutorial Target Label in World Space
+      if (state.tutorial.active && state.tutorial.spawnerIndex !== null) {
+        const mapDef = MAPS[uiRef.current.mapId] || MAPS.medium;
+        const tutDef = mapDef.spawners[state.tutorial.spawnerIndex];
+        const spawner = state.spawners.find(s => s.x === tutDef.x && s.y === tutDef.y);
+        
+        if (spawner) {
+          ctx.save();
+          ctx.font = 'bold 24px monospace';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'bottom';
+          
+          const floatOffset = Math.sin(currentTime / 500) * 5;
+          const labelY = spawner.y - spawner.radius - 40 + floatOffset;
+          
+          const pulseAlpha = 0.85 + Math.sin(currentTime / 300) * 0.15;
+          ctx.globalAlpha = pulseAlpha;
+          
+          ctx.shadowColor = '#E879F9';
+          ctx.shadowBlur = 10 + Math.sin(currentTime / 300) * 4;
+          
+          ctx.strokeStyle = '#080A12';
+          ctx.lineWidth = 6;
+          ctx.lineJoin = 'round';
+          ctx.strokeText("DESTROY THE SPAWNER", spawner.x, labelY);
+          
+          ctx.shadowBlur = 0;
+          ctx.fillStyle = '#E879F9';
+          ctx.fillText("DESTROY THE SPAWNER", spawner.x, labelY);
+          
+          ctx.restore();
+        }
+      }
+
       ctx.restore(); // Reset transform to draw fixed UI
+
+      // Post-tutorial target label "DESTROY ALL SPAWNERS"
+      if (!state.tutorial.active && state.tutorial.firstSpawnerDestroyedTime) {
+        const timeSinceDestroyed = currentTime - state.tutorial.firstSpawnerDestroyedTime;
+        if (timeSinceDestroyed < 2500) {
+          let alpha = 1;
+          if (timeSinceDestroyed < 400) {
+            alpha = timeSinceDestroyed / 400;
+          } else if (timeSinceDestroyed > 2100) {
+            alpha = Math.max(0, 1 - (timeSinceDestroyed - 2100) / 400);
+          }
+          
+          if (alpha > 0) {
+            ctx.save();
+            ctx.font = 'bold 36px monospace';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            
+            const screenX = canvas.width / 2;
+            const screenY = 100;
+            
+            const pulseAlpha = alpha * (0.85 + Math.sin(currentTime / 300) * 0.15);
+            ctx.globalAlpha = pulseAlpha;
+            
+            ctx.shadowColor = '#E879F9';
+            ctx.shadowBlur = 10 + Math.sin(currentTime / 300) * 4;
+            
+            ctx.strokeStyle = '#080A12';
+            ctx.lineWidth = 6;
+            ctx.lineJoin = 'round';
+            ctx.strokeText("DESTROY ALL SPAWNERS", screenX, screenY);
+            
+            ctx.shadowBlur = 0;
+            ctx.fillStyle = '#E879F9';
+            ctx.fillText("DESTROY ALL SPAWNERS", screenX, screenY);
+            
+            ctx.restore();
+          }
+        }
+      }
 
       // Draw off-screen indicators for other players in multiplayer
       if (uiRef.current.status === 'PLAYING' && mpRef.current.roomId) {
@@ -5361,6 +5498,10 @@ export default function GameCanvas() {
                                          fontSize={120} 
                                          fontFamily="monospace" 
                                          fontWeight="bold" 
+                                         stroke="#080A12"
+                                         strokeWidth={30}
+                                         paintOrder="stroke"
+                                         strokeLinejoin="round"
                                          style={{ letterSpacing: '0.1em', filter: 'drop-shadow(0px 2px 2px rgba(255, 204, 0, 0.35))' }}
                                        >
                                          START
