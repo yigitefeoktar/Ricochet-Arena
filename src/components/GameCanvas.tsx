@@ -813,34 +813,57 @@ function distSqLinePoint(v: {x:number, y:number}, w: {x:number, y:number}, p: {x
   return (p.x - (v.x + t * (w.x - v.x))) ** 2 + (p.y - (v.y + t * (w.y - v.y))) ** 2;
 }
 
-function getSafeSpawn(minDistToWalls = 50, avoidPositions: { x: number; y: number }[] = [], minAvoidDist = 180) {
-  let spawnX = 500;
-  let spawnY = 500;
-  let validSpawn = false;
-  let attempts = 0;
-  while (!validSpawn && attempts < 200) {
-    spawnX = 100 + Math.random() * (MAP_WIDTH - 200);
-    spawnY = 100 + Math.random() * (MAP_HEIGHT - 200);
-    let inWall = false;
-    for (const wall of activeWalls) {
-      if (spawnX > wall.x - minDistToWalls && spawnX < wall.x + wall.w + minDistToWalls &&
-          spawnY > wall.y - minDistToWalls && spawnY < wall.y + wall.h + minDistToWalls) {
-        inWall = true;
-        break;
-      }
-    }
-    if (!inWall && avoidPositions.length > 0) {
-      for (const pos of avoidPositions) {
-        if (Math.hypot(spawnX - pos.x, spawnY - pos.y) < minAvoidDist) {
-          inWall = true;
-          break;
-        }
-      }
-    }
-    if (!inWall) validSpawn = true;
-    attempts++;
+function isPositionSafe(
+  x: number,
+  y: number,
+  minDistToWalls = 50,
+  avoidPositions: { x: number; y: number }[] = [],
+  minAvoidDist = 180
+): boolean {
+  if (x < minDistToWalls || x > MAP_WIDTH - minDistToWalls || y < minDistToWalls || y > MAP_HEIGHT - minDistToWalls) {
+    return false;
   }
-  return { x: spawnX, y: spawnY };
+  for (const wall of activeWalls) {
+    if (
+      x > wall.x - minDistToWalls &&
+      x < wall.x + wall.w + minDistToWalls &&
+      y > wall.y - minDistToWalls &&
+      y < wall.y + wall.h + minDistToWalls
+    ) {
+      return false;
+    }
+  }
+  for (const pos of avoidPositions) {
+    if (Math.hypot(x - pos.x, y - pos.y) < minAvoidDist) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function getSafeSpawn(
+  minDistToWalls = 50,
+  avoidPositions: { x: number; y: number }[] = [],
+  minAvoidDist = 180
+): { x: number; y: number } | null {
+  for (let attempt = 0; attempt < 200; attempt++) {
+    const spawnX = 100 + Math.random() * (MAP_WIDTH - 200);
+    const spawnY = 100 + Math.random() * (MAP_HEIGHT - 200);
+    if (isPositionSafe(spawnX, spawnY, minDistToWalls, avoidPositions, minAvoidDist)) {
+      return { x: spawnX, y: spawnY };
+    }
+  }
+
+  const gridStep = 40;
+  for (let x = minDistToWalls + 20; x <= MAP_WIDTH - minDistToWalls - 20; x += gridStep) {
+    for (let y = minDistToWalls + 20; y <= MAP_HEIGHT - minDistToWalls - 20; y += gridStep) {
+      if (isPositionSafe(x, y, minDistToWalls, avoidPositions, minAvoidDist)) {
+        return { x, y };
+      }
+    }
+  }
+
+  return null;
 }
 
 function lineIntersectsLine(x1: number, y1: number, x2: number, y2: number, x3: number, y3: number, x4: number, y4: number) {
@@ -920,8 +943,8 @@ function generateMultiplayerSpawnAssignments(
   playerIds: string[],
   mapDef: MapDefinition,
   walls: { x: number; y: number; w: number; h: number }[]
-): Record<string, { x: number; y: number }> {
-  if (!playerIds || playerIds.length === 0) return {};
+): Record<string, { x: number; y: number }> | null {
+  if (!playerIds || playerIds.length === 0) return null;
 
   const shuffledIds = [...playerIds];
   for (let i = shuffledIds.length - 1; i > 0; i--) {
@@ -1072,12 +1095,7 @@ function generateMultiplayerSpawnAssignments(
     }
   }
 
-  const fallbackAssignments: Record<string, { x: number; y: number }> = {};
-  for (let i = 0; i < N; i++) {
-    const pos = getValidatedFallbackSpawn(mapDef);
-    fallbackAssignments[shuffledIds[i]] = pos;
-  }
-  return fallbackAssignments;
+  return null;
 }
 
 function getPlayerSpawn(mapDef: MapDefinition): { pos: { x: number; y: number }, tutorialSpawnerIndex: number | null } {
@@ -1415,6 +1433,7 @@ export default function GameCanvas() {
   playerProfileRef.current = playerProfile;
 
   const [mpState, setMpState] = useState<{ isConnected: boolean, roomId: string | null, isHost: boolean, joinCode: string, error: string }>({ isConnected: false, roomId: null, isHost: false, joinCode: '', error: '' });
+  const [mpError, setMpError] = useState<string | null>(null);
   const mpRef = useRef(mpState);
   mpRef.current = mpState;
   const socketRef = useRef<Socket | null>(null);
@@ -1629,19 +1648,14 @@ export default function GameCanvas() {
     return idx === -1 ? 1 : idx + 1;
   };
 
-  const handleMultiplayerRestart = () => {
+  const handleStartMultiplayerMatch = () => {
+    if (!mpRef.current.roomId || !mpState.isHost) return;
+
+    setMpError(null);
+
     const myId = socketRef.current?.id || 'host';
     const playerIds = [myId];
-    for (const pid in stateRef.current.multiplayerPlayers) {
-      if (pid !== myId && !playerIds.includes(pid)) {
-        playerIds.push(pid);
-      }
-    }
-    for (const pid in stateRef.current.matchPlayers) {
-      if (pid !== myId && !playerIds.includes(pid) && !stateRef.current.matchPlayers[pid].isDisconnected) {
-        playerIds.push(pid);
-      }
-    }
+
     for (const pid in lobbyPlayers) {
       if (pid !== myId && !playerIds.includes(pid)) {
         playerIds.push(pid);
@@ -1651,14 +1665,43 @@ export default function GameCanvas() {
     const mapDef = MAPS[uiState.mapId] || MAPS.classic_arena;
     const spawnAssignments = generateMultiplayerSpawnAssignments(playerIds, mapDef, mapDef.walls);
 
-    socketRef.current?.emit('start_game', mpRef.current.roomId, {
-      mapId: uiState.mapId,
-      hardMode: true,
-      spawnAssignments
-    });
-    resetGame(isMobileRef.current ? 'mobile' : 'desktop', uiState.mapId, uiState.hardMode, spawnAssignments);
-    setUiState(prev => ({ ...prev, status: 'PLAYING' }));
+    if (!spawnAssignments) {
+      setMpError("NO SAFE START FORMATION");
+      return;
+    }
+
+    socketRef.current?.emit(
+      'start_game',
+      mpRef.current.roomId,
+      {
+        mapId: uiState.mapId,
+        hardMode: true,
+        spawnAssignments
+      },
+      (response?: { success: boolean; error?: string }) => {
+        if (response && response.success) {
+          setMpError(null);
+          const ok = resetGame(isMobileRef.current ? 'mobile' : 'desktop', uiState.mapId, uiState.hardMode, spawnAssignments);
+          if (ok) {
+            setUiState(prev => ({ ...prev, status: 'PLAYING' }));
+          } else {
+            setMpError("FAILED TO INITIALIZE MATCH");
+          }
+        } else {
+          const err = response?.error || 'START_FAILED';
+          const msg =
+            err === 'ROSTER_MISMATCH'
+              ? 'ROSTER CHANGED - TRY AGAIN'
+              : err === 'NO_SPAWN_ASSIGNMENTS' || err === 'INVALID_SPAWN_COORDINATES'
+              ? 'NO SAFE START FORMATION'
+              : `START FAILED: ${err}`;
+          setMpError(msg);
+        }
+      }
+    );
   };
+
+  const handleMultiplayerRestart = handleStartMultiplayerMatch;
 
   // We use a ref for the entire game state to avoid stale closures
   const initialSpawn = useRef({ x: 500, y: 500 }).current;
@@ -1827,6 +1870,7 @@ export default function GameCanvas() {
   };
 
   const createRoom = () => {
+    setMpError(null);
     socketRef.current?.emit('create_room', { name: playerProfileRef.current.name }, (res: any) => {
        if (res.roomId) {
            setMpState(prev => ({ ...prev, roomId: res.roomId, isHost: true }));
@@ -1837,6 +1881,7 @@ export default function GameCanvas() {
   };
 
   const joinRoom = () => {
+    setMpError(null);
     if (!mpRef.current.joinCode) {
       setMpState(prev => ({ ...prev, error: 'Enter a valid code!' }));
       return;
@@ -1875,36 +1920,37 @@ export default function GameCanvas() {
     mapId?: string,
     hardMode?: boolean,
     spawnAssignments?: Record<string, { x: number; y: number }>
-  ) => {
-    if (pulseTimeoutRef.current) clearTimeout(pulseTimeoutRef.current);
-    setPulseSpawnerCounter(false);
+  ): boolean => {
     const dType = deviceType || uiRef.current.deviceType;
     const selectedMapId = mapId || uiRef.current.mapId;
     const isMultiplayer = !!mpRef.current.roomId;
     const isHardMode = isMultiplayer ? true : (hardMode !== undefined ? hardMode : uiRef.current.hardMode);
     const mapDef = MAPS[selectedMapId] || MAPS.classic_arena;
-    activeWalls = mapDef.walls;
-    
-    const state = stateRef.current;
-    state.hardMode = isHardMode;
-    state.nextEntityId = 1;
     
     const myId = socketRef.current?.id || 'host';
     let startPos = { x: 500, y: 500 };
     let tutIdx: number | null = null;
     if (isMultiplayer) {
-      if (spawnAssignments && spawnAssignments[myId]) {
-        startPos = spawnAssignments[myId];
-      } else if (spawnAssignments && Object.keys(spawnAssignments).length > 0) {
-        startPos = Object.values(spawnAssignments)[0];
-      } else {
-        startPos = getSafeSpawn(100);
+      if (!spawnAssignments || !spawnAssignments[myId]) {
+        if (import.meta.env.DEV) {
+          console.error("resetGame aborted: missing spawn assignment for local player", myId, spawnAssignments);
+        }
+        return false;
       }
+      startPos = spawnAssignments[myId];
     } else {
       const pSpawn = getPlayerSpawn(mapDef);
       startPos = pSpawn.pos;
       tutIdx = pSpawn.tutorialSpawnerIndex;
     }
+
+    if (pulseTimeoutRef.current) clearTimeout(pulseTimeoutRef.current);
+    setPulseSpawnerCounter(false);
+    activeWalls = mapDef.walls;
+
+    const state = stateRef.current;
+    state.hardMode = isHardMode;
+    state.nextEntityId = 1;
     
     state.tutorial = {
       active: !isMultiplayer,
@@ -1936,8 +1982,10 @@ export default function GameCanvas() {
 
     for (let i = 0; i < 2; i++) {
       const spawn = getSafeSpawn(60, playerSpawnsToAvoid, 200);
-      const angle = Math.random() * Math.PI * 2;
-      state.bouncers.push({ id: 'b_' + state.nextEntityId++, x: spawn.x, y: spawn.y, dx: Math.cos(angle), dy: Math.sin(angle), size: 1, radius: 24, speed: ENEMY_SPEED + Math.random() * 20, lastDirChange: performance.now(), lastMultiply: performance.now() });
+      if (spawn) {
+        const angle = Math.random() * Math.PI * 2;
+        state.bouncers.push({ id: 'b_' + state.nextEntityId++, x: spawn.x, y: spawn.y, dx: Math.cos(angle), dy: Math.sin(angle), size: 1, radius: 24, speed: ENEMY_SPEED + Math.random() * 20, lastDirChange: performance.now(), lastMultiply: performance.now() });
+      }
     }
     state.bouncerCapacity = 2;
     state.spawners = mapDef.spawners.map((s: any) => ({ ...s }));
@@ -2036,6 +2084,8 @@ export default function GameCanvas() {
       state.matchPlayers = initialMatchPlayers;
       state.forceBroadcast = true;
     }
+
+    return true;
   };
 
   const evaluateMatchState = (currentTime: number) => {
@@ -6305,27 +6355,15 @@ export default function GameCanvas() {
                     )}
                   </div>
 
+                  {mpError && (
+                    <div className="text-[#FF005C] font-mono text-xs sm:text-sm font-bold text-center mb-2 uppercase">
+                      {mpError}
+                    </div>
+                  )}
+
                   {mpState.isHost ? (
                     <button
-                      onClick={() => {
-                        const myId = socketRef.current?.id || 'host';
-                        const playerIds = [myId];
-                        for (const pid in lobbyPlayers) {
-                          if (pid !== myId && !playerIds.includes(pid)) {
-                            playerIds.push(pid);
-                          }
-                        }
-                        const mapDef = MAPS[uiState.mapId] || MAPS.classic_arena;
-                        const spawnAssignments = generateMultiplayerSpawnAssignments(playerIds, mapDef, mapDef.walls);
-
-                        socketRef.current?.emit('start_game', mpState.roomId, {
-                          mapId: uiState.mapId,
-                          hardMode: true,
-                          spawnAssignments
-                        });
-                        resetGame(isMobileRef.current ? 'mobile' : 'desktop', uiState.mapId, uiState.hardMode, spawnAssignments);
-                        setUiState(prev => ({ ...prev, status: 'PLAYING' }));
-                      }}
+                      onClick={handleStartMultiplayerMatch}
                       className="w-full py-4 bg-[#ffcc00] hover:bg-white text-black font-black tracking-widest transition-all duration-200 uppercase text-sm cursor-pointer shadow-[3px_3px_0_rgba(255,204,0,0.15)] hover:shadow-[5px_5px_0_#fff] active:translate-x-1 active:translate-y-1 active:shadow-none mb-2"
                     >
                       START MATCH
@@ -6870,6 +6908,11 @@ export default function GameCanvas() {
 
               {/* Action Buttons */}
               <div className="flex flex-col gap-3">
+                {mpError && (
+                  <div className="text-[#FF005C] font-mono text-xs sm:text-sm font-bold text-center uppercase">
+                    {mpError}
+                  </div>
+                )}
                 {confirmLeaveMatches ? (
                   <div className="bg-[#1a050b] p-4 border border-[#ff005c]/20 flex flex-col items-center justify-center gap-3">
                     <p className="text-[10px] sm:text-xs font-mono text-pink-200 uppercase tracking-widest">

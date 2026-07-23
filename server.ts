@@ -225,9 +225,67 @@ async function startServer() {
     });
 
     // Host explicitly starts the game to sync all clients
-    socket.on("start_game", (roomId, config) => {
-      if (!roomId) return;
-      socket.to(roomId).emit("start_game", config);
+    socket.on("start_game", (roomId, config, callback) => {
+      const cb = typeof config === "function" ? config : (typeof callback === "function" ? callback : undefined);
+      const gameConfig = typeof config === "object" && config !== null ? config : {};
+
+      if (!roomId || typeof roomId !== "string") {
+        if (cb) cb({ success: false, error: "INVALID_ROOM_ID" });
+        return;
+      }
+
+      const roomIdUpper = roomId.trim().toUpperCase();
+      const room = rooms.get(roomIdUpper);
+      if (!room) {
+        if (cb) cb({ success: false, error: "ROOM_NOT_FOUND" });
+        return;
+      }
+
+      const player = room.players.find(p => p.id === socket.id);
+      if (!player || !player.isHost) {
+        if (cb) cb({ success: false, error: "NOT_HOST" });
+        return;
+      }
+
+      const spawnAssignments = gameConfig.spawnAssignments;
+      if (!spawnAssignments || typeof spawnAssignments !== "object") {
+        if (cb) cb({ success: false, error: "NO_SPAWN_ASSIGNMENTS" });
+        return;
+      }
+
+      const roomPlayerIds = room.players.map(p => p.id);
+      const assignedIds = Object.keys(spawnAssignments);
+
+      const hasExactPlayers =
+        roomPlayerIds.length === assignedIds.length &&
+        roomPlayerIds.every(id => id in spawnAssignments);
+
+      if (!hasExactPlayers) {
+        io.to(roomIdUpper).emit("lobby_players", room.players);
+        if (cb) cb({ success: false, error: "ROSTER_MISMATCH" });
+        return;
+      }
+
+      for (const pid of roomPlayerIds) {
+        const pos = spawnAssignments[pid];
+        if (
+          !pos ||
+          typeof pos.x !== "number" ||
+          typeof pos.y !== "number" ||
+          !Number.isFinite(pos.x) ||
+          !Number.isFinite(pos.y) ||
+          pos.x < 0 ||
+          pos.x > 3000 ||
+          pos.y < 0 ||
+          pos.y > 3000
+        ) {
+          if (cb) cb({ success: false, error: "INVALID_SPAWN_COORDINATES" });
+          return;
+        }
+      }
+
+      socket.to(roomIdUpper).emit("start_game", gameConfig);
+      if (cb) cb({ success: true });
     });
 
     socket.on("disconnect", () => {
