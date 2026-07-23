@@ -1258,6 +1258,48 @@ export default function GameCanvas() {
   const [mpTick, setMpTick] = useState(0);
   const [confirmLeaveMatches, setConfirmLeaveMatches] = useState(false);
 
+  const mappedClientDeadlineRef = useRef<number | null>(null);
+  const [currentMatchPhase, setCurrentMatchPhase] = useState<'PLAYING' | 'FINAL_RUN' | 'FINISHED'>('PLAYING');
+  const [finalRunSeconds, setFinalRunSeconds] = useState<number>(0);
+
+  const getRemainingFinalRunSeconds = useCallback(() => {
+    let remMs = 0;
+    if (mpRef.current.isHost) {
+      if (stateRef.current.matchPhase !== 'FINAL_RUN' || !stateRef.current.finalRunDeadline) return 0;
+      remMs = stateRef.current.finalRunDeadline - performance.now();
+    } else {
+      if (stateRef.current.matchPhase !== 'FINAL_RUN' || !mappedClientDeadlineRef.current) return 0;
+      remMs = mappedClientDeadlineRef.current - performance.now();
+    }
+    return Math.max(0, Math.ceil(remMs / 1000));
+  }, []);
+
+  useEffect(() => {
+    if (!mpState.roomId || currentMatchPhase !== 'FINAL_RUN') {
+      setFinalRunSeconds(0);
+      return;
+    }
+
+    const updateSecs = () => {
+      setFinalRunSeconds(getRemainingFinalRunSeconds());
+    };
+
+    updateSecs();
+    const timer = setInterval(updateSecs, 100);
+
+    return () => {
+      clearInterval(timer);
+    };
+  }, [mpState.roomId, currentMatchPhase, getRemainingFinalRunSeconds]);
+
+  useEffect(() => {
+    if (!mpState.roomId) {
+      mappedClientDeadlineRef.current = null;
+      setCurrentMatchPhase('PLAYING');
+      setFinalRunSeconds(0);
+    }
+  }, [mpState.roomId]);
+
   const [bannerState, setBannerState] = useState<{ show: boolean; isLeaving: boolean; mode: 'single' | 'multi' | null }>({
     show: false,
     isLeaving: false,
@@ -1716,6 +1758,9 @@ export default function GameCanvas() {
       state.finalRunnerId = null;
       state.finalRunDeadline = null;
       state.winnerId = null;
+      mappedClientDeadlineRef.current = null;
+      setCurrentMatchPhase('PLAYING');
+      setFinalRunSeconds(0);
 
       const myId = socketRef.current?.id || 'host';
       const initialMatchPlayers: Record<string, { id: string, name: string, colorIdx: number, score: number, isDead: boolean, isDisconnected?: boolean }> = {};
@@ -1847,6 +1892,7 @@ export default function GameCanvas() {
 
     if (state.matchPhase !== previousPhase) {
       state.forceBroadcast = true;
+      setCurrentMatchPhase(state.matchPhase);
     }
   };
 
@@ -2045,11 +2091,23 @@ export default function GameCanvas() {
     socket.on('game_state', (state) => {
       lastReceivedGameStateTimeRef.current = performance.now();
       if (!mpRef.current.isHost) {
-        if (state.matchPhase !== undefined) stateRef.current.matchPhase = state.matchPhase;
+        if (state.matchPhase !== undefined) {
+          if (state.matchPhase !== stateRef.current.matchPhase) {
+            setCurrentMatchPhase(state.matchPhase);
+          }
+          stateRef.current.matchPhase = state.matchPhase;
+        }
         if (state.finalRunnerId !== undefined) stateRef.current.finalRunnerId = state.finalRunnerId;
         if (state.finalRunDeadline !== undefined) stateRef.current.finalRunDeadline = state.finalRunDeadline;
         if (state.winnerId !== undefined) stateRef.current.winnerId = state.winnerId;
         if (state.matchPlayers !== undefined) stateRef.current.matchPlayers = state.matchPlayers;
+
+        if (state.matchPhase === 'FINAL_RUN' && state.finalRunDeadline !== null && state.finalRunDeadline !== undefined && state.hostTime !== undefined) {
+          const remainingHostMs = state.finalRunDeadline - state.hostTime;
+          mappedClientDeadlineRef.current = performance.now() + Math.max(0, remainingHostMs);
+        } else if (state.matchPhase !== 'FINAL_RUN') {
+          mappedClientDeadlineRef.current = null;
+        }
 
         if (state.matchPhase === 'FINISHED' && uiRef.current.status === 'PLAYING') {
           setUiState(prev => ({ ...prev, status: 'GAME_OVER' }));
@@ -6108,6 +6166,17 @@ export default function GameCanvas() {
                 transition={{ duration: 0.6, ease: "easeInOut" }}
                 className="absolute inset-0 pointer-events-none z-[70]"
               >
+                {/* Active-player HUD for FINAL_RUN */}
+                {mpState.roomId && currentMatchPhase === 'FINAL_RUN' && (
+                  <div className="absolute top-16 sm:top-6 left-1/2 -translate-x-1/2 pointer-events-none z-20">
+                    <div className="bg-[#0a0000]/85 border border-[#FFCC00] text-[#FFCC00] shadow-[0_0_12px_rgba(255,204,0,0.35)] px-3 sm:px-4 py-1.5 sm:py-2 rounded-md font-mono font-black text-xs sm:text-sm tracking-widest uppercase flex items-center gap-2 backdrop-blur-sm">
+                      <span>FINAL RUN</span>
+                      <span className="text-[#FFCC00]/50">//</span>
+                      <span className="text-white font-bold">{finalRunSeconds}</span>
+                    </div>
+                  </div>
+                )}
+
                 <div className="absolute top-0 left-0 right-0 p-4 sm:p-6 flex flex-row justify-between items-start pointer-events-none z-10 w-full max-w-7xl mx-auto">
                   {/* Left: Score & Spawners / Target Counters */}
                   <div className="flex items-stretch gap-4 sm:gap-6 ml-4 sm:ml-8">
@@ -6469,10 +6538,21 @@ export default function GameCanvas() {
               {/* Subtitle explanation */}
               <p className="text-[10px] sm:text-xs font-mono text-zinc-400 tracking-wider uppercase mb-6 sm:mb-8 border-b border-white/5 pb-4">
                 {isWholeGameEnded 
-                  ? "ALL PLAYERS HAVE FALLEN // FINAL STANDINGS" 
+                  ? "MATCH CONCLUDED // FINAL STANDINGS" 
                   : "YOU WERE ELIMINATED // SPECTATING LIVE MATCH..."
                 }
               </p>
+
+              {/* FINAL RUN indicator in Spectator Card */}
+              {!isWholeGameEnded && currentMatchPhase === 'FINAL_RUN' && (
+                <div className="mb-4 flex justify-center">
+                  <div className="bg-black/80 border border-[#FFCC00] text-[#FFCC00] shadow-[0_0_12px_rgba(255,204,0,0.3)] px-3 py-1.5 rounded-md font-mono font-black text-xs sm:text-sm tracking-widest uppercase flex items-center gap-2">
+                    <span>FINAL RUN</span>
+                    <span className="text-[#FFCC00]/50">//</span>
+                    <span className="text-white font-bold">{finalRunSeconds}</span>
+                  </div>
+                </div>
+              )}
 
               {/* Leaderboard Table */}
               <div className="w-full mb-6 sm:mb-8 space-y-2 max-h-[220px] overflow-y-auto pr-1">
@@ -6508,15 +6588,21 @@ export default function GameCanvas() {
                         </span>
                       </div>
 
-                      {/* Score and Alive/Dead Label */}
+                      {/* Score and Alive/Dead Label / Winner Badge */}
                       <div className="flex items-center gap-2 sm:gap-4 font-mono">
-                        <span className={`text-[8px] sm:text-[10px] tracking-widest font-extrabold uppercase px-1.5 py-0.5 rounded-sm shrink-0 border ${
-                          p.isDead 
-                            ? 'text-[#ff005c]/70 border-[#ff005c]/10 bg-[#ff005c]/5' 
-                            : 'text-[#00ff88] border-[#00ff88]/20 bg-[#00ff88]/5 animate-pulse'
-                        }`}>
-                          {p.isDead ? 'ELIMINATED' : 'ALIVE'}
-                        </span>
+                        {isWholeGameEnded && p.id === stateRef.current.winnerId ? (
+                          <span className="text-[#ffcc00] border-[#ffcc00]/50 bg-[#ffcc00]/15 font-black text-[9px] sm:text-[11px] tracking-widest uppercase px-2 py-0.5 rounded-sm shrink-0 border shadow-[0_0_8px_rgba(255,204,0,0.4)] animate-pulse">
+                            WINNER
+                          </span>
+                        ) : (
+                          <span className={`text-[8px] sm:text-[10px] tracking-widest font-extrabold uppercase px-1.5 py-0.5 rounded-sm shrink-0 border ${
+                            p.isDead 
+                              ? 'text-[#ff005c]/70 border-[#ff005c]/10 bg-[#ff005c]/5' 
+                              : 'text-[#00ff88] border-[#00ff88]/20 bg-[#00ff88]/5 animate-pulse'
+                          }`}>
+                            {p.isDead ? 'ELIMINATED' : 'ALIVE'}
+                          </span>
+                        )}
                         
                         <span className="text-white font-bold text-xs sm:text-base tracking-tight">
                           {p.score}
