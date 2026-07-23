@@ -55,7 +55,7 @@ const BASE_WALLS = [
   { x: 0, y: MAP_HEIGHT - 50, w: MAP_WIDTH, h: 50 },
 ];
 
-type MapDefinition = { name: string; difficulty: 'EASY' | 'MEDIUM' | 'HARD' | 'EXPERT'; description: string; walls: {x: number, y: number, w: number, h: number}[]; spawners: {x: number, y: number, radius: number, hp: number, maxHp: number, specialType?: string}[]; spawnArea?: { x: number; y: number; w: number; h: number } };
+type MapDefinition = { name: string; difficulty: 'EASY' | 'MEDIUM' | 'HARD' | 'EXPERT'; description: string; walls: {x: number, y: number, w: number, h: number}[]; spawners: {x: number, y: number, radius: number, hp: number, maxHp: number, specialType?: string}[]; spawnPoint?: { x: number; y: number } };
 
 const MAPS: Record<string, MapDefinition> = {
   medium: {
@@ -240,7 +240,7 @@ const MAPS: Record<string, MapDefinition> = {
   fortress: {
     name: "Fortress",
     difficulty: "HARD",
-    description: "Enemies are well-entrenched. Penetrate the outer walls to reach the heavily guarded spawners.",
+    description: "Begin outside the main gate. Breach the fortress to reach its heavily guarded spawners.",
     walls: [
       ...BASE_WALLS,
       { x: 800, y: 800, w: 600, h: 100 },
@@ -257,7 +257,8 @@ const MAPS: Record<string, MapDefinition> = {
       { x: 1800, y: 1500, radius: 40, hp: 100, maxHp: 100 },
       { x: 1500, y: 1200, radius: 40, hp: 100, maxHp: 100 },
       { x: 1500, y: 1800, radius: 40, hp: 100, maxHp: 100 }
-    ]
+    ],
+    spawnPoint: { x: 1500, y: 600 }
   },
   choke_points: {
     name: "Choke Points",
@@ -305,7 +306,7 @@ const MAPS: Record<string, MapDefinition> = {
   the_gauntlet: {
     name: "The Gauntlet",
     difficulty: "EXPERT",
-    description: "A long winding zig-zag of endless bullets. Very little room for error.",
+    description: "Begin in the bottom-left and fight through a winding zig-zag of ricochets with very little room for error.",
     walls: [
       ...BASE_WALLS,
       { x: 0, y: 500, w: 2500, h: 100 },
@@ -320,7 +321,8 @@ const MAPS: Record<string, MapDefinition> = {
       { x: 2800, y: 1250, radius: 40, hp: 100, maxHp: 100 },
       { x: 200, y: 1750, radius: 40, hp: 100, maxHp: 100 },
       { x: 2800, y: 2250, radius: 40, hp: 100, maxHp: 100 }
-    ]
+    ],
+    spawnPoint: { x: 250, y: 2775 }
   },
   pinball: {
     name: "Pinball",
@@ -375,7 +377,7 @@ const MAPS: Record<string, MapDefinition> = {
   safe_haven: {
     name: "Safe Haven",
     difficulty: "EASY",
-    description: "Begin in a secured bottom-left starting quadrant containing an integrated spawner, allowing you to prepare before venturing out into the wild arena.",
+    description: "An open arena with a protected bottom-left refuge where players can regroup before returning to battle.",
     walls: [
       ...BASE_WALLS,
       // Safe Start Room
@@ -405,8 +407,7 @@ const MAPS: Record<string, MapDefinition> = {
       { x: 2500, y: 500, radius: 40, hp: 100, maxHp: 100 },
       { x: 2500, y: 2500, radius: 40, hp: 100, maxHp: 100 },
       { x: 500, y: 500, radius: 40, hp: 100, maxHp: 100 }
-    ],
-    spawnArea: { x: 50, y: 1850, w: 950, h: 1100 }
+    ]
   },
   gladiator_pit: {
     name: "Relic Sanctum",
@@ -452,8 +453,7 @@ const MAPS: Record<string, MapDefinition> = {
       { x: 2500, y: 500, radius: 40, hp: 100, maxHp: 100, specialType: 'kinetic' },
       { x: 500, y: 2500, radius: 40, hp: 100, maxHp: 100, specialType: 'magma_gates' },
       { x: 2500, y: 2500, radius: 40, hp: 100, maxHp: 100, specialType: 'crystal' }
-    ],
-    spawnArea: { x: 950, y: 950, w: 1100, h: 1100 }
+    ]
   },
   sector_control: {
     name: "Sector Control",
@@ -496,7 +496,7 @@ const MAPS: Record<string, MapDefinition> = {
   hellfire_ring: {
     name: "Hellfire Ring",
     difficulty: "EXPERT",
-    description: "High-intensity tactical layout. Start within a tight central bunker that contains a spawner but is surrounded by an active outer ring of hostiles.",
+    description: "A tight central bunker surrounded by an active outer ring of hostile spawners.",
     walls: [
       ...BASE_WALLS,
       // Central bunker
@@ -536,13 +536,12 @@ const MAPS: Record<string, MapDefinition> = {
       { x: 2300, y: 700, radius: 40, hp: 100, maxHp: 100, specialType: 'kinetic' },
       { x: 700, y: 2300, radius: 40, hp: 100, maxHp: 100, specialType: 'magma_gates' },
       { x: 2300, y: 2300, radius: 40, hp: 100, maxHp: 100, specialType: 'crystal' }
-    ],
-    spawnArea: { x: 1150, y: 1150, w: 700, h: 700 }
+    ]
   },
   gridlock: {
     name: "Gridlock",
     difficulty: "EXPERT",
-    description: "An intense grid network of tight 400x400 rooms. Players begin inside a safe bottom-left room containing a single spawner.",
+    description: "An intense grid network of tight rooms that demand careful movement and precise ricochets.",
     walls: [
       ...BASE_WALLS,
       // Vertical divider 1 (at x=950, w=100)
@@ -600,13 +599,12 @@ const MAPS: Record<string, MapDefinition> = {
       { x: 2500, y: 500, radius: 40, hp: 100, maxHp: 100, specialType: 'kinetic' },
       { x: 1500, y: 1500, radius: 40, hp: 100, maxHp: 100, specialType: 'singularity' },
       { x: 2500, y: 2500, radius: 40, hp: 100, maxHp: 100, specialType: 'crystal' }
-    ],
-    spawnArea: { x: 50, y: 2050, w: 900, h: 900 }
+    ]
   },
   labyrinth: {
     name: "Serpentine Labyrinth",
     difficulty: "HARD",
-    description: "A serpentine, winding network of intricate corridors. Find your path and destroy the deep nested spawners.",
+    description: "Begin near one end of a winding maze and fight toward the crystal-protected spawner at its far end.",
     walls: (() => {
       const walls: { x: number; y: number; w: number; h: number }[] = [...BASE_WALLS];
       const CELL_SIZE = 360;
@@ -708,13 +706,13 @@ const MAPS: Record<string, MapDefinition> = {
       return walls;
     })(),
     spawners: [
-      { x: 320, y: 320, radius: 40, hp: 100, maxHp: 100 }, // Directly in spawnArea, cell (0,0)
+      { x: 320, y: 320, radius: 40, hp: 100, maxHp: 100 }, // Directly in spawnPoint, cell (0,0)
       { x: 2750, y: 230, radius: 40, hp: 100, maxHp: 100 }, // Cell (7,0)
       { x: 1310, y: 1670, radius: 40, hp: 100, maxHp: 100 }, // Cell (3,4)
       { x: 230, y: 2750, radius: 40, hp: 100, maxHp: 100 }, // Cell (0,7)
       { x: 2750, y: 2750, radius: 40, hp: 100, maxHp: 100, specialType: 'crystal' } // Cell (7,7) - the exact far end of the maze
     ],
-    spawnArea: { x: 50, y: 50, w: 360, h: 360 }
+    spawnPoint: { x: 180, y: 600 }
   },
   scattered_ruins: {
     name: "Scattered Ruins",
@@ -745,8 +743,7 @@ const MAPS: Record<string, MapDefinition> = {
       { x: 1500, y: 1500, radius: 40, hp: 100, maxHp: 100 },
       { x: 500, y: 2500, radius: 40, hp: 100, maxHp: 100 },
       { x: 2500, y: 2500, radius: 40, hp: 100, maxHp: 100 }
-    ],
-    spawnArea: { x: 50, y: 2050, w: 900, h: 900 }
+    ]
   },
   checkerboard: {
     name: "Checkerboard",
@@ -778,8 +775,7 @@ const MAPS: Record<string, MapDefinition> = {
       { x: 1500, y: 1500, radius: 40, hp: 100, maxHp: 100, specialType: 'kinetic' },
       { x: 300, y: 2700, radius: 40, hp: 100, maxHp: 100 },
       { x: 2700, y: 2700, radius: 40, hp: 100, maxHp: 100 }
-    ],
-    spawnArea: { x: 50, y: 2050, w: 900, h: 900 }
+    ]
   }
 };
 
@@ -817,19 +813,14 @@ function distSqLinePoint(v: {x:number, y:number}, w: {x:number, y:number}, p: {x
   return (p.x - (v.x + t * (w.x - v.x))) ** 2 + (p.y - (v.y + t * (w.y - v.y))) ** 2;
 }
 
-function getSafeSpawn(minDistToWalls = 50, spawnArea?: { x: number; y: number; w: number; h: number }) {
+function getSafeSpawn(minDistToWalls = 50) {
   let spawnX = 500;
   let spawnY = 500;
   let validSpawn = false;
   let attempts = 0;
   while (!validSpawn && attempts < 100) {
-    if (spawnArea) {
-      spawnX = spawnArea.x + minDistToWalls + Math.random() * (spawnArea.w - 2 * minDistToWalls);
-      spawnY = spawnArea.y + minDistToWalls + Math.random() * (spawnArea.h - 2 * minDistToWalls);
-    } else {
-      spawnX = 100 + Math.random() * (MAP_WIDTH - 200);
-      spawnY = 100 + Math.random() * (MAP_HEIGHT - 200);
-    }
+    spawnX = 100 + Math.random() * (MAP_WIDTH - 200);
+    spawnY = 100 + Math.random() * (MAP_HEIGHT - 200);
     let inWall = false;
     for (const wall of activeWalls) {
       if (spawnX > wall.x - minDistToWalls && spawnX < wall.x + wall.w + minDistToWalls &&
@@ -894,24 +885,37 @@ function isValidPlayerSpawnPos(px: number, py: number, targetSpawner: {x: number
   return true;
 }
 
-function getPlayerSpawn(mapDef: MapDefinition): { x: number; y: number } {
-  if (mapDef.spawnArea) {
-    let spawnX = 500;
-    let spawnY = 500;
-    let validSpawn = false;
-    let attempts = 0;
-    const MIN_DIST = 100;
-    
-    while (!validSpawn && attempts < 100) {
-      spawnX = mapDef.spawnArea.x + MIN_DIST + Math.random() * (mapDef.spawnArea.w - 2 * MIN_DIST);
-      spawnY = mapDef.spawnArea.y + MIN_DIST + Math.random() * (mapDef.spawnArea.h - 2 * MIN_DIST);
-      
-      if (isValidPlayerSpawnPos(spawnX, spawnY, null, mapDef)) {
-        validSpawn = true;
-      }
-      attempts++;
+function getValidatedFallbackSpawn(mapDef: MapDefinition): {x: number, y: number} {
+  for (let i = 0; i < 100; i++) {
+    const px = Math.random() * MAP_WIDTH;
+    const py = Math.random() * MAP_HEIGHT;
+    if (isValidPlayerSpawnPos(px, py, null, mapDef)) {
+      // @ts-ignore
+      if (import.meta.env.DEV) console.warn("Fallback: Used full arena player spawn for map:", mapDef.name);
+      return { x: px, y: py };
     }
-    return validSpawn ? { x: spawnX, y: spawnY } : getSafeSpawn(100, mapDef.spawnArea);
+  }
+  for (let x = 0; x <= MAP_WIDTH; x += 50) {
+    for (let y = 0; y <= MAP_HEIGHT; y += 50) {
+      if (isValidPlayerSpawnPos(x, y, null, mapDef)) {
+        // @ts-ignore
+        if (import.meta.env.DEV) console.warn("Fallback: Used full arena player spawn for map:", mapDef.name);
+        return { x, y };
+      }
+    }
+  }
+
+  throw new Error(`No valid player spawn position exists anywhere in the arena for map: ${mapDef.name}`);
+}
+
+function getPlayerSpawn(mapDef: MapDefinition): { x: number; y: number } {
+  if (mapDef.spawnPoint) {
+    if (isValidPlayerSpawnPos(mapDef.spawnPoint.x, mapDef.spawnPoint.y, null, mapDef)) {
+      return mapDef.spawnPoint;
+    }
+    // @ts-ignore
+    if (import.meta.env.DEV) console.warn("Fallback: Configured spawnPoint is invalid for map:", mapDef.name);
+    return getValidatedFallbackSpawn(mapDef);
   }
 
   const spawnerIndices = Array.from({length: mapDef.spawners.length}, (_, i) => i);
@@ -949,9 +953,7 @@ function getPlayerSpawn(mapDef: MapDefinition): { x: number; y: number } {
     }
   }
 
-  // Fallback
-  console.warn("No valid player spawn found for map:", mapDef.name);
-  return getSafeSpawn(100);
+  return getValidatedFallbackSpawn(mapDef);
 }
 
 function getBulletRelicCollision(
@@ -1366,7 +1368,7 @@ export default function GameCanvas() {
   };
 
   // We use a ref for the entire game state to avoid stale closures
-  const initialSpawn = useRef(getSafeSpawn(100)).current;
+  const initialSpawn = useRef({ x: 500, y: 500 }).current;
   const stateRef = useRef({
     player: { x: initialSpawn.x, y: initialSpawn.y, vx: 0, vy: 0, kbvx: 0, kbvy: 0, processedZoneKbs: [] as number[], radius: PLAYER_RADIUS, lastShoot: 0, dash: { active: false, endTime: 0, targetX: 0, targetY: 0, shieldRadius: 60, lastTime: performance.now() - DASH_COOLDOWN, wasReady: true }, build: { active: false, endTime: 0, lastBlockX: 0, lastBlockY: 0, lastTime: performance.now() - BUILD_COOLDOWN }, recentBlocks: [] as { key: string, x: number, y: number, timestamp: number }[] },
     multiplayerPlayers: {} as Record<string, { x: number, y: number, radius: number, isDash: boolean, name?: string, colorIdx?: number, isDead?: boolean, kbvx?: number, kbvy?: number, recentBlocks?: { key: string, x: number, y: number, timestamp: number }[] }>,
@@ -1577,7 +1579,7 @@ export default function GameCanvas() {
     const state = stateRef.current;
     state.hardMode = isHardMode;
     state.nextEntityId = 1;
-    const spawn = isMultiplayer ? getSafeSpawn(100, mapDef.spawnArea) : getPlayerSpawn(mapDef);
+    const spawn = isMultiplayer ? getSafeSpawn(100) : getPlayerSpawn(mapDef);
     state.player.x = spawn.x;
     state.player.y = spawn.y;
     state.player.vx = 0;
@@ -5344,20 +5346,7 @@ export default function GameCanvas() {
                                    ))}
 
                                    {/* Render Spawn Area */}
-                                   {selMap.spawnArea && (
-                                     <g>
-                                       <rect
-                                         x={selMap.spawnArea.x}
-                                         y={selMap.spawnArea.y}
-                                         width={selMap.spawnArea.w}
-                                         height={selMap.spawnArea.h}
-                                         fill="rgba(255, 204, 0, 0.15)"
-                                         stroke="rgba(255, 204, 0, 0.6)"
-                                         strokeWidth="20"
-                                         strokeDasharray="40 20"
-                                       />
-                                     </g>
-                                   )}
+                                   
                                  </svg>
                                </div>
                             </div>
