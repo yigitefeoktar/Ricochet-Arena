@@ -706,7 +706,7 @@ const MAPS: Record<string, MapDefinition> = {
       return walls;
     })(),
     spawners: [
-      { x: 320, y: 320, radius: 40, hp: 100, maxHp: 100 }, // Directly in spawnPoint, cell (0,0)
+      { x: 320, y: 320, radius: 40, hp: 100, maxHp: 100 }, // Starting-region spawner in cell (0,0)
       { x: 2750, y: 230, radius: 40, hp: 100, maxHp: 100 }, // Cell (7,0)
       { x: 1310, y: 1670, radius: 40, hp: 100, maxHp: 100 }, // Cell (3,4)
       { x: 230, y: 2750, radius: 40, hp: 100, maxHp: 100 }, // Cell (0,7)
