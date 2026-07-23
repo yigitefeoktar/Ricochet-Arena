@@ -1265,6 +1265,7 @@ export default function GameCanvas() {
   });
   const [bannerCountdown, setBannerCountdown] = useState(3);
   const [flashSpawner, setFlashSpawner] = useState(false);
+  const [pulseSpawnerCounter, setPulseSpawnerCounter] = useState(false);
   const [flashScore, setFlashScore] = useState(false);
 
   useEffect(() => {
@@ -1410,7 +1411,7 @@ export default function GameCanvas() {
     lastEnemySpawn: 0,
     enemySpawnRate: 3000,
     hardMode: false,
-    tutorial: { active: false, spawnerIndex: null as number | null, enemySpawned: false, timer: 0, firstSpawnerDestroyedTime: null as number | null },
+    tutorial: { active: false, spawnerIndex: null as number | null, enemySpawned: false, timer: 0 },
   });
 
   const handleCopyCode = () => {
@@ -1600,8 +1601,7 @@ export default function GameCanvas() {
       active: !isMultiplayer,
       spawnerIndex: tutIdx,
       enemySpawned: false,
-      timer: 0,
-      firstSpawnerDestroyedTime: null
+      timer: 0
     };
 
     state.player.x = startPos.x;
@@ -3969,7 +3969,8 @@ export default function GameCanvas() {
                   state.spawners.splice(s, 1);
                   if (state.tutorial.active) {
                     state.tutorial.active = false;
-                    state.tutorial.firstSpawnerDestroyedTime = state.lastTime;
+                    setPulseSpawnerCounter(true);
+                    setTimeout(() => setPulseSpawnerCounter(false), 800);
                   }
                   let pts = 0;
                   if (bullet.isPlayer && !bullet.isNeutral) pts = 1000;
@@ -5069,20 +5070,7 @@ export default function GameCanvas() {
         }
       }
 
-      if (!state.tutorial.active && state.tutorial.firstSpawnerDestroyedTime) {
-        const timeSinceDestroyed = currentTime - state.tutorial.firstSpawnerDestroyedTime;
-        if (timeSinceDestroyed < 2500) {
-          let alpha = 1;
-          if (timeSinceDestroyed < 400) {
-            alpha = timeSinceDestroyed / 400;
-          } else if (timeSinceDestroyed > 2100) {
-            alpha = Math.max(0, 1 - (timeSinceDestroyed - 2100) / 400);
-          }
-          if (alpha > 0) {
-            drawObjectiveTag("DESTROY ALL SPAWNERS", null, null, 0, false, alpha);
-          }
-        }
-      }
+      
 
       // Draw off-screen indicators for other players in multiplayer
       if (uiRef.current.status === 'PLAYING' && mpRef.current.roomId) {
@@ -5907,14 +5895,27 @@ export default function GameCanvas() {
                        </div>
                     </motion.div>
                     <motion.div 
-                      animate={flashSpawner ? {
+                      animate={pulseSpawnerCounter ? {
+                        scale: [1, 1.12, 1],
+                        filter: [
+                          "brightness(1) drop-shadow(0 0 0px rgba(0,0,0,0))",
+                          `brightness(1.5) drop-shadow(0 0 20px ${uiState.hardMode ? 'rgba(255,51,0,1)' : 'rgba(255,0,255,1)'})`,
+                          "brightness(1) drop-shadow(0 0 0px rgba(0,0,0,0))"
+                        ]
+                      } : flashSpawner ? {
                         filter: [
                           "brightness(1) drop-shadow(0 0 0px rgba(0,0,0,0))",
                           `brightness(1.8) drop-shadow(0 0 15px ${uiState.hardMode ? 'rgba(255,51,0,0.95)' : 'rgba(255,0,255,0.95)'})`,
                           "brightness(1) drop-shadow(0 0 0px rgba(0,0,0,0))"
                         ]
-                      } : {}}
-                      transition={flashSpawner ? {
+                      } : {
+                        scale: 1,
+                        filter: "brightness(1) drop-shadow(0 0 0px rgba(0,0,0,0))"
+                      }}
+                      transition={pulseSpawnerCounter ? {
+                        duration: 0.8,
+                        ease: "easeInOut"
+                      } : flashSpawner ? {
                         duration: 0.5,
                         repeat: Infinity,
                         ease: "easeInOut"
