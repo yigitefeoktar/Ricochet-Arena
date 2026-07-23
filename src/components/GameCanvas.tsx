@@ -2376,9 +2376,13 @@ export default function GameCanvas() {
         const mapId = config?.mapId || 'medium';
         const hardMode = !!config?.hardMode;
         const spawnAssignments = config?.spawnAssignments;
-        resetGame(isMobileRef.current ? 'mobile' : 'desktop', mapId, hardMode, spawnAssignments);
-        // setUiState is mostly handled by resetGame, but let's ensure it's PLAYING
-        setUiState(prev => ({ ...prev, status: 'PLAYING', mapId, hardMode: prev.hardMode }));
+        const ok = resetGame(isMobileRef.current ? 'mobile' : 'desktop', mapId, hardMode, spawnAssignments);
+        if (ok) {
+          setMpError(null);
+          setUiState(prev => ({ ...prev, status: 'PLAYING', mapId, hardMode: prev.hardMode }));
+        } else {
+          setMpError('INVALID START ASSIGNMENT');
+        }
       }
     });
 
