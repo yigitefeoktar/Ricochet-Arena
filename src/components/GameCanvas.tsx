@@ -816,6 +816,7 @@ function distSqLinePoint(v: {x:number, y:number}, w: {x:number, y:number}, p: {x
 function isPositionSafe(
   x: number,
   y: number,
+  walls: { x: number; y: number; w: number; h: number }[],
   minDistToWalls = 50,
   avoidPositions: { x: number; y: number }[] = [],
   minAvoidDist = 180
@@ -823,7 +824,7 @@ function isPositionSafe(
   if (x < minDistToWalls || x > MAP_WIDTH - minDistToWalls || y < minDistToWalls || y > MAP_HEIGHT - minDistToWalls) {
     return false;
   }
-  for (const wall of activeWalls) {
+  for (const wall of walls) {
     if (
       x > wall.x - minDistToWalls &&
       x < wall.x + wall.w + minDistToWalls &&
@@ -842,6 +843,7 @@ function isPositionSafe(
 }
 
 function getSafeSpawn(
+  walls: { x: number; y: number; w: number; h: number }[],
   minDistToWalls = 50,
   avoidPositions: { x: number; y: number }[] = [],
   minAvoidDist = 180
@@ -849,7 +851,7 @@ function getSafeSpawn(
   for (let attempt = 0; attempt < 200; attempt++) {
     const spawnX = 100 + Math.random() * (MAP_WIDTH - 200);
     const spawnY = 100 + Math.random() * (MAP_HEIGHT - 200);
-    if (isPositionSafe(spawnX, spawnY, minDistToWalls, avoidPositions, minAvoidDist)) {
+    if (isPositionSafe(spawnX, spawnY, walls, minDistToWalls, avoidPositions, minAvoidDist)) {
       return { x: spawnX, y: spawnY };
     }
   }
@@ -857,7 +859,7 @@ function getSafeSpawn(
   const gridStep = 40;
   for (let x = minDistToWalls + 20; x <= MAP_WIDTH - minDistToWalls - 20; x += gridStep) {
     for (let y = minDistToWalls + 20; y <= MAP_HEIGHT - minDistToWalls - 20; y += gridStep) {
-      if (isPositionSafe(x, y, minDistToWalls, avoidPositions, minAvoidDist)) {
+      if (isPositionSafe(x, y, walls, minDistToWalls, avoidPositions, minAvoidDist)) {
         return { x, y };
       }
     }
@@ -875,8 +877,8 @@ function lineIntersectsLine(x1: number, y1: number, x2: number, y2: number, x3: 
 }
 
 function lineIntersectsRect(x1: number, y1: number, x2: number, y2: number, rx: number, ry: number, rw: number, rh: number) {
-  if (x1 >= rx && x1 <= rx + rw && y1 >= ry && y1 <= ry + rh) return true;
-  if (x2 >= rx && x2 <= rx + rw && y2 >= ry && y2 <= ry + rh) return true;
+  if (x1 >= rx && x1 <= rx + rw && y1 >= ry && y1 <= rx + rw) return true; // simplified check
+  if (x2 >= rx && x2 <= rx + rw && y2 >= ry && y2 <= rx + rw) return true;
   return lineIntersectsLine(x1,y1,x2,y2, rx,ry, rx+rw,ry) ||
          lineIntersectsLine(x1,y1,x2,y2, rx,ry+rh, rx+rw,ry+rh) ||
          lineIntersectsLine(x1,y1,x2,y2, rx,ry, rx,ry+rh) ||
@@ -890,7 +892,7 @@ function isValidPlayerSpawnPos(px: number, py: number, targetSpawner: {x: number
     return false;
   }
   
-  for (const wall of activeWalls) {
+  for (const wall of mapDef.walls) {
     if (px > wall.x - MIN_DIST && px < wall.x + wall.w + MIN_DIST &&
         py > wall.y - MIN_DIST && py < wall.y + wall.h + MIN_DIST) {
       return false;
@@ -906,7 +908,7 @@ function isValidPlayerSpawnPos(px: number, py: number, targetSpawner: {x: number
   }
   
   if (targetSpawner) {
-    for (const wall of activeWalls) {
+    for (const wall of mapDef.walls) {
       if (lineIntersectsRect(px, py, targetSpawner.x, targetSpawner.y, wall.x, wall.y, wall.w, wall.h)) {
         return false;
       }
@@ -1445,6 +1447,18 @@ export default function GameCanvas() {
   const [confirmResign, setConfirmResign] = useState(false);
   const confirmResignRef = useRef(confirmResign);
   confirmResignRef.current = confirmResign;
+
+  const [mpMenuOpen, setMpMenuOpen] = useState(false);
+  const mpMenuOpenRef = useRef(false);
+  mpMenuOpenRef.current = mpMenuOpen;
+
+  useEffect(() => {
+    if (uiState.status !== 'PLAYING') {
+      setMpMenuOpen(false);
+      mpMenuOpenRef.current = false;
+    }
+  }, [uiState.status]);
+
   const [isMapSelectOpen, setIsMapSelectOpen] = useState(false);
   const [mpTick, setMpTick] = useState(0);
   const [confirmLeaveMatches, setConfirmLeaveMatches] = useState(false);
@@ -1729,7 +1743,7 @@ export default function GameCanvas() {
       mpRef.current.roomId,
       {
         mapId: uiState.mapId,
-        hardMode: true,
+        hardMode: uiState.hardMode,
         spawnAssignments
       },
       (response?: { success: boolean; error?: string }) => {
@@ -1979,7 +1993,7 @@ export default function GameCanvas() {
     const dType = deviceType || uiRef.current.deviceType;
     const selectedMapId = mapId || uiRef.current.mapId;
     const isMultiplayer = !!mpRef.current.roomId;
-    const isHardMode = isMultiplayer ? true : (hardMode !== undefined ? hardMode : uiRef.current.hardMode);
+    const isHardMode = hardMode !== undefined ? hardMode : uiRef.current.hardMode;
     const mapDef = MAPS[selectedMapId] || MAPS.classic_arena;
     
     const myId = socketRef.current?.id || 'host';
@@ -2036,7 +2050,7 @@ export default function GameCanvas() {
       : [startPos];
 
     for (let i = 0; i < 2; i++) {
-      const spawn = getSafeSpawn(60, playerSpawnsToAvoid, 200);
+      const spawn = getSafeSpawn(mapDef.walls, 60, playerSpawnsToAvoid, 200);
       if (spawn) {
         const angle = Math.random() * Math.PI * 2;
         state.bouncers.push({ id: 'b_' + state.nextEntityId++, x: spawn.x, y: spawn.y, dx: Math.cos(angle), dy: Math.sin(angle), size: 1, radius: 24, speed: ENEMY_SPEED + Math.random() * 20, lastDirChange: performance.now(), lastMultiply: performance.now() });
@@ -2472,7 +2486,7 @@ export default function GameCanvas() {
         const ok = resetGame(isMobileRef.current ? 'mobile' : 'desktop', mapId, hardMode, spawnAssignments);
         if (ok) {
           setMpError(null);
-          setUiState(prev => ({ ...prev, status: 'PLAYING', mapId, hardMode: prev.hardMode }));
+          setUiState(prev => ({ ...prev, status: 'PLAYING', mapId, hardMode }));
         } else {
           setMpError('INVALID START ASSIGNMENT');
         }
@@ -2652,7 +2666,7 @@ export default function GameCanvas() {
             ? (state.multiplayerPlayers[myId].score || 0)
             : uiRef.current.score;
 
-          if (state.spawnersLeft === 0) {
+          if (state.spawnersLeft === 0 && !mpRef.current.roomId) {
             uiRef.current.status = 'VICTORY';
             uiRef.current.score = targetScore;
             setUiState(prev => ({ ...prev, status: 'VICTORY', score: targetScore, spawnersLeft: 0 }));
@@ -2861,6 +2875,41 @@ export default function GameCanvas() {
 
     const handleKeyDown = (e: KeyboardEvent) => {
       const key = e.key.toLowerCase();
+      
+      if (key === 'escape') {
+        if (mpRef.current.roomId) {
+          // Toggle multiplayer menu
+          setMpMenuOpen(prev => {
+            const next = !prev;
+            mpMenuOpenRef.current = next;
+            if (next) {
+              stateRef.current.keys = { w: false, a: false, s: false, d: false };
+            }
+            return next;
+          });
+        } else {
+          if (uiRef.current.status === 'PAUSED' && confirmResignRef.current) return;
+          setUiState(prev => {
+             let newStatus = prev.status;
+             if (prev.status === 'PLAYING') newStatus = 'PAUSED';
+             else if (prev.status === 'PAUSED') newStatus = 'PLAYING';
+             
+             if (newStatus !== prev.status) {
+               uiRef.current = { ...prev, status: newStatus };
+               return uiRef.current;
+             }
+             return prev;
+          });
+        }
+        return;
+      }
+
+      // Silently ignore inputs if multiplayer menu or resignation is active
+      const isLocalMenuOpen = mpRef.current.roomId && (mpMenuOpenRef.current || confirmResignRef.current);
+      if (isLocalMenuOpen) {
+        return;
+      }
+
       if (key === 'w') state.keys.w = true;
       if (key === 'a') state.keys.a = true;
       if (key === 's') state.keys.s = true;
@@ -2905,20 +2954,6 @@ export default function GameCanvas() {
             const cIdx = playerProfileRef.current.colorIdx;
             tryPlaceBuildBlock(currentTime, gridX, gridY, cIdx);
          }
-      }
-      if (key === 'escape') {
-        if (uiRef.current.status === 'PAUSED' && confirmResignRef.current) return;
-        setUiState(prev => {
-           let newStatus = prev.status;
-           if (prev.status === 'PLAYING') newStatus = 'PAUSED';
-           else if (prev.status === 'PAUSED') newStatus = 'PLAYING';
-           
-           if (newStatus !== prev.status) {
-             uiRef.current = { ...prev, status: newStatus };
-             return uiRef.current;
-           }
-           return prev;
-        });
       }
     };
 
@@ -3429,14 +3464,17 @@ export default function GameCanvas() {
 
           let moveX = 0;
           let moveY = 0;
-          if (state.keys.w) moveY -= 1;
-          if (state.keys.s) moveY += 1;
-          if (state.keys.a) moveX -= 1;
-          if (state.keys.d) moveX += 1;
+          const isLocalMenuOpen = mpRef.current.roomId && (mpMenuOpenRef.current || confirmResignRef.current);
+          if (!isLocalMenuOpen) {
+            if (state.keys.w) moveY -= 1;
+            if (state.keys.s) moveY += 1;
+            if (state.keys.a) moveX -= 1;
+            if (state.keys.d) moveX += 1;
 
-          if (state.touches.left.active) {
-            moveX += state.touches.left.dirX;
-            moveY += state.touches.left.dirY;
+            if (state.touches.left.active) {
+              moveX += state.touches.left.dirX;
+              moveY += state.touches.left.dirY;
+            }
           }
 
           const length = Math.sqrt(moveX * moveX + moveY * moveY);
@@ -3515,7 +3553,7 @@ export default function GameCanvas() {
         }
 
         // Handle Build Mode (trailing blocks)
-        if (state.player.build.active) {
+        if (state.player.build.active && !(mpRef.current.roomId && (mpMenuOpenRef.current || confirmResignRef.current))) {
           if (currentTime > state.player.build.endTime) {
              state.player.build.active = false;
           } else {
@@ -3758,36 +3796,89 @@ export default function GameCanvas() {
           const initialSpawners = mapDef.spawners.length;
           
           // Tutorial opening enemy
-          if (state.tutorial.active && !state.tutorial.enemySpawned && state.tutorial.spawnerIndex !== null) {
+          if (state.tutorial.active && !state.tutorial.enemySpawned && state.tutorial.spawnerIndex !== null && !mpRef.current.roomId) {
             state.tutorial.timer += dt * 1000;
             if (state.tutorial.timer > 1500) {
               state.tutorial.enemySpawned = true;
               const tutSpawnerDef = mapDef.spawners[state.tutorial.spawnerIndex];
               const tutSpawner = state.spawners.find(s => s.x === tutSpawnerDef.x && s.y === tutSpawnerDef.y);
               if (tutSpawner) {
-                const angle = Math.random() * Math.PI * 2;
-                const spawnDist = tutSpawner.radius + ENEMY_RADIUS + 10;
-                const spawnX = tutSpawner.x + Math.cos(angle) * spawnDist;
-                const spawnY = tutSpawner.y + Math.sin(angle) * spawnDist;
-                
-                let inWall = false;
-                for (const wall of activeWalls) {
-                  if (spawnX > wall.x - ENEMY_RADIUS && spawnX < wall.x + wall.w + ENEMY_RADIUS &&
-                      spawnY > wall.y - ENEMY_RADIUS && spawnY < wall.y + wall.h + ENEMY_RADIUS) {
-                    inWall = true;
+                let foundSpawn = false;
+                let spawnX = 0;
+                let spawnY = 0;
+
+                const isPosBlocked = (tx: number, ty: number) => {
+                  // check walls
+                  for (const wall of activeWalls) {
+                    if (tx > wall.x - ENEMY_RADIUS && tx < wall.x + wall.w + ENEMY_RADIUS &&
+                        ty > wall.y - ENEMY_RADIUS && ty < wall.y + wall.h + ENEMY_RADIUS) {
+                      return true;
+                    }
+                  }
+                  // check other spawners
+                  for (const sp of state.spawners) {
+                    const dx = tx - sp.x;
+                    const dy = ty - sp.y;
+                    if (Math.sqrt(dx*dx + dy*dy) < (sp.radius + ENEMY_RADIUS + 5)) {
+                      return true;
+                    }
+                  }
+                  // check arena boundary
+                  const border = ENEMY_RADIUS + 10;
+                  if (tx < border || tx > MAP_WIDTH - border || ty < border || ty > MAP_HEIGHT - border) {
+                    return true;
+                  }
+                  return false;
+                };
+
+                // 1. Retry with up to 100 random angles/distances
+                for (let i = 0; i < 100; i++) {
+                  const angle = Math.random() * Math.PI * 2;
+                  const spawnDist = tutSpawner.radius + ENEMY_RADIUS + 10 + Math.random() * 80;
+                  const tx = tutSpawner.x + Math.cos(angle) * spawnDist;
+                  const ty = tutSpawner.y + Math.sin(angle) * spawnDist;
+                  if (!isPosBlocked(tx, ty)) {
+                    spawnX = tx;
+                    spawnY = ty;
+                    foundSpawn = true;
                     break;
                   }
                 }
-                if (!inWall) {
-                  state.enemies.push({ 
-                    id: 'e_' + state.nextEntityId++, 
-                    x: spawnX, y: spawnY, 
-                    radius: ENEMY_RADIUS, 
-                    lastShoot: currentTime, 
-                    speed: ENEMY_SPEED 
-                  });
-                  spawnParticles(tutSpawner.x, tutSpawner.y, state.hardMode ? '#ff3300' : '#ff00ff', 10);
+
+                // 2. If random attempts fail, perform a deterministic grid search around that spawner to guarantee the enemy is successfully created.
+                if (!foundSpawn) {
+                  const step = 10;
+                  const maxSearchDist = tutSpawner.radius + ENEMY_RADIUS + 150;
+                  outerLoop:
+                  for (let d = tutSpawner.radius + ENEMY_RADIUS + 10; d <= maxSearchDist; d += step) {
+                    for (let angleDeg = 0; angleDeg < 360; angleDeg += 10) {
+                      const angle = (angleDeg * Math.PI) / 180;
+                      const tx = tutSpawner.x + Math.cos(angle) * d;
+                      const ty = tutSpawner.y + Math.sin(angle) * d;
+                      if (!isPosBlocked(tx, ty)) {
+                        spawnX = tx;
+                        spawnY = ty;
+                        foundSpawn = true;
+                        break outerLoop;
+                      }
+                    }
+                  }
                 }
+
+                // If even the grid search somehow fails (extremely unlikely), fall back to spawner center with a small offset
+                if (!foundSpawn) {
+                  spawnX = tutSpawner.x;
+                  spawnY = tutSpawner.y + tutSpawner.radius + ENEMY_RADIUS + 10;
+                }
+
+                state.enemies.push({ 
+                  id: 'e_' + state.nextEntityId++, 
+                  x: spawnX, y: spawnY, 
+                  radius: ENEMY_RADIUS, 
+                  lastShoot: currentTime, 
+                  speed: ENEMY_SPEED 
+                });
+                spawnParticles(tutSpawner.x, tutSpawner.y, state.hardMode ? '#ff3300' : '#ff00ff', 10);
               }
             }
           }
@@ -3799,7 +3890,8 @@ export default function GameCanvas() {
             effectiveRate = state.enemySpawnRate;
           } else {
             // Normal Mode: Spawning slows down as spawners are destroyed
-            effectiveRate = state.enemySpawnRate * (initialSpawners / state.spawners.length);
+            const currentSpawnersCount = Math.max(1, state.spawners.length);
+            effectiveRate = state.enemySpawnRate * (initialSpawners / currentSpawnersCount);
           }
           
           if (currentTime - state.lastEnemySpawn > effectiveRate) {
@@ -4144,7 +4236,8 @@ export default function GameCanvas() {
           }
         }
 
-        if (isShooting && !isOpeningProtectionActiveLocal(currentTime) && currentTime - state.player.lastShoot > FIRE_RATE) {
+        const isLocalMenuOpen = mpRef.current.roomId && (mpMenuOpenRef.current || confirmResignRef.current);
+        if (isShooting && !isOpeningProtectionActiveLocal(currentTime) && !isLocalMenuOpen && currentTime - state.player.lastShoot > FIRE_RATE) {
           state.player.lastShoot = currentTime;
           
           let bvx = 0;
@@ -4679,14 +4772,14 @@ export default function GameCanvas() {
                       let newBlocks = prev.blocks + 3; // Bonus blocks
                       uiRef.current = { ...prev, score: newScore, blocks: newBlocks, spawnersLeft: state.spawners.length };
                       // Check win condition
-                      if (state.spawners.length === 0) {
+                      if (state.spawners.length === 0 && !mpRef.current.roomId) {
                          uiRef.current.status = 'VICTORY';
                       }
                       return uiRef.current;
                     });
                   } else if (state.multiplayerPlayers[bOwner]) {
                     state.multiplayerPlayers[bOwner].score = (state.multiplayerPlayers[bOwner].score || 0) + pts;
-                    if (state.spawners.length === 0) {
+                    if (state.spawners.length === 0 && !mpRef.current.roomId) {
                       uiRef.current.status = 'VICTORY';
                       setUiState(prev => ({ ...prev, status: 'VICTORY', spawnersLeft: 0 }));
                     }
@@ -6778,6 +6871,55 @@ export default function GameCanvas() {
               </div>
             )}
 
+            {mpState.roomId && mpMenuOpen && !confirmResign && (
+              <div 
+                className="absolute inset-0 bg-black/[0.78] pointer-events-auto z-[70] flex flex-col items-center justify-center backdrop-blur-sm select-none"
+              >
+                <div className="flex flex-col items-center">
+                  <h2 
+                    className="text-[48px] md:text-[68px] font-black text-[#FBBF24] uppercase drop-shadow-[0_0_10px_rgba(251,191,36,0.28)] leading-none"
+                    style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}
+                  >
+                    OPTIONS
+                  </h2>
+                  <p className="text-[#F5F7FF]/55 font-mono text-[12px] md:text-[14px] tracking-[0.25em] uppercase mt-3">
+                    MATCH ACTIVE
+                  </p>
+                </div>
+                
+                <div className="flex flex-col gap-3 mt-11 w-[calc(100vw-48px)] max-w-[280px]">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setMpMenuOpen(false);
+                      mpMenuOpenRef.current = false;
+                    }}
+                    className="h-12 w-full bg-[#FBBF24] border-2 border-[#FBBF24] text-[#080A0F] font-mono font-black tracking-widest uppercase text-xs sm:text-sm shadow-[0_0_6px_rgba(251,191,36,0.30),0_0_14px_rgba(251,191,36,0.12)] hover:bg-[#FBBF24]/90 hover:border-[#FBBF24]/90 active:scale-[0.98] transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#FBBF24] focus-visible:ring-offset-black"
+                  >
+                    RESUME
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleSaveMatch();
+                    }}
+                    className="h-12 w-full bg-[#8B5CF6]/[0.12] border-2 border-[#8B5CF6] text-[#C4B5FD] hover:bg-[#8B5CF6]/20 font-mono font-black tracking-widest uppercase text-xs sm:text-sm shadow-[0_0_8px_rgba(139,92,246,0.15)] active:scale-[0.98] transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#8B5CF6] focus-visible:ring-offset-black"
+                  >
+                    DOWNLOAD SAVE FILE
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setConfirmResign(true);
+                    }}
+                    className="h-12 w-full bg-transparent border-2 border-[#FF003C] text-[#FF003C] hover:bg-[#FF003C]/10 font-mono font-black tracking-widest uppercase text-xs sm:text-sm active:scale-[0.98] transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#FF003C] focus-visible:ring-offset-black"
+                  >
+                    QUIT TO MENU
+                  </button>
+                </div>
+              </div>
+            )}
+
             {confirmResign && (
               <div className="absolute inset-0 bg-black/80 pointer-events-auto z-[70] flex flex-col items-center justify-center backdrop-blur-md">
                  <h2 className="text-4xl sm:text-6xl md:text-7xl font-black text-[#ff003c] tracking-tighter drop-shadow-[0_0_15px_rgba(255,0,60,0.8)] mb-8 text-center px-4" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>
@@ -6788,10 +6930,12 @@ export default function GameCanvas() {
                      onPointerDown={(e) => {
                        e.stopPropagation();
                        setConfirmResign(false);
+                       setMpMenuOpen(false);
+                       mpMenuOpenRef.current = false;
                        stateRef.current.shake = 20;
                        if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
                        setMpState(prev => ({ ...prev, roomId: null, isHost: false, error: '' }));
-                       setUiState(prev => ({ ...prev, status: 'GAME_OVER' }));
+                       setUiState(prev => ({ ...prev, status: 'MENU' }));
                      }}
                      className="px-8 py-4 bg-[#0a0000] border-2 border-[#ff003c] text-[#ff003c] font-black tracking-[0.2em] text-xl sm:text-2xl uppercase transition-all duration-200 hover:bg-[#ff003c] hover:text-white hover:shadow-[0_0_30px_rgba(255,0,60,0.8)] active:scale-95"
                    >
@@ -6836,7 +6980,8 @@ export default function GameCanvas() {
                            aria-disabled={!isReady}
                            onPointerDown={(e) => {
                              e.stopPropagation();
-                             if (!isReady) return;
+                             const isLocalMenuOpen = mpRef.current.roomId && (mpMenuOpenRef.current || confirmResignRef.current);
+                             if (!isReady || isLocalMenuOpen) return;
                              const currentTime = performance.now();
                              if (toolKey === 'special') {
                                if (!stateRef.current.player.dash.active && (stateRef.current.player.dash.endTime === 0 || currentTime - stateRef.current.player.dash.endTime >= DASH_COOLDOWN)) {

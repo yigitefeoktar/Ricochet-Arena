@@ -28,6 +28,7 @@ async function startServer() {
   interface RoomInfo {
     roomId: string;
     players: Player[];
+    lastHostStateTime?: number; // Server-side tracker of last valid host game state emit
   }
 
   const rooms = new Map<string, RoomInfo>();
@@ -45,18 +46,29 @@ async function startServer() {
     };
 
     const handlePlayerLeave = (roomId: string, socketId: string) => {
-      const room = rooms.get(roomId);
+      const roomIdUpper = roomId.trim().toUpperCase();
+      const room = rooms.get(roomIdUpper);
       if (room) {
         room.players = room.players.filter(p => p.id !== socketId);
         if (room.players.length === 0) {
-          rooms.delete(roomId);
+          rooms.delete(roomIdUpper);
         } else {
-          // If the host left, assign the first player as the new host
-          if (!room.players.some(p => p.isHost)) {
+          // If the host left or no host is present, assign the first player as the new host
+          let foundHost = false;
+          room.players.forEach(p => {
+            if (p.isHost) {
+              if (foundHost) {
+                p.isHost = false; // Never allow multiple hosts
+              } else {
+                foundHost = true;
+              }
+            }
+          });
+          if (!foundHost && room.players.length > 0) {
             room.players[0].isHost = true;
           }
-          io.to(roomId).emit("lobby_players", room.players);
-          io.to(roomId).emit("player_left", socketId);
+          io.to(roomIdUpper).emit("lobby_players", room.players);
+          io.to(roomIdUpper).emit("player_left", socketId);
         }
       }
     };
@@ -88,7 +100,8 @@ async function startServer() {
 
       rooms.set(roomId, {
         roomId,
-        players: [hostPlayer]
+        players: [hostPlayer],
+        lastHostStateTime: Date.now()
       });
 
       io.to(roomId).emit("lobby_players", [hostPlayer]);
@@ -98,7 +111,11 @@ async function startServer() {
     socket.on("join_room", (roomId, arg2, arg3) => {
       const cb = typeof arg2 === "function" ? arg2 : arg3;
       const clientData = typeof arg2 === "object" ? arg2 : { name: "PLAYER" };
-      const roomIdUpper = roomId.toUpperCase();
+      if (!roomId || typeof roomId !== "string") {
+        if (cb) cb({ success: false, error: "Invalid Room ID" });
+        return;
+      }
+      const roomIdUpper = roomId.trim().toUpperCase();
       const ioRoom = io.sockets.adapter.rooms.get(roomIdUpper);
 
       if (ioRoom) {
@@ -106,7 +123,7 @@ async function startServer() {
 
         let room = rooms.get(roomIdUpper);
         if (!room) {
-          room = { roomId: roomIdUpper, players: [] };
+          room = { roomId: roomIdUpper, players: [], lastHostStateTime: Date.now() };
           rooms.set(roomIdUpper, room);
         }
 
@@ -149,8 +166,8 @@ async function startServer() {
     });
     
     socket.on("update_profile", (roomId, data) => {
-      if (!roomId || !data) return;
-      const roomIdUpper = roomId.toUpperCase();
+      if (!roomId || typeof roomId !== "string" || !data) return;
+      const roomIdUpper = roomId.trim().toUpperCase();
       const room = rooms.get(roomIdUpper);
       if (room) {
         const player = room.players.find(p => p.id === socket.id);
@@ -171,9 +188,10 @@ async function startServer() {
     });
 
     socket.on("leave_room", (roomId) => {
-      if (!roomId) return;
-      socket.leave(roomId);
-      handlePlayerLeave(roomId, socket.id);
+      if (!roomId || typeof roomId !== "string") return;
+      const roomIdUpper = roomId.trim().toUpperCase();
+      socket.leave(roomIdUpper);
+      handlePlayerLeave(roomIdUpper, socket.id);
     });
 
     socket.on("disconnecting", () => {
@@ -187,41 +205,106 @@ async function startServer() {
     // Host sends complete game state strictly for syncing visuals for clients
     socket.on("host_game_state", (roomId, state) => {
       if (!roomId || typeof roomId !== "string") return;
-      const roomIdUpper = roomId.toUpperCase();
+      const roomIdUpper = roomId.trim().toUpperCase();
       const room = rooms.get(roomIdUpper);
       if (!room) return;
       const player = room.players.find(p => p.id === socket.id);
       if (!player || !player.isHost) return;
+      
+      // Update server state timing tracker
+      room.lastHostStateTime = Date.now();
+      
       socket.to(roomIdUpper).volatile.emit("game_state", state);
     });
 
     // Client sends input states (keyboard/mouse) for movement
     socket.on("client_input", (roomId, input) => {
-      if (!roomId) return;
-      socket.to(roomId).volatile.emit("client_input", socket.id, input);
+      if (!roomId || typeof roomId !== "string") return;
+      const roomIdUpper = roomId.trim().toUpperCase();
+      const room = rooms.get(roomIdUpper);
+      if (!room) return;
+      
+      // Verify sender is in player list
+      const player = room.players.find(p => p.id === socket.id);
+      if (!player) return;
+
+      // Reject non-finite coordinate values
+      if (input) {
+        if (input.x !== undefined && (typeof input.x !== "number" || !Number.isFinite(input.x))) return;
+        if (input.y !== undefined && (typeof input.y !== "number" || !Number.isFinite(input.y))) return;
+      }
+
+      // Send gameplay input strictly to the room's host
+      const host = room.players.find(p => p.isHost);
+      if (host && host.id !== socket.id) {
+        io.to(host.id).volatile.emit("client_input", socket.id, input);
+      }
     });
 
     // Claim room host when current host is inactive/throttled
     socket.on("claim_host", (roomId) => {
-      if (!roomId) return;
-      const roomIdUpper = roomId.toUpperCase();
+      if (!roomId || typeof roomId !== "string") return;
+      const roomIdUpper = roomId.trim().toUpperCase();
       const room = rooms.get(roomIdUpper);
-      if (room) {
-        // Demote existing hosts
+      if (!room) return;
+
+      // Validate the claimant is currently inside the room
+      const claimant = room.players.find(p => p.id === socket.id);
+      if (!claimant) return;
+
+      // If claimant is already host, ignore
+      if (claimant.isHost) return;
+
+      const currentHost = room.players.find(p => p.isHost);
+      const now = Date.now();
+
+      // Permit claim only when host is absent or hasn't emitted state for 1000ms
+      const isHostAbsent = !currentHost || !io.sockets.sockets.has(currentHost.id);
+      const stoppedStateBroadcast = room.lastHostStateTime !== undefined && (now - room.lastHostStateTime > 1000);
+
+      if (isHostAbsent || stoppedStateBroadcast) {
+        // Demote other hosts completely
         room.players.forEach(p => p.isHost = false);
-        // Elevate the claimant
-        const player = room.players.find(p => p.id === socket.id);
-        if (player) {
-          player.isHost = true;
-        }
+        // Elevate claimant
+        claimant.isHost = true;
+        
+        // Reset last state time to now so consecutive simultaneous claims are safely throttled/resolved
+        room.lastHostStateTime = now;
+
         io.to(roomIdUpper).emit("lobby_players", room.players);
       }
     });
 
     // Client interaction triggers (shoot, build, dash)
     socket.on("client_action", (roomId, action) => {
-      if (!roomId) return;
-      socket.to(roomId).emit("client_action", socket.id, action);
+      if (!roomId || typeof roomId !== "string" || !action) return;
+      const roomIdUpper = roomId.trim().toUpperCase();
+      const room = rooms.get(roomIdUpper);
+      if (!room) return;
+
+      // Verify sender is in the player roster
+      const player = room.players.find(p => p.id === socket.id);
+      if (!player) return;
+
+      // Reject unknown action types
+      const knownActionTypes = ["lobby_update", "lobby_request_sync", "shoot", "build", "build_remove", "special"];
+      if (typeof action.type !== "string" || !knownActionTypes.includes(action.type)) return;
+
+      // Reject non-finite coordinates or directions
+      if (action.x !== undefined && (typeof action.x !== "number" || !Number.isFinite(action.x))) return;
+      if (action.y !== undefined && (typeof action.y !== "number" || !Number.isFinite(action.y))) return;
+      if (action.dx !== undefined && (typeof action.dx !== "number" || !Number.isFinite(action.dx))) return;
+      if (action.dy !== undefined && (typeof action.dy !== "number" || !Number.isFinite(action.dy))) return;
+
+      // Lobby actions are broadcast to all members, gameplay actions go strictly to the host
+      if (action.type === "lobby_update" || action.type === "lobby_request_sync") {
+        socket.to(roomIdUpper).emit("client_action", socket.id, action);
+      } else {
+        const host = room.players.find(p => p.isHost);
+        if (host && host.id !== socket.id) {
+          io.to(host.id).emit("client_action", socket.id, action);
+        }
+      }
     });
 
     // Host explicitly starts the game to sync all clients
