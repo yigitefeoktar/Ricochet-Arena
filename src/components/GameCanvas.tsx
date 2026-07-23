@@ -813,12 +813,12 @@ function distSqLinePoint(v: {x:number, y:number}, w: {x:number, y:number}, p: {x
   return (p.x - (v.x + t * (w.x - v.x))) ** 2 + (p.y - (v.y + t * (w.y - v.y))) ** 2;
 }
 
-function getSafeSpawn(minDistToWalls = 50) {
+function getSafeSpawn(minDistToWalls = 50, avoidPositions: { x: number; y: number }[] = [], minAvoidDist = 180) {
   let spawnX = 500;
   let spawnY = 500;
   let validSpawn = false;
   let attempts = 0;
-  while (!validSpawn && attempts < 100) {
+  while (!validSpawn && attempts < 200) {
     spawnX = 100 + Math.random() * (MAP_WIDTH - 200);
     spawnY = 100 + Math.random() * (MAP_HEIGHT - 200);
     let inWall = false;
@@ -827,6 +827,14 @@ function getSafeSpawn(minDistToWalls = 50) {
           spawnY > wall.y - minDistToWalls && spawnY < wall.y + wall.h + minDistToWalls) {
         inWall = true;
         break;
+      }
+    }
+    if (!inWall && avoidPositions.length > 0) {
+      for (const pos of avoidPositions) {
+        if (Math.hypot(spawnX - pos.x, spawnY - pos.y) < minAvoidDist) {
+          inWall = true;
+          break;
+        }
       }
     }
     if (!inWall) validSpawn = true;
@@ -906,6 +914,170 @@ function getValidatedFallbackSpawn(mapDef: MapDefinition): {x: number, y: number
   }
 
   throw new Error(`No valid player spawn position exists anywhere in the arena for map: ${mapDef.name}`);
+}
+
+function generateMultiplayerSpawnAssignments(
+  playerIds: string[],
+  mapDef: MapDefinition,
+  walls: { x: number; y: number; w: number; h: number }[]
+): Record<string, { x: number; y: number }> {
+  if (!playerIds || playerIds.length === 0) return {};
+
+  const shuffledIds = [...playerIds];
+  for (let i = shuffledIds.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [shuffledIds[i], shuffledIds[j]] = [shuffledIds[j], shuffledIds[i]];
+  }
+
+  const N = shuffledIds.length;
+  const activeWallsList = walls || mapDef.walls || [];
+  const spawnersList = mapDef.spawners || [];
+
+  const testCandidateFormation = (
+    cx: number,
+    cy: number,
+    radius: number,
+    startAngle: number
+  ): { x: number; y: number }[] | null => {
+    const slots: { x: number; y: number }[] = [];
+
+    for (let i = 0; i < N; i++) {
+      const angle = N === 1 ? 0 : startAngle + (2 * Math.PI * i) / N;
+      const sx = N === 1 ? cx : cx + radius * Math.cos(angle);
+      const sy = N === 1 ? cy : cy + radius * Math.sin(angle);
+
+      const padding = PLAYER_RADIUS + 30;
+      if (
+        sx < padding ||
+        sx > MAP_WIDTH - padding ||
+        sy < padding ||
+        sy > MAP_HEIGHT - padding
+      ) {
+        return null;
+      }
+
+      for (const wall of activeWallsList) {
+        if (
+          sx > wall.x - padding &&
+          sx < wall.x + wall.w + padding &&
+          sy > wall.y - padding &&
+          sy < wall.y + wall.h + padding
+        ) {
+          return null;
+        }
+      }
+
+      for (const spawner of spawnersList) {
+        const dx = sx - spawner.x;
+        const dy = sy - spawner.y;
+        if (Math.hypot(dx, dy) < 160) {
+          return null;
+        }
+      }
+
+      slots.push({ x: Math.round(sx), y: Math.round(sy) });
+    }
+
+    for (let i = 0; i < N; i++) {
+      for (let j = i + 1; j < N; j++) {
+        const dx = slots[i].x - slots[j].x;
+        const dy = slots[i].y - slots[j].y;
+        if (Math.hypot(dx, dy) < 160) {
+          return null;
+        }
+      }
+    }
+
+    for (let i = 0; i < N; i++) {
+      if (N > 1 && radius > 0) {
+        for (const wall of activeWallsList) {
+          if (
+            lineIntersectsRect(
+              slots[i].x,
+              slots[i].y,
+              cx,
+              cy,
+              wall.x,
+              wall.y,
+              wall.w,
+              wall.h
+            )
+          ) {
+            return null;
+          }
+        }
+      }
+
+      for (let j = i + 1; j < N; j++) {
+        for (const wall of activeWallsList) {
+          if (
+            lineIntersectsRect(
+              slots[i].x,
+              slots[i].y,
+              slots[j].x,
+              slots[j].y,
+              wall.x,
+              wall.y,
+              wall.w,
+              wall.h
+            )
+          ) {
+            return null;
+          }
+        }
+      }
+    }
+
+    return slots;
+  };
+
+  const spacingCandidates = [200, 180, 160];
+
+  for (const spacing of spacingCandidates) {
+    const radius = N <= 1 ? 0 : spacing / (2 * Math.sin(Math.PI / N));
+
+    for (let attempt = 0; attempt < 300; attempt++) {
+      const margin = 100 + radius;
+      const cx = margin + Math.random() * Math.max(1, MAP_WIDTH - 2 * margin);
+      const cy = margin + Math.random() * Math.max(1, MAP_HEIGHT - 2 * margin);
+      const rotation = Math.random() * Math.PI * 2;
+
+      const slots = testCandidateFormation(cx, cy, radius, rotation);
+      if (slots) {
+        const assignments: Record<string, { x: number; y: number }> = {};
+        for (let i = 0; i < N; i++) {
+          assignments[shuffledIds[i]] = slots[i];
+        }
+        return assignments;
+      }
+    }
+
+    const gridStep = 30;
+    const margin = 60 + radius;
+    const anglesToTry = [0, Math.PI / 4, Math.PI / 2, (3 * Math.PI) / 4];
+
+    for (let cx = margin; cx <= MAP_WIDTH - margin; cx += gridStep) {
+      for (let cy = margin; cy <= MAP_HEIGHT - margin; cy += gridStep) {
+        for (const rotation of anglesToTry) {
+          const slots = testCandidateFormation(cx, cy, radius, rotation);
+          if (slots) {
+            const assignments: Record<string, { x: number; y: number }> = {};
+            for (let i = 0; i < N; i++) {
+              assignments[shuffledIds[i]] = slots[i];
+            }
+            return assignments;
+          }
+        }
+      }
+    }
+  }
+
+  const fallbackAssignments: Record<string, { x: number; y: number }> = {};
+  for (let i = 0; i < N; i++) {
+    const pos = getValidatedFallbackSpawn(mapDef);
+    fallbackAssignments[shuffledIds[i]] = pos;
+  }
+  return fallbackAssignments;
 }
 
 function getPlayerSpawn(mapDef: MapDefinition): { pos: { x: number; y: number }, tutorialSpawnerIndex: number | null } {
@@ -1458,11 +1630,33 @@ export default function GameCanvas() {
   };
 
   const handleMultiplayerRestart = () => {
+    const myId = socketRef.current?.id || 'host';
+    const playerIds = [myId];
+    for (const pid in stateRef.current.multiplayerPlayers) {
+      if (pid !== myId && !playerIds.includes(pid)) {
+        playerIds.push(pid);
+      }
+    }
+    for (const pid in stateRef.current.matchPlayers) {
+      if (pid !== myId && !playerIds.includes(pid) && !stateRef.current.matchPlayers[pid].isDisconnected) {
+        playerIds.push(pid);
+      }
+    }
+    for (const pid in lobbyPlayers) {
+      if (pid !== myId && !playerIds.includes(pid)) {
+        playerIds.push(pid);
+      }
+    }
+
+    const mapDef = MAPS[uiState.mapId] || MAPS.classic_arena;
+    const spawnAssignments = generateMultiplayerSpawnAssignments(playerIds, mapDef, mapDef.walls);
+
     socketRef.current?.emit('start_game', mpRef.current.roomId, {
       mapId: uiState.mapId,
-      hardMode: true
+      hardMode: true,
+      spawnAssignments
     });
-    resetGame(isMobileRef.current ? 'mobile' : 'desktop', uiState.mapId, uiState.hardMode);
+    resetGame(isMobileRef.current ? 'mobile' : 'desktop', uiState.mapId, uiState.hardMode, spawnAssignments);
     setUiState(prev => ({ ...prev, status: 'PLAYING' }));
   };
 
@@ -1676,7 +1870,12 @@ export default function GameCanvas() {
     });
   };
 
-  const resetGame = (deviceType?: 'desktop' | 'mobile', mapId?: string, hardMode?: boolean) => {
+  const resetGame = (
+    deviceType?: 'desktop' | 'mobile',
+    mapId?: string,
+    hardMode?: boolean,
+    spawnAssignments?: Record<string, { x: number; y: number }>
+  ) => {
     if (pulseTimeoutRef.current) clearTimeout(pulseTimeoutRef.current);
     setPulseSpawnerCounter(false);
     const dType = deviceType || uiRef.current.deviceType;
@@ -1690,10 +1889,17 @@ export default function GameCanvas() {
     state.hardMode = isHardMode;
     state.nextEntityId = 1;
     
+    const myId = socketRef.current?.id || 'host';
     let startPos = { x: 500, y: 500 };
     let tutIdx: number | null = null;
     if (isMultiplayer) {
-      startPos = getSafeSpawn(100);
+      if (spawnAssignments && spawnAssignments[myId]) {
+        startPos = spawnAssignments[myId];
+      } else if (spawnAssignments && Object.keys(spawnAssignments).length > 0) {
+        startPos = Object.values(spawnAssignments)[0];
+      } else {
+        startPos = getSafeSpawn(100);
+      }
     } else {
       const pSpawn = getPlayerSpawn(mapDef);
       startPos = pSpawn.pos;
@@ -1723,8 +1929,13 @@ export default function GameCanvas() {
     state.enemies = [];
     state.bouncers = [];
     state.zones = [];
+
+    const playerSpawnsToAvoid = isMultiplayer && spawnAssignments
+      ? Object.values(spawnAssignments)
+      : [startPos];
+
     for (let i = 0; i < 2; i++) {
-      const spawn = getSafeSpawn(60);
+      const spawn = getSafeSpawn(60, playerSpawnsToAvoid, 200);
       const angle = Math.random() * Math.PI * 2;
       state.bouncers.push({ id: 'b_' + state.nextEntityId++, x: spawn.x, y: spawn.y, dx: Math.cos(angle), dy: Math.sin(angle), size: 1, radius: 24, speed: ENEMY_SPEED + Math.random() * 20, lastDirChange: performance.now(), lastMultiply: performance.now() });
     }
@@ -1758,7 +1969,6 @@ export default function GameCanvas() {
       mappedClientDeadlineRef.current = null;
       setCurrentMatchPhase('PLAYING');
 
-      const myId = socketRef.current?.id || 'host';
       const initialMatchPlayers: Record<string, { id: string, name: string, colorIdx: number, score: number, isDead: boolean, isDisconnected?: boolean }> = {};
 
       initialMatchPlayers[myId] = {
@@ -1769,29 +1979,57 @@ export default function GameCanvas() {
         isDead: false,
       };
 
-      for (const pid in state.multiplayerPlayers) {
-        if (state.multiplayerPlayers[pid]) {
-          state.multiplayerPlayers[pid].score = 0;
-          state.multiplayerPlayers[pid].isDead = false;
-          initialMatchPlayers[pid] = {
-            id: pid,
-            name: state.multiplayerPlayers[pid].name || 'PLAYER',
-            colorIdx: state.multiplayerPlayers[pid].colorIdx || 0,
-            score: 0,
-            isDead: false,
-          };
-        }
-      }
+      if (spawnAssignments) {
+        state.multiplayerPlayers = {};
+        for (const pid in spawnAssignments) {
+          if (pid !== myId) {
+            const assignedPos = spawnAssignments[pid];
+            const existingColor = lobbyPlayers[pid]?.colorIdx ?? state.matchPlayers[pid]?.colorIdx ?? 0;
+            const existingName = lobbyPlayers[pid]?.name ?? state.matchPlayers[pid]?.name ?? 'PLAYER';
 
-      for (const lpid in lobbyPlayers) {
-        if (!initialMatchPlayers[lpid]) {
-          initialMatchPlayers[lpid] = {
-            id: lpid,
-            name: lobbyPlayers[lpid].name || 'PLAYER',
-            colorIdx: lobbyPlayers[lpid].colorIdx || 0,
-            score: 0,
-            isDead: false,
-          };
+            state.multiplayerPlayers[pid] = {
+              x: assignedPos.x,
+              y: assignedPos.y,
+              radius: PLAYER_RADIUS,
+              isDash: false,
+              name: existingName,
+              colorIdx: existingColor,
+              isDead: false
+            };
+
+            initialMatchPlayers[pid] = {
+              id: pid,
+              name: existingName,
+              colorIdx: existingColor,
+              score: 0,
+              isDead: false,
+            };
+          }
+        }
+      } else {
+        for (const pid in state.multiplayerPlayers) {
+          if (state.multiplayerPlayers[pid]) {
+            state.multiplayerPlayers[pid].isDead = false;
+            initialMatchPlayers[pid] = {
+              id: pid,
+              name: state.multiplayerPlayers[pid].name || 'PLAYER',
+              colorIdx: state.multiplayerPlayers[pid].colorIdx || 0,
+              score: 0,
+              isDead: false,
+            };
+          }
+        }
+
+        for (const lpid in lobbyPlayers) {
+          if (!initialMatchPlayers[lpid]) {
+            initialMatchPlayers[lpid] = {
+              id: lpid,
+              name: lobbyPlayers[lpid].name || 'PLAYER',
+              colorIdx: lobbyPlayers[lpid].colorIdx || 0,
+              score: 0,
+              isDead: false,
+            };
+          }
         }
       }
 
@@ -2087,7 +2325,8 @@ export default function GameCanvas() {
       if (!mpRef.current.isHost) {
         const mapId = config?.mapId || 'medium';
         const hardMode = !!config?.hardMode;
-        resetGame(isMobileRef.current ? 'mobile' : 'desktop', mapId, hardMode);
+        const spawnAssignments = config?.spawnAssignments;
+        resetGame(isMobileRef.current ? 'mobile' : 'desktop', mapId, hardMode, spawnAssignments);
         // setUiState is mostly handled by resetGame, but let's ensure it's PLAYING
         setUiState(prev => ({ ...prev, status: 'PLAYING', mapId, hardMode: prev.hardMode }));
       }
@@ -6069,12 +6308,23 @@ export default function GameCanvas() {
                   {mpState.isHost ? (
                     <button
                       onClick={() => {
-                         socketRef.current?.emit('start_game', mpState.roomId, {
-                           mapId: uiState.mapId,
-                           hardMode: true
-                         });
-                         resetGame(isMobileRef.current ? 'mobile' : 'desktop', uiState.mapId, uiState.hardMode);
-                         setUiState(prev => ({ ...prev, status: 'PLAYING' }));
+                        const myId = socketRef.current?.id || 'host';
+                        const playerIds = [myId];
+                        for (const pid in lobbyPlayers) {
+                          if (pid !== myId && !playerIds.includes(pid)) {
+                            playerIds.push(pid);
+                          }
+                        }
+                        const mapDef = MAPS[uiState.mapId] || MAPS.classic_arena;
+                        const spawnAssignments = generateMultiplayerSpawnAssignments(playerIds, mapDef, mapDef.walls);
+
+                        socketRef.current?.emit('start_game', mpState.roomId, {
+                          mapId: uiState.mapId,
+                          hardMode: true,
+                          spawnAssignments
+                        });
+                        resetGame(isMobileRef.current ? 'mobile' : 'desktop', uiState.mapId, uiState.hardMode, spawnAssignments);
+                        setUiState(prev => ({ ...prev, status: 'PLAYING' }));
                       }}
                       className="w-full py-4 bg-[#ffcc00] hover:bg-white text-black font-black tracking-widest transition-all duration-200 uppercase text-sm cursor-pointer shadow-[3px_3px_0_rgba(255,204,0,0.15)] hover:shadow-[5px_5px_0_#fff] active:translate-x-1 active:translate-y-1 active:shadow-none mb-2"
                     >
