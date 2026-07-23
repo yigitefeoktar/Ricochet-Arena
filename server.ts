@@ -186,8 +186,13 @@ async function startServer() {
 
     // Host sends complete game state strictly for syncing visuals for clients
     socket.on("host_game_state", (roomId, state) => {
-      if (!roomId) return;
-      socket.to(roomId).volatile.emit("game_state", state);
+      if (!roomId || typeof roomId !== "string") return;
+      const roomIdUpper = roomId.toUpperCase();
+      const room = rooms.get(roomIdUpper);
+      if (!room) return;
+      const player = room.players.find(p => p.id === socket.id);
+      if (!player || !player.isHost) return;
+      socket.to(roomIdUpper).volatile.emit("game_state", state);
     });
 
     // Client sends input states (keyboard/mouse) for movement

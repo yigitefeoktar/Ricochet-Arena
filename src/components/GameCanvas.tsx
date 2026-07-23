@@ -1771,51 +1771,33 @@ export default function GameCanvas() {
 
     const hostId = socketRef.current?.id || 'host';
 
-    // Synchronize host player state
+    // Synchronize host player state strictly if in match roster snapshot
     if (state.matchPlayers[hostId]) {
       state.matchPlayers[hostId].score = uiRef.current.score || 0;
       state.matchPlayers[hostId].isDead = (uiRef.current.status === 'GAME_OVER');
-    } else {
-      state.matchPlayers[hostId] = {
-        id: hostId,
-        name: playerProfileRef.current.name || 'PLAYER 1',
-        colorIdx: playerProfileRef.current.colorIdx || 0,
-        score: uiRef.current.score || 0,
-        isDead: (uiRef.current.status === 'GAME_OVER')
-      };
     }
 
-    // Synchronize remote players state
+    // Synchronize remote players state strictly if in match roster snapshot
     for (const pid in state.multiplayerPlayers) {
       const mpP = state.multiplayerPlayers[pid];
-      if (mpP) {
-        if (state.matchPlayers[pid]) {
-          state.matchPlayers[pid].score = Math.max(state.matchPlayers[pid].score || 0, mpP.score || 0);
-          state.matchPlayers[pid].isDead = state.matchPlayers[pid].isDead || !!mpP.isDead;
-        } else {
-          state.matchPlayers[pid] = {
-            id: pid,
-            name: mpP.name || 'PLAYER',
-            colorIdx: mpP.colorIdx || 0,
-            score: mpP.score || 0,
-            isDead: !!mpP.isDead
-          };
-        }
+      if (mpP && state.matchPlayers[pid]) {
+        state.matchPlayers[pid].score = Math.max(state.matchPlayers[pid].score || 0, mpP.score || 0);
+        state.matchPlayers[pid].isDead = state.matchPlayers[pid].isDead || !!mpP.isDead;
       }
     }
 
     type MatchPlayer = { id: string; name: string; colorIdx: number; score: number; isDead: boolean; isDisconnected?: boolean };
     const allMatchPlayers: MatchPlayer[] = Object.values(state.matchPlayers) as MatchPlayer[];
     const alivePlayers = allMatchPlayers.filter(p => !p.isDead);
-    const eliminatedPlayers = allMatchPlayers.filter(p => p.isDead);
 
-    const getSortedMatchPlayers = (): MatchPlayer[] => {
-      return [...allMatchPlayers].sort((a, b) => {
+    const getBestPlayer = (players: MatchPlayer[]): MatchPlayer | null => {
+      if (players.length === 0) return null;
+      return [...players].sort((a, b) => {
         if (b.score !== a.score) {
           return b.score - a.score;
         }
         return a.id.localeCompare(b.id);
-      });
+      })[0];
     };
 
     const previousPhase = state.matchPhase;
@@ -1823,15 +1805,14 @@ export default function GameCanvas() {
     if (state.matchPhase === 'PLAYING') {
       if (alivePlayers.length === 0) {
         state.matchPhase = 'FINISHED';
-        const sorted = getSortedMatchPlayers();
-        state.winnerId = sorted.length > 0 ? sorted[0].id : hostId;
+        const bestOverall = getBestPlayer(allMatchPlayers);
+        state.winnerId = bestOverall ? bestOverall.id : hostId;
       } else if (alivePlayers.length === 1) {
         const remainingPlayer = alivePlayers[0];
-        const maxEliminatedScore = eliminatedPlayers.length > 0
-          ? Math.max(...eliminatedPlayers.map(p => p.score))
-          : -Infinity;
+        const opponents = allMatchPlayers.filter(p => p.id !== remainingPlayer.id);
+        const bestOpponent = getBestPlayer(opponents);
 
-        if (remainingPlayer.score > maxEliminatedScore) {
+        if (!bestOpponent || remainingPlayer.score > bestOpponent.score) {
           state.matchPhase = 'FINISHED';
           state.winnerId = remainingPlayer.id;
         } else {
@@ -1846,25 +1827,21 @@ export default function GameCanvas() {
       const runnerId = state.finalRunnerId;
       const runner = runnerId ? state.matchPlayers[runnerId] : null;
 
-      const isRunnerDead = !runner || runner.isDead;
-      const maxEliminatedScore = eliminatedPlayers.length > 0
-        ? Math.max(...eliminatedPlayers.map(p => p.score))
-        : -Infinity;
+      const nonRunnerOpponents = allMatchPlayers.filter(p => p.id !== runnerId);
+      const bestOpponent = getBestPlayer(nonRunnerOpponents);
 
-      const didSurpass = !!(runner && !runner.isDead && runner.score > maxEliminatedScore);
+      const isRunnerDead = !runner || runner.isDead;
       const isExpired = state.finalRunDeadline !== null && currentTime >= state.finalRunDeadline;
 
-      if (isRunnerDead) {
+      const didSurpass = !!(runner && !runner.isDead && (!bestOpponent || runner.score > bestOpponent.score));
+
+      if (didSurpass) {
         state.matchPhase = 'FINISHED';
-        const sorted = getSortedMatchPlayers();
-        state.winnerId = sorted.length > 0 ? sorted[0].id : hostId;
-      } else if (didSurpass) {
+        state.winnerId = runner!.id;
+      } else if (isRunnerDead || isExpired) {
         state.matchPhase = 'FINISHED';
-        state.winnerId = runner.id;
-      } else if (isExpired) {
-        state.matchPhase = 'FINISHED';
-        const sorted = getSortedMatchPlayers();
-        state.winnerId = sorted.length > 0 ? sorted[0].id : hostId;
+        // Never include the runner in fallback selection when failing to surpass
+        state.winnerId = bestOpponent ? bestOpponent.id : (runner ? runner.id : hostId);
       }
     }
 
