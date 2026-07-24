@@ -2891,28 +2891,61 @@ export default function GameCanvas() {
           state.finalRunnerId = remainingPlayer.id;
           state.finalRunDeadline = currentTime + 20000;
         }
+      } else if (state.gameMode !== 'impossible' && state.spawners.length === 0) {
+        state.matchPhase = 'FINAL_RUN';
+        state.finalRunnerId = null;
+        state.finalRunDeadline = currentTime + 20000;
       }
     }
 
     if (state.matchPhase === 'FINAL_RUN') {
-      const runnerId = state.finalRunnerId;
-      const runner = runnerId ? state.matchPlayers[runnerId] : null;
+      if (state.finalRunnerId === null) {
+        if (alivePlayers.length === 0) {
+          state.matchPhase = 'FINISHED';
+          const bestOverall = getBestPlayer(allMatchPlayers);
+          state.winnerId = bestOverall ? bestOverall.id : hostId;
+        } else if (alivePlayers.length === 1) {
+          const survivor = alivePlayers[0];
+          const opponents = allMatchPlayers.filter(p => p.id !== survivor.id);
+          const bestOpponent = getBestPlayer(opponents);
 
-      const nonRunnerOpponents = allMatchPlayers.filter(p => p.id !== runnerId);
-      const bestOpponent = getBestPlayer(nonRunnerOpponents);
+          if (!bestOpponent || survivor.score > bestOpponent.score) {
+            state.matchPhase = 'FINISHED';
+            state.winnerId = survivor.id;
+          } else {
+            state.finalRunnerId = survivor.id;
+            state.forceBroadcast = true;
+          }
+        } else {
+          const isExpired = state.finalRunDeadline !== null && currentTime >= state.finalRunDeadline;
+          if (isExpired) {
+            state.matchPhase = 'FINISHED';
+            const bestOverall = getBestPlayer(allMatchPlayers);
+            state.winnerId = bestOverall ? bestOverall.id : hostId;
+          }
+        }
+      }
 
-      const isRunnerDead = !runner || runner.isDead;
-      const isExpired = state.finalRunDeadline !== null && currentTime >= state.finalRunDeadline;
+      if (state.finalRunnerId !== null && state.matchPhase === 'FINAL_RUN') {
+        const runnerId = state.finalRunnerId;
+        const runner = runnerId ? state.matchPlayers[runnerId] : null;
 
-      const didSurpass = !!(runner && !runner.isDead && (!bestOpponent || runner.score > bestOpponent.score));
+        const nonRunnerOpponents = allMatchPlayers.filter(p => p.id !== runnerId);
+        const bestOpponent = getBestPlayer(nonRunnerOpponents);
 
-      if (didSurpass) {
-        state.matchPhase = 'FINISHED';
-        state.winnerId = runner!.id;
-      } else if (isRunnerDead || isExpired) {
-        state.matchPhase = 'FINISHED';
-        // Never include the runner in fallback selection when failing to surpass
-        state.winnerId = bestOpponent ? bestOpponent.id : (runner ? runner.id : hostId);
+        const isRunnerDead = !runner || runner.isDead;
+        const isExpired = state.finalRunDeadline !== null && currentTime >= state.finalRunDeadline;
+
+        const didSurpass = !!(runner && !runner.isDead && (!bestOpponent || runner.score > bestOpponent.score));
+
+        if (didSurpass) {
+          state.matchPhase = 'FINISHED';
+          state.winnerId = runner!.id;
+        } else if (isRunnerDead || isExpired) {
+          state.matchPhase = 'FINISHED';
+          // Never include the runner in fallback selection when failing to surpass
+          state.winnerId = bestOpponent ? bestOpponent.id : (runner ? runner.id : hostId);
+        }
       }
     }
 
