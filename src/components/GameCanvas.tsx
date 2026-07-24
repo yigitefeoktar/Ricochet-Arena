@@ -1736,10 +1736,17 @@ export default function GameCanvas() {
     mode: null,
   });
   const [bannerCountdown, setBannerCountdown] = useState(3);
+  const [pulseSpawnerCounter, setPulseSpawnerCounter] = useState(false);
+  const [pulseKey, setPulseKey] = useState(0);
   const pulseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   
   const triggerSpawnerPulse = useCallback(() => {
-    if (pulseTimeoutRef.current) clearTimeout(pulseTimeoutRef.current);
+    if (mpRef.current.roomId) return;
+    if (pulseTimeoutRef.current) {
+      clearTimeout(pulseTimeoutRef.current);
+      pulseTimeoutRef.current = null;
+    }
+    setPulseKey(prev => prev + 1);
     setPulseSpawnerCounter(true);
     pulseTimeoutRef.current = setTimeout(() => {
       setPulseSpawnerCounter(false);
@@ -1749,17 +1756,22 @@ export default function GameCanvas() {
 
   useEffect(() => {
     if (uiState.status !== 'PLAYING') {
-      if (pulseTimeoutRef.current) clearTimeout(pulseTimeoutRef.current);
+      if (pulseTimeoutRef.current) {
+        clearTimeout(pulseTimeoutRef.current);
+        pulseTimeoutRef.current = null;
+      }
       setPulseSpawnerCounter(false);
     }
   }, [uiState.status]);
 
   useEffect(() => {
     return () => {
-      if (pulseTimeoutRef.current) clearTimeout(pulseTimeoutRef.current);
+      if (pulseTimeoutRef.current) {
+        clearTimeout(pulseTimeoutRef.current);
+        pulseTimeoutRef.current = null;
+      }
     };
   }, []);
-  const [pulseSpawnerCounter, setPulseSpawnerCounter] = useState(false);
   const [flashScore, setFlashScore] = useState(false);
 
   useEffect(() => {
@@ -2218,8 +2230,12 @@ export default function GameCanvas() {
       tutIdx = pSpawn.tutorialSpawnerIndex;
     }
 
-    if (pulseTimeoutRef.current) clearTimeout(pulseTimeoutRef.current);
+    if (pulseTimeoutRef.current) {
+      clearTimeout(pulseTimeoutRef.current);
+      pulseTimeoutRef.current = null;
+    }
     setPulseSpawnerCounter(false);
+    setPulseKey(0);
     activeWalls = mapDef.walls;
 
     const state = stateRef.current;
@@ -5217,8 +5233,8 @@ export default function GameCanvas() {
                   state.spawners.splice(s, 1);
                   if (state.tutorial.active) {
                     state.tutorial.active = false;
-                    triggerSpawnerPulse();
                   }
+                  triggerSpawnerPulse();
                   // Force a broadcast immediately of the updated state
                   state.forceBroadcast = true;
 
@@ -7226,6 +7242,7 @@ export default function GameCanvas() {
                        </div>
                     </motion.div>
                     <motion.div 
+                      key={pulseSpawnerCounter ? `spawner-pulse-${pulseKey}` : 'spawner-idle'}
                       animate={pulseSpawnerCounter ? {
                         scale: [1, 1.12, 1],
                         filter: [
