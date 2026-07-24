@@ -1701,6 +1701,31 @@ export default function GameCanvas() {
   const [lobbyPlayers, setLobbyPlayers] = useState<Record<string, { name: string, colorIdx: number, isHost: boolean }>>({});
   const [lobbyMatchSettings, setLobbyMatchSettings] = useState<MatchSettings>(DEFAULT_MATCH_SETTINGS);
   const lobbyMatchSettingsRef = useRef<MatchSettings>(DEFAULT_MATCH_SETTINGS);
+  const [isMatchSettingsUpdatePending, setIsMatchSettingsUpdatePending] = useState(false);
+  const matchSettingsUpdatePendingRef = useRef(false);
+  const pendingUpdateSeqRef = useRef(0);
+
+  const setMatchSettingsPending = useCallback((pending: boolean) => {
+    matchSettingsUpdatePendingRef.current = pending;
+    setIsMatchSettingsUpdatePending(pending);
+  }, []);
+
+  const applyAuthoritativeMatchSettings = useCallback((rawSettings: unknown): boolean => {
+    if (!rawSettings || typeof rawSettings !== 'object' || rawSettings === null) {
+      return false;
+    }
+    const settings = rawSettings as Record<string, any>;
+    if (!isValidMapId(settings.mapId) || !isValidGameMode(settings.gameMode)) {
+      return false;
+    }
+    const cleanSettings: MatchSettings = {
+      mapId: settings.mapId,
+      gameMode: settings.gameMode,
+    };
+    lobbyMatchSettingsRef.current = cleanSettings;
+    setLobbyMatchSettings(cleanSettings);
+    return true;
+  }, []);
 
   const [uiState, setUiState] = useState<{ status: 'MENU' | 'PLAYING' | 'PAUSED' | 'GAME_OVER' | 'VICTORY' | 'LOBBY'; score: number; deviceType: 'desktop' | 'mobile'; activeTool: 'weapon' | 'special' | 'build'; blocks: number; spawnersLeft: number; mapId: string; hardMode: boolean; gameMode: GameMode; buttonCounters: { special: number; build: number } }>({ status: 'MENU', score: 0, deviceType: 'desktop', activeTool: 'special', blocks: 50, spawnersLeft: 5, mapId: 'medium', hardMode: false, gameMode: 'normal', buttonCounters: { special: 0, build: 0 } });
   const uiRef = useRef(uiState);
@@ -2057,6 +2082,11 @@ export default function GameCanvas() {
   const handleStartMultiplayerMatch = () => {
     if (!mpRef.current.roomId || !mpState.isHost) return;
 
+    if (matchSettingsUpdatePendingRef.current) {
+      setMpError("WAITING FOR SETTINGS SYNC");
+      return;
+    }
+
     const lobbyPlayerCount = Object.keys(lobbyPlayers).length + 1;
     if (lobbyPlayerCount < 2) {
       setMpError("WAITING FOR ANOTHER PLAYER");
@@ -2316,9 +2346,12 @@ export default function GameCanvas() {
 
   const createRoom = () => {
     setMpError(null);
+    setMatchSettingsPending(false);
+    pendingUpdateSeqRef.current++;
+    const initialMode: GameMode = uiState.hardMode ? 'hard' : 'normal';
     const initialSettings: MatchSettings = {
       mapId: uiState.mapId,
-      gameMode: uiState.hardMode ? 'hard' : (uiState.gameMode || 'normal'),
+      gameMode: initialMode,
     };
     socketRef.current?.emit(
       'create_room',
@@ -2326,12 +2359,9 @@ export default function GameCanvas() {
       (res: any) => {
         if (res && res.roomId) {
           setMpState(prev => ({ ...prev, roomId: res.roomId, isHost: true }));
-          if (res.matchSettings && isValidMapId(res.matchSettings.mapId) && isValidGameMode(res.matchSettings.gameMode)) {
-            lobbyMatchSettingsRef.current = res.matchSettings;
-            setLobbyMatchSettings(res.matchSettings);
-          } else {
-            lobbyMatchSettingsRef.current = initialSettings;
-            setLobbyMatchSettings(initialSettings);
+          const applied = applyAuthoritativeMatchSettings(res.matchSettings);
+          if (!applied) {
+            applyAuthoritativeMatchSettings(initialSettings);
           }
           setActiveLobbyTab('invite');
           setUiState(prev => ({ ...prev, status: 'LOBBY' }));
@@ -2342,6 +2372,8 @@ export default function GameCanvas() {
 
   const joinRoom = () => {
     setMpError(null);
+    setMatchSettingsPending(false);
+    pendingUpdateSeqRef.current++;
     if (!mpRef.current.joinCode) {
       setMpState(prev => ({ ...prev, error: 'Enter a valid code!' }));
       return;
@@ -2350,10 +2382,7 @@ export default function GameCanvas() {
     socketRef.current?.emit('join_room', cleanRoom, { name: playerProfileRef.current.name }, (res: any) => {
       if (res && res.success) {
         setMpState(prev => ({ ...prev, roomId: cleanRoom, isHost: false, error: '' }));
-        if (res.matchSettings && isValidMapId(res.matchSettings.mapId) && isValidGameMode(res.matchSettings.gameMode)) {
-          lobbyMatchSettingsRef.current = res.matchSettings;
-          setLobbyMatchSettings(res.matchSettings);
-        }
+        applyAuthoritativeMatchSettings(res.matchSettings);
         setActiveLobbyTab('players');
         setUiState(prev => ({ ...prev, status: 'LOBBY' }));
 
@@ -2379,22 +2408,72 @@ export default function GameCanvas() {
     });
   };
 
-  const requestMatchSettingsUpdate = useCallback((proposed: Partial<MatchSettings> | MatchSettings) => {
-    if (!mpRef.current.isHost || !mpRef.current.roomId) return;
-    const current = lobbyMatchSettingsRef.current;
-    const fullProposed: MatchSettings = {
-      mapId: proposed.mapId !== undefined && isValidMapId(proposed.mapId) ? proposed.mapId : current.mapId,
-      gameMode: proposed.gameMode !== undefined && isValidGameMode(proposed.gameMode) ? proposed.gameMode : current.gameMode,
-    };
-    socketRef.current?.emit('update_match_settings', mpRef.current.roomId, fullProposed, (res: any) => {
-      if (res && !res.success) {
-        const err = res.error || 'UPDATE_FAILED';
-        setMpError(`SETTINGS UPDATE FAILED: ${err}`);
-      } else {
-        setMpError(null);
+  const requestMatchSettingsUpdate = useCallback((proposed: MatchSettings): Promise<boolean> => {
+    return new Promise<boolean>((resolve) => {
+      if (
+        !mpRef.current.isHost ||
+        !mpRef.current.roomId ||
+        !socketRef.current?.connected ||
+        !proposed ||
+        typeof proposed !== 'object' ||
+        !isValidMapId(proposed.mapId) ||
+        !isValidGameMode(proposed.gameMode)
+      ) {
+        resolve(false);
+        return;
       }
+
+      const currentRoomId = mpRef.current.roomId;
+      const seq = ++pendingUpdateSeqRef.current;
+
+      setMatchSettingsPending(true);
+
+      let timeoutId: ReturnType<typeof setTimeout> | null = null;
+
+      const cleanupAndResolve = (success: boolean, errorMsg?: string) => {
+        if (timeoutId) {
+          clearTimeout(timeoutId);
+          timeoutId = null;
+        }
+        if (seq === pendingUpdateSeqRef.current && mpRef.current.roomId === currentRoomId) {
+          setMatchSettingsPending(false);
+          if (!success && errorMsg) {
+            setMpError(errorMsg);
+          }
+        }
+        resolve(success);
+      };
+
+      timeoutId = setTimeout(() => {
+        cleanupAndResolve(false, 'SETTINGS SYNC TIMEOUT');
+      }, 5000);
+
+      socketRef.current.emit(
+        'update_match_settings',
+        currentRoomId,
+        proposed,
+        (res: any) => {
+          if (seq !== pendingUpdateSeqRef.current || mpRef.current.roomId !== currentRoomId) {
+            cleanupAndResolve(false);
+            return;
+          }
+
+          if (res && res.success && res.matchSettings) {
+            const applied = applyAuthoritativeMatchSettings(res.matchSettings);
+            if (applied) {
+              setMpError(null);
+              cleanupAndResolve(true);
+            } else {
+              cleanupAndResolve(false, 'INVALID SETTINGS RECEIVED');
+            }
+          } else {
+            const err = res?.error || 'UPDATE_FAILED';
+            cleanupAndResolve(false, `SETTINGS UPDATE FAILED: ${err}`);
+          }
+        }
+      );
     });
-  }, []);
+  }, [applyAuthoritativeMatchSettings, setMatchSettingsPending]);
 
   const resetGame = (
     deviceType?: 'desktop' | 'mobile',
@@ -2823,6 +2902,11 @@ export default function GameCanvas() {
       setMpState(prev => ({ ...prev, isConnected: true }));
     });
 
+    socket.on('disconnect', () => {
+      setMatchSettingsPending(false);
+      setMpState(prev => ({ ...prev, isConnected: false }));
+    });
+
     socket.on('player_joined', (id) => {
       stateRef.current.multiplayerPlayers[id] = { x: stateRef.current.player.x, y: stateRef.current.player.y, radius: PLAYER_RADIUS, isDash: false };
       
@@ -2916,16 +3000,7 @@ export default function GameCanvas() {
     });
 
     socket.on('match_settings', (settings) => {
-      if (settings && typeof settings === 'object') {
-        if (isValidMapId(settings.mapId) && isValidGameMode(settings.gameMode)) {
-          const validatedSettings: MatchSettings = {
-            mapId: settings.mapId,
-            gameMode: settings.gameMode,
-          };
-          lobbyMatchSettingsRef.current = validatedSettings;
-          setLobbyMatchSettings(validatedSettings);
-        }
-      }
+      applyAuthoritativeMatchSettings(settings);
     });
 
     socket.on('start_game', (config) => {
@@ -3492,8 +3567,9 @@ export default function GameCanvas() {
 
         // Emit room join to server
         socketRef.current?.emit('join_room', cleanRoom, { name: playerProfileRef.current.name }, (res: any) => {
-          if (res.success) {
+          if (res && res.success) {
             setMpState(prev => ({ ...prev, roomId: cleanRoom, joinCode: cleanRoom, isHost: false, error: '' }));
+            applyAuthoritativeMatchSettings(res.matchSettings);
             setActiveLobbyTab('players');
 
             if (res.colorIdx !== undefined) {
@@ -6926,7 +7002,15 @@ export default function GameCanvas() {
                       CHANGE MAP: {MAPS[uiState.mapId]?.name || 'UNKNOWN'}
                     </button>
                     <button
-                      onClick={() => setUiState(prev => ({ ...prev, hardMode: !prev.hardMode }))}
+                      onClick={() => setUiState(prev => {
+                        const nextHard = !prev.hardMode;
+                        const nextGameMode: GameMode = nextHard ? 'hard' : 'normal';
+                        return {
+                          ...prev,
+                          hardMode: nextHard,
+                          gameMode: nextGameMode,
+                        };
+                      })}
                       className={`flex items-center justify-center gap-1.5 py-2 sm:py-3 px-3 sm:px-4 border-2 font-bold tracking-[0.1em] transition-all duration-200 uppercase text-[10px] sm:text-xs cursor-pointer select-none
                         ${uiState.hardMode 
                           ? 'bg-[#ff3300]/10 text-[#ff3300] border-[#ff3300] shadow-[0_0_10px_rgba(255,51,0,0.2)]' 
@@ -6947,7 +7031,8 @@ export default function GameCanvas() {
 
                   <button 
                     onClick={() => {
-                      resetGame(isMobileRef.current ? 'mobile' : 'desktop');
+                      const selectedMode: GameMode = uiState.hardMode ? 'hard' : 'normal';
+                      resetGame(isMobileRef.current ? 'mobile' : 'desktop', uiState.mapId, selectedMode);
                     }}
                     className="w-full py-3 sm:py-4 bg-[#00f0ff] hover:bg-white text-black border-2 border-[#00f0ff] font-black tracking-[0.2em] transition-all duration-200 uppercase text-base sm:text-lg active:translate-x-1 active:translate-y-1 active:shadow-none hover:shadow-[5px_5px_0_#fff] shrink-0"
                   >
@@ -7143,7 +7228,8 @@ export default function GameCanvas() {
                   <div className="shrink-0 p-3 md:p-4 border-t border-[#00f0ff]/30 bg-[#0d0f1b] backdrop-blur-sm flex gap-3">
                     <button 
                       onClick={() => {
-                        resetGame(isMobileRef.current ? 'mobile' : 'desktop', uiState.mapId, uiState.hardMode);
+                        const selectedMode: GameMode = uiState.hardMode ? 'hard' : 'normal';
+                        resetGame(isMobileRef.current ? 'mobile' : 'desktop', uiState.mapId, selectedMode);
                         setIsMapSelectOpen(false);
                       }}
                       className="flex-1 py-3 md:py-4 bg-[#00f0ff]/20 hover:bg-[#00f0ff]/40 text-[#00f0ff] border border-[#00f0ff]/50 font-black tracking-[0.2em] transition-all duration-200 uppercase text-sm md:text-base lg:text-lg cursor-pointer"
