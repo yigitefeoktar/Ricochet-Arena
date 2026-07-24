@@ -3,6 +3,7 @@ import path from "path";
 import { createServer as createViteServer } from "vite";
 import { createServer } from "http";
 import { Server } from "socket.io";
+import { MatchSettings, DEFAULT_MATCH_SETTINGS, isValidGameMode, isValidMapId } from "./src/shared/matchSettings.js";
 
 async function startServer() {
   const app = express();
@@ -30,6 +31,7 @@ async function startServer() {
     players: Player[];
     lastHostStateTime?: number; // Server-side tracker of last valid host game state emit
     matchActive?: boolean;
+    matchSettings: MatchSettings;
   }
 
   const rooms = new Map<string, RoomInfo>();
@@ -82,7 +84,7 @@ async function startServer() {
 
     socket.on("create_room", (arg1, arg2) => {
       const cb = typeof arg1 === "function" ? arg1 : arg2;
-      const clientData = typeof arg1 === "object" ? arg1 : { name: "PLAYER" };
+      const clientData = typeof arg1 === "object" && arg1 !== null ? arg1 : { name: "PLAYER" };
 
       let roomId = "";
       const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -105,20 +107,47 @@ async function startServer() {
         isHost: true
       };
 
+      let initialMapId = DEFAULT_MATCH_SETTINGS.mapId;
+      let initialGameMode = DEFAULT_MATCH_SETTINGS.gameMode;
+
+      if (clientData.matchSettings && typeof clientData.matchSettings === "object") {
+        if (isValidMapId(clientData.matchSettings.mapId)) {
+          initialMapId = clientData.matchSettings.mapId;
+        }
+        if (isValidGameMode(clientData.matchSettings.gameMode)) {
+          initialGameMode = clientData.matchSettings.gameMode;
+        }
+      } else {
+        if (isValidMapId(clientData.mapId)) {
+          initialMapId = clientData.mapId;
+        }
+        if (isValidGameMode(clientData.gameMode)) {
+          initialGameMode = clientData.gameMode;
+        } else if (typeof clientData.hardMode === "boolean") {
+          initialGameMode = clientData.hardMode ? 'hard' : 'normal';
+        }
+      }
+
+      const matchSettings: MatchSettings = {
+        mapId: initialMapId,
+        gameMode: initialGameMode,
+      };
+
       rooms.set(roomId, {
         roomId,
         players: [hostPlayer],
         lastHostStateTime: Date.now(),
-        matchActive: false
+        matchActive: false,
+        matchSettings,
       });
 
       io.to(roomId).emit("lobby_players", [hostPlayer]);
-      if (cb) cb({ roomId, colorIdx: 0 });
+      if (cb) cb({ roomId, colorIdx: 0, matchSettings });
     });
 
     socket.on("join_room", (roomId, arg2, arg3) => {
       const cb = typeof arg2 === "function" ? arg2 : arg3;
-      const clientData = typeof arg2 === "object" ? arg2 : { name: "PLAYER" };
+      const clientData = typeof arg2 === "object" && arg2 !== null ? arg2 : { name: "PLAYER" };
       if (!roomId || typeof roomId !== "string") {
         if (cb) cb({ success: false, error: "Invalid Room ID" });
         return;
@@ -131,7 +160,13 @@ async function startServer() {
 
         let room = rooms.get(roomIdUpper);
         if (!room) {
-          room = { roomId: roomIdUpper, players: [], lastHostStateTime: Date.now(), matchActive: false };
+          room = {
+            roomId: roomIdUpper,
+            players: [],
+            lastHostStateTime: Date.now(),
+            matchActive: false,
+            matchSettings: { ...DEFAULT_MATCH_SETTINGS },
+          };
           rooms.set(roomIdUpper, room);
         }
 
@@ -167,10 +202,68 @@ async function startServer() {
         socket.to(roomIdUpper).emit("player_joined", socket.id);
         io.to(roomIdUpper).emit("lobby_players", room.players);
 
-        if (cb) cb({ success: true, hostId: room.players.find(p => p.isHost)?.id || socket.id, colorIdx: chosenColor });
+        if (cb) cb({
+          success: true,
+          hostId: room.players.find(p => p.isHost)?.id || socket.id,
+          colorIdx: chosenColor,
+          matchSettings: room.matchSettings
+        });
       } else {
         if (cb) cb({ success: false, error: "Room not found" });
       }
+    });
+
+    socket.on("update_match_settings", (roomId, proposedSettings, callback) => {
+      const cb = typeof callback === "function" ? callback : undefined;
+
+      if (!roomId || typeof roomId !== "string") {
+        if (cb) cb({ success: false, error: "INVALID_ROOM_ID" });
+        return;
+      }
+
+      const roomIdUpper = roomId.trim().toUpperCase();
+      const room = rooms.get(roomIdUpper);
+      if (!room) {
+        if (cb) cb({ success: false, error: "ROOM_NOT_FOUND" });
+        return;
+      }
+
+      const player = room.players.find(p => p.id === socket.id);
+      if (!player || !player.isHost) {
+        if (cb) cb({ success: false, error: "NOT_HOST" });
+        return;
+      }
+
+      if (room.matchActive) {
+        if (cb) cb({ success: false, error: "MATCH_ALREADY_STARTED" });
+        return;
+      }
+
+      if (!proposedSettings || typeof proposedSettings !== "object") {
+        if (cb) cb({ success: false, error: "INVALID_SETTINGS" });
+        return;
+      }
+
+      if (!isValidMapId(proposedSettings.mapId)) {
+        if (cb) cb({ success: false, error: "INVALID_MAP" });
+        return;
+      }
+
+      if (!isValidGameMode(proposedSettings.gameMode)) {
+        if (cb) cb({ success: false, error: "INVALID_MODE" });
+        return;
+      }
+
+      const sanitizedSettings: MatchSettings = {
+        mapId: proposedSettings.mapId,
+        gameMode: proposedSettings.gameMode,
+      };
+
+      room.matchSettings = sanitizedSettings;
+
+      io.to(roomIdUpper).emit("match_settings", sanitizedSettings);
+
+      if (cb) cb({ success: true, matchSettings: sanitizedSettings });
     });
     
     socket.on("update_profile", (roomId, data) => {
@@ -397,10 +490,22 @@ async function startServer() {
         }
       }
 
+      // Construct authoritative start configuration from room's stored settings
+      const mapId = room.matchSettings.mapId;
+      const gameMode = room.matchSettings.gameMode;
+      const hardMode = gameMode !== "normal";
+
+      const startPayload = {
+        mapId,
+        gameMode,
+        hardMode,
+        spawnAssignments,
+      };
+
       room.matchActive = true;
       room.lastHostStateTime = Date.now();
-      socket.to(roomIdUpper).emit("start_game", gameConfig);
-      if (cb) cb({ success: true });
+      socket.to(roomIdUpper).emit("start_game", startPayload);
+      if (cb) cb({ success: true, config: startPayload });
     });
 
     socket.on("disconnect", () => {

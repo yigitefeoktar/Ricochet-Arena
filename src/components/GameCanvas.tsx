@@ -2,6 +2,13 @@ import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { io, Socket } from 'socket.io-client';
 import { Copy, Check, Play, X, Shuffle } from 'lucide-react';
+import {
+  GameMode,
+  MatchSettings,
+  DEFAULT_MATCH_SETTINGS,
+  isValidGameMode,
+  isValidMapId,
+} from '../shared/matchSettings';
 
 const MAP_WIDTH = 3000;
 const MAP_HEIGHT = 3000;
@@ -1692,8 +1699,10 @@ export default function GameCanvas() {
   const [showQrCode, setShowQrCode] = useState(false);
   const [activeLobbyTab, setActiveLobbyTab] = useState<'invite' | 'players'>('invite');
   const [lobbyPlayers, setLobbyPlayers] = useState<Record<string, { name: string, colorIdx: number, isHost: boolean }>>({});
+  const [lobbyMatchSettings, setLobbyMatchSettings] = useState<MatchSettings>(DEFAULT_MATCH_SETTINGS);
+  const lobbyMatchSettingsRef = useRef<MatchSettings>(DEFAULT_MATCH_SETTINGS);
 
-  const [uiState, setUiState] = useState<{ status: 'MENU' | 'PLAYING' | 'PAUSED' | 'GAME_OVER' | 'VICTORY' | 'LOBBY'; score: number; deviceType: 'desktop' | 'mobile'; activeTool: 'weapon' | 'special' | 'build'; blocks: number; spawnersLeft: number; mapId: string; hardMode: boolean; buttonCounters: { special: number; build: number } }>({ status: 'MENU', score: 0, deviceType: 'desktop', activeTool: 'special', blocks: 50, spawnersLeft: 5, mapId: 'medium', hardMode: false, buttonCounters: { special: 0, build: 0 } });
+  const [uiState, setUiState] = useState<{ status: 'MENU' | 'PLAYING' | 'PAUSED' | 'GAME_OVER' | 'VICTORY' | 'LOBBY'; score: number; deviceType: 'desktop' | 'mobile'; activeTool: 'weapon' | 'special' | 'build'; blocks: number; spawnersLeft: number; mapId: string; hardMode: boolean; gameMode: GameMode; buttonCounters: { special: number; build: number } }>({ status: 'MENU', score: 0, deviceType: 'desktop', activeTool: 'special', blocks: 50, spawnersLeft: 5, mapId: 'medium', hardMode: false, gameMode: 'normal', buttonCounters: { special: 0, build: 0 } });
   const uiRef = useRef(uiState);
   uiRef.current = uiState;
   
@@ -2065,7 +2074,8 @@ export default function GameCanvas() {
       }
     }
 
-    const mapDef = MAPS[uiState.mapId] || MAPS.classic_arena;
+    const mapIdToUse = lobbyMatchSettingsRef.current.mapId;
+    const mapDef = MAPS[mapIdToUse] || MAPS.classic_arena;
     const spawnAssignments = generateMultiplayerSpawnAssignments(playerIds, mapDef, mapDef.walls);
 
     if (!spawnAssignments) {
@@ -2077,16 +2087,21 @@ export default function GameCanvas() {
       'start_game',
       mpRef.current.roomId,
       {
-        mapId: uiState.mapId,
-        hardMode: uiState.hardMode,
         spawnAssignments
       },
-      (response?: { success: boolean; error?: string }) => {
-        if (response && response.success) {
+      (response?: { success: boolean; config?: { mapId: string; gameMode: GameMode; hardMode: boolean; spawnAssignments: any }; error?: string }) => {
+        if (response && response.success && response.config) {
           setMpError(null);
-          const ok = resetGame(isMobileRef.current ? 'mobile' : 'desktop', uiState.mapId, uiState.hardMode, spawnAssignments);
+          const startConfig = response.config;
+          const ok = resetGame(isMobileRef.current ? 'mobile' : 'desktop', startConfig.mapId, startConfig.gameMode, startConfig.spawnAssignments);
           if (ok) {
-            setUiState(prev => ({ ...prev, status: 'PLAYING' }));
+            setUiState(prev => ({
+              ...prev,
+              status: 'PLAYING',
+              mapId: startConfig.mapId,
+              hardMode: startConfig.hardMode,
+              gameMode: startConfig.gameMode
+            }));
           } else {
             setMpError("FAILED TO INITIALIZE MATCH");
           }
@@ -2159,6 +2174,7 @@ export default function GameCanvas() {
     lastTime: performance.now(),
     lastEnemySpawn: 0,
     enemySpawnRate: 3000,
+    gameMode: 'normal' as GameMode,
     hardMode: false,
     tutorial: { active: false, spawnerIndex: null as number | null, enemySpawned: false, timer: 0 },
   });
@@ -2300,13 +2316,28 @@ export default function GameCanvas() {
 
   const createRoom = () => {
     setMpError(null);
-    socketRef.current?.emit('create_room', { name: playerProfileRef.current.name }, (res: any) => {
-       if (res.roomId) {
-           setMpState(prev => ({ ...prev, roomId: res.roomId, isHost: true }));
-           setActiveLobbyTab('invite');
-           setUiState(prev => ({ ...prev, status: 'LOBBY' }));
-       }
-    });
+    const initialSettings: MatchSettings = {
+      mapId: uiState.mapId,
+      gameMode: uiState.hardMode ? 'hard' : (uiState.gameMode || 'normal'),
+    };
+    socketRef.current?.emit(
+      'create_room',
+      { name: playerProfileRef.current.name, matchSettings: initialSettings },
+      (res: any) => {
+        if (res && res.roomId) {
+          setMpState(prev => ({ ...prev, roomId: res.roomId, isHost: true }));
+          if (res.matchSettings && isValidMapId(res.matchSettings.mapId) && isValidGameMode(res.matchSettings.gameMode)) {
+            lobbyMatchSettingsRef.current = res.matchSettings;
+            setLobbyMatchSettings(res.matchSettings);
+          } else {
+            lobbyMatchSettingsRef.current = initialSettings;
+            setLobbyMatchSettings(initialSettings);
+          }
+          setActiveLobbyTab('invite');
+          setUiState(prev => ({ ...prev, status: 'LOBBY' }));
+        }
+      }
+    );
   };
 
   const joinRoom = () => {
@@ -2317,43 +2348,74 @@ export default function GameCanvas() {
     }
     const cleanRoom = mpRef.current.joinCode.toUpperCase();
     socketRef.current?.emit('join_room', cleanRoom, { name: playerProfileRef.current.name }, (res: any) => {
-       if (res.success) {
-           setMpState(prev => ({ ...prev, roomId: cleanRoom, isHost: false, error: '' }));
-           setActiveLobbyTab('players');
-           setUiState(prev => ({ ...prev, status: 'LOBBY' }));
+      if (res && res.success) {
+        setMpState(prev => ({ ...prev, roomId: cleanRoom, isHost: false, error: '' }));
+        if (res.matchSettings && isValidMapId(res.matchSettings.mapId) && isValidGameMode(res.matchSettings.gameMode)) {
+          lobbyMatchSettingsRef.current = res.matchSettings;
+          setLobbyMatchSettings(res.matchSettings);
+        }
+        setActiveLobbyTab('players');
+        setUiState(prev => ({ ...prev, status: 'LOBBY' }));
 
-           if (res.colorIdx !== undefined) {
-             setPlayerProfile(prev => ({ ...prev, colorIdx: res.colorIdx }));
-           }
+        if (res.colorIdx !== undefined) {
+          setPlayerProfile(prev => ({ ...prev, colorIdx: res.colorIdx }));
+        }
 
-           // Inform existing players of our profile and ask for theirs
-           setTimeout(() => {
-             socketRef.current?.emit('client_action', cleanRoom, {
-               type: 'lobby_update',
-               name: playerProfileRef.current.name,
-               colorIdx: res.colorIdx !== undefined ? res.colorIdx : playerProfileRef.current.colorIdx,
-               isHost: false
-             });
-             socketRef.current?.emit('client_action', cleanRoom, {
-               type: 'lobby_request_sync'
-             });
-           }, 200);
-       } else {
-           setMpState(prev => ({ ...prev, error: res.error || 'Failed to join' }));
-       }
+        // Inform existing players of our profile and ask for theirs
+        setTimeout(() => {
+          socketRef.current?.emit('client_action', cleanRoom, {
+            type: 'lobby_update',
+            name: playerProfileRef.current.name,
+            colorIdx: res.colorIdx !== undefined ? res.colorIdx : playerProfileRef.current.colorIdx,
+            isHost: false
+          });
+          socketRef.current?.emit('client_action', cleanRoom, {
+            type: 'lobby_request_sync'
+          });
+        }, 200);
+      } else {
+        setMpState(prev => ({ ...prev, error: res.error || 'Failed to join' }));
+      }
     });
   };
+
+  const requestMatchSettingsUpdate = useCallback((proposed: Partial<MatchSettings> | MatchSettings) => {
+    if (!mpRef.current.isHost || !mpRef.current.roomId) return;
+    const current = lobbyMatchSettingsRef.current;
+    const fullProposed: MatchSettings = {
+      mapId: proposed.mapId !== undefined && isValidMapId(proposed.mapId) ? proposed.mapId : current.mapId,
+      gameMode: proposed.gameMode !== undefined && isValidGameMode(proposed.gameMode) ? proposed.gameMode : current.gameMode,
+    };
+    socketRef.current?.emit('update_match_settings', mpRef.current.roomId, fullProposed, (res: any) => {
+      if (res && !res.success) {
+        const err = res.error || 'UPDATE_FAILED';
+        setMpError(`SETTINGS UPDATE FAILED: ${err}`);
+      } else {
+        setMpError(null);
+      }
+    });
+  }, []);
 
   const resetGame = (
     deviceType?: 'desktop' | 'mobile',
     mapId?: string,
-    hardMode?: boolean,
+    gameModeOrHardMode?: GameMode | boolean,
     spawnAssignments?: Record<string, { x: number; y: number }>
   ): boolean => {
     const dType = deviceType || uiRef.current.deviceType;
     const selectedMapId = mapId || uiRef.current.mapId;
     const isMultiplayer = !!mpRef.current.roomId;
-    const isHardMode = hardMode !== undefined ? hardMode : uiRef.current.hardMode;
+
+    let selectedGameMode: GameMode = 'normal';
+    if (typeof gameModeOrHardMode === 'string' && isValidGameMode(gameModeOrHardMode)) {
+      selectedGameMode = gameModeOrHardMode;
+    } else if (typeof gameModeOrHardMode === 'boolean') {
+      selectedGameMode = gameModeOrHardMode ? 'hard' : 'normal';
+    } else {
+      selectedGameMode = uiRef.current.gameMode || (uiRef.current.hardMode ? 'hard' : 'normal');
+    }
+
+    const isHardMode = selectedGameMode !== 'normal';
     const mapDef = MAPS[selectedMapId] || MAPS.classic_arena;
     
     const myId = socketRef.current?.id || 'host';
@@ -2383,6 +2445,7 @@ export default function GameCanvas() {
     activeWalls = mapDef.walls;
 
     const state = stateRef.current;
+    state.gameMode = selectedGameMode;
     state.hardMode = isHardMode;
     state.nextEntityId = 1;
     
@@ -2438,8 +2501,8 @@ export default function GameCanvas() {
     state.touches.right.active = false;
     state.touches.tap.active = false;
     
-    const uiHardMode = isMultiplayer ? uiRef.current.hardMode : isHardMode;
-    const newUi = { status: 'PLAYING' as const, score: 0, deviceType: dType, activeTool: 'special' as const, blocks: 50, spawnersLeft: state.spawners.length, mapId: selectedMapId, hardMode: uiHardMode, buttonCounters: { special: 0, build: 0 } };
+    const uiHardMode = isMultiplayer ? (selectedGameMode !== 'normal') : isHardMode;
+    const newUi = { status: 'PLAYING' as const, score: 0, deviceType: dType, activeTool: 'special' as const, blocks: 50, spawnersLeft: state.spawners.length, mapId: selectedMapId, hardMode: uiHardMode, gameMode: selectedGameMode, buttonCounters: { special: 0, build: 0 } };
     uiRef.current = newUi;
     setUiState(newUi);
 
@@ -2852,16 +2915,39 @@ export default function GameCanvas() {
       setLobbyPlayers(otherPlayers);
     });
 
+    socket.on('match_settings', (settings) => {
+      if (settings && typeof settings === 'object') {
+        if (isValidMapId(settings.mapId) && isValidGameMode(settings.gameMode)) {
+          const validatedSettings: MatchSettings = {
+            mapId: settings.mapId,
+            gameMode: settings.gameMode,
+          };
+          lobbyMatchSettingsRef.current = validatedSettings;
+          setLobbyMatchSettings(validatedSettings);
+        }
+      }
+    });
+
     socket.on('start_game', (config) => {
       lastReceivedGameStateTimeRef.current = performance.now();
       if (!mpRef.current.isHost) {
         const mapId = config?.mapId || 'medium';
-        const hardMode = !!config?.hardMode;
+        const rawGameMode: GameMode | undefined = config?.gameMode;
+        const inferredGameMode: GameMode = rawGameMode && isValidGameMode(rawGameMode)
+          ? rawGameMode
+          : (config?.hardMode ? 'hard' : 'normal');
+
         const spawnAssignments = config?.spawnAssignments;
-        const ok = resetGame(isMobileRef.current ? 'mobile' : 'desktop', mapId, hardMode, spawnAssignments);
+        const ok = resetGame(isMobileRef.current ? 'mobile' : 'desktop', mapId, inferredGameMode, spawnAssignments);
         if (ok) {
           setMpError(null);
-          setUiState(prev => ({ ...prev, status: 'PLAYING', mapId, hardMode }));
+          setUiState(prev => ({
+            ...prev,
+            status: 'PLAYING',
+            mapId,
+            hardMode: inferredGameMode !== 'normal',
+            gameMode: inferredGameMode
+          }));
         } else {
           setMpError('INVALID START ASSIGNMENT');
         }
