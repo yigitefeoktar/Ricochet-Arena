@@ -1719,6 +1719,12 @@ export default function GameCanvas() {
   const handleStartMultiplayerMatch = () => {
     if (!mpRef.current.roomId || !mpState.isHost) return;
 
+    const lobbyPlayerCount = Object.keys(lobbyPlayers).length + 1;
+    if (lobbyPlayerCount < 2) {
+      setMpError("WAITING FOR ANOTHER PLAYER");
+      return;
+    }
+
     setMpError(null);
 
     const myId = socketRef.current?.id || 'host';
@@ -1762,6 +1768,8 @@ export default function GameCanvas() {
               ? 'ROSTER CHANGED - TRY AGAIN'
               : err === 'NO_SPAWN_ASSIGNMENTS' || err === 'INVALID_SPAWN_COORDINATES'
               ? 'NO SAFE START FORMATION'
+              : err === 'NOT_ENOUGH_PLAYERS'
+              ? 'WAITING FOR ANOTHER PLAYER'
               : `START FAILED: ${err}`;
           setMpError(msg);
         }
@@ -6911,14 +6919,23 @@ export default function GameCanvas() {
                     </div>
                   )}
 
-                  {mpState.isHost ? (
-                    <button
-                      onClick={handleStartMultiplayerMatch}
-                      className="w-full py-4 bg-[#ffcc00] hover:bg-white text-black font-black tracking-widest transition-all duration-200 uppercase text-sm cursor-pointer shadow-[3px_3px_0_rgba(255,204,0,0.15)] hover:shadow-[5px_5px_0_#fff] active:translate-x-1 active:translate-y-1 active:shadow-none mb-2"
-                    >
-                      START MATCH
-                    </button>
-                  ) : (
+                  {mpState.isHost ? (() => {
+                    const lobbyPlayerCount = Object.keys(lobbyPlayers).length + 1;
+                    const canStartMatch = lobbyPlayerCount >= 2;
+                    return (
+                      <button
+                        onClick={handleStartMultiplayerMatch}
+                        disabled={!canStartMatch}
+                        className={`w-full py-4 font-black tracking-widest transition-all duration-200 uppercase text-sm mb-2 ${
+                          canStartMatch 
+                            ? 'bg-[#ffcc00] hover:bg-white text-black cursor-pointer shadow-[3px_3px_0_rgba(255,204,0,0.15)] hover:shadow-[5px_5px_0_#fff] active:translate-x-1 active:translate-y-1 active:shadow-none' 
+                            : 'bg-[#ffcc00]/40 text-black/40 cursor-not-allowed opacity-60'
+                        }`}
+                      >
+                        {canStartMatch ? "START MATCH" : "WAITING FOR PLAYER"}
+                      </button>
+                    );
+                  })() : (
                     <p className="text-[#ffcc00] animate-pulse font-bold tracking-widest text-[11px] py-2 uppercase">
                       WAITING FOR HOST TO START...
                     </p>

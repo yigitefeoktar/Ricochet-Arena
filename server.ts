@@ -353,6 +353,13 @@ async function startServer() {
         return;
       }
 
+      const ioRoom = io.sockets.adapter.rooms.get(roomIdUpper);
+      const connectedCount = ioRoom ? ioRoom.size : 0;
+      if (connectedCount < 2) {
+        if (cb) cb({ success: false, error: "NOT_ENOUGH_PLAYERS" });
+        return;
+      }
+
       const spawnAssignments = gameConfig.spawnAssignments;
       if (!spawnAssignments || typeof spawnAssignments !== "object") {
         if (cb) cb({ success: false, error: "NO_SPAWN_ASSIGNMENTS" });
