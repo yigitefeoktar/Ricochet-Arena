@@ -1714,6 +1714,10 @@ export default function GameCanvas() {
   const pendingUpdateSeqRef = useRef(0);
   const activeMatchSettingsRequestRef = useRef<ActiveMatchSettingsRequest | null>(null);
 
+  const [isMpMapSelectOpen, setIsMpMapSelectOpen] = useState(false);
+  const [pendingLobbyMapId, setPendingLobbyMapId] = useState<string>('medium');
+  const mpMapListRef = useRef<HTMLDivElement>(null);
+
   const setMatchSettingsPending = useCallback((pending: boolean) => {
     matchSettingsUpdatePendingRef.current = pending;
     setIsMatchSettingsUpdatePending(pending);
@@ -1735,6 +1739,7 @@ export default function GameCanvas() {
     }
     matchSettingsUpdatePendingRef.current = false;
     setIsMatchSettingsUpdatePending(false);
+    setIsMpMapSelectOpen(false);
   }, []);
 
   const applyAuthoritativeMatchSettings = useCallback((rawSettings: unknown): boolean => {
@@ -1785,6 +1790,12 @@ export default function GameCanvas() {
       mpMenuOpenRef.current = false;
     }
   }, [uiState.status]);
+
+  useEffect(() => {
+    if (isMpMapSelectOpen && (!mpState.isHost || !mpState.roomId || uiState.status !== 'LOBBY')) {
+      setIsMpMapSelectOpen(false);
+    }
+  }, [isMpMapSelectOpen, mpState.isHost, mpState.roomId, uiState.status]);
 
   const [isMapSelectOpen, setIsMapSelectOpen] = useState(false);
   const [mpTick, setMpTick] = useState(0);
@@ -2529,6 +2540,49 @@ export default function GameCanvas() {
       );
     });
   }, [applyAuthoritativeMatchSettings, cancelPendingMatchSettingsUpdate, setMatchSettingsPending]);
+
+  const selectAndScrollToMpMap = useCallback((mapId: string) => {
+    setPendingLobbyMapId(mapId);
+    setTimeout(() => {
+      if (mpMapListRef.current) {
+        const container = mpMapListRef.current;
+        const button = container.querySelector(`[data-mp-map-id="${mapId}"]`) as HTMLElement;
+        if (button) {
+          const containerRect = container.getBoundingClientRect();
+          const buttonRect = button.getBoundingClientRect();
+          const isFullyVisible = (
+            buttonRect.top >= containerRect.top - 1 &&
+            buttonRect.bottom <= containerRect.bottom + 1
+          );
+          if (!isFullyVisible) {
+            button.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        }
+      }
+    }, 50);
+  }, []);
+
+  const handleOpenMpMapSelector = useCallback(() => {
+    if (!mpState.isHost || isMatchSettingsUpdatePending) return;
+    const currentMap = lobbyMatchSettingsRef.current.mapId;
+    setPendingLobbyMapId(currentMap);
+    setIsMpMapSelectOpen(true);
+    selectAndScrollToMpMap(currentMap);
+  }, [mpState.isHost, isMatchSettingsUpdatePending, selectAndScrollToMpMap]);
+
+  const handleConfirmMpMap = useCallback(async () => {
+    if (!mpRef.current.isHost || matchSettingsUpdatePendingRef.current) return;
+    const targetMap = pendingLobbyMapId;
+    const currentMode = lobbyMatchSettingsRef.current.gameMode;
+    const success = await requestMatchSettingsUpdate({
+      mapId: targetMap,
+      gameMode: currentMode,
+    });
+    if (success) {
+      setIsMpMapSelectOpen(false);
+      setActiveLobbyTab('match');
+    }
+  }, [pendingLobbyMapId, requestMatchSettingsUpdate]);
 
   const resetGame = (
     deviceType?: 'desktop' | 'mobile',
@@ -7322,12 +7376,218 @@ export default function GameCanvas() {
             exit={{ opacity: 0 }}
             className="absolute inset-0 z-[70] flex flex-col items-center justify-center p-4 sm:p-8 bg-[#050508]/80 backdrop-blur-md pointer-events-auto"
           >
-            <motion.div
-              initial={{ scale: 0.9 * menuScale, y: 20 }}
-              animate={{ scale: menuScale, y: 0 }}
-              transition={{ duration: 0.2, ease: "easeOut" }}
-              className="w-full max-w-md flex flex-col border-2 border-[#ffcc00] bg-[#0d0f1b]/95 p-4 sm:p-6 shadow-[10px_10px_0_#ffcc00] pointer-events-auto items-center relative z-10 origin-center"
-            >
+            <AnimatePresence mode="wait">
+              {isMpMapSelectOpen ? (
+                <motion.div
+                  key="mp-map-select-screen"
+                  initial={{ opacity: 0, scale: 0.96, y: 15 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.96, y: -15 }}
+                  transition={{ duration: 0.2, ease: "easeOut" }}
+                  className="relative w-full max-w-4xl max-h-[90vh] flex flex-col bg-[#0d0f1b]/95 border-2 border-[#ffcc00] shadow-[0_0_30px_rgba(255,204,0,0.2)] ring-1 ring-black pointer-events-auto overflow-hidden z-[80]"
+                >
+                  {/* Header */}
+                  <div className="shrink-0 p-3 md:p-5 flex justify-between items-center border-b border-[#ffcc00]/30 bg-gradient-to-b from-[#ffcc00]/10 to-transparent">
+                    <h2 className="text-2xl md:text-4xl font-black text-white tracking-tighter leading-none" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>
+                      SELECT <span className="text-[#ffcc00]">MULTIPLAYER MAP</span>
+                    </h2>
+                    <div className="flex items-center gap-2">
+                      {isMatchSettingsUpdatePending && (
+                        <span className="text-[#ffcc00] animate-pulse font-mono font-extrabold text-xs tracking-widest uppercase">
+                          SYNCING...
+                        </span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Content Body */}
+                  <div className="flex-1 min-h-[0] flex flex-col md:flex-row p-3 md:p-5 gap-3 md:gap-5 overflow-hidden">
+                    
+                    {/* Map List Area */}
+                    <div className="flex-1 flex flex-col min-h-0 border border-[#ffcc00]/30 bg-black/40 overflow-hidden">
+                      <div 
+                        ref={mpMapListRef}
+                        className="flex-1 overflow-y-auto p-2 grid grid-cols-2 gap-2 content-start [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
+                      >
+                        {Object.entries(MAPS)
+                          .sort((a, b) => {
+                            const difficultyRank: Record<string, number> = {
+                              'EASY': 1,
+                              'MEDIUM': 2,
+                              'HARD': 3,
+                              'EXPERT': 4
+                            };
+                            const rankA = difficultyRank[a[1].difficulty] || 99;
+                            const rankB = difficultyRank[b[1].difficulty] || 99;
+                            if (rankA !== rankB) {
+                              return rankA - rankB;
+                            }
+                            return a[1].name.localeCompare(b[1].name);
+                          })
+                          .map(([id, mapDef]) => {
+                            const isSelected = pendingLobbyMapId === id;
+                            const isDisabled = isMatchSettingsUpdatePending;
+                            return (
+                              <button
+                                key={id}
+                                data-mp-map-id={id}
+                                disabled={isDisabled}
+                                onClick={() => {
+                                  if (isDisabled) return;
+                                  setPendingLobbyMapId(id);
+                                }}
+                                className={`flex flex-col items-center justify-center p-2 md:p-3 font-bold uppercase transition-all border-2 select-none ${
+                                  isDisabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
+                                } ${
+                                  isSelected 
+                                     ? 'bg-[#ffcc00] text-black border-[#ffcc00] shadow-[0_0_15px_rgba(255,204,0,0.35)] font-black' 
+                                     : 'bg-[#0d0f1b] text-[#ffcc00]/70 border-[#ffcc00]/30 hover:border-[#ffcc00]/80 hover:text-[#ffcc00] hover:bg-[#ffcc00]/10'
+                                }`}
+                              >
+                                <div className="text-[10px] sm:text-xs md:text-sm tracking-[0.1em] text-center leading-tight">{mapDef.name}</div>
+                                <div className={`text-[8px] sm:text-[9px] md:text-[10px] mt-1 tracking-widest ${
+                                  isSelected 
+                                    ? 'text-black/80 font-bold' 
+                                    : mapDef.difficulty === 'EASY' ? 'text-green-400' :
+                                      mapDef.difficulty === 'MEDIUM' ? 'text-yellow-400' :
+                                      mapDef.difficulty === 'HARD' ? 'text-red-400' :
+                                      'text-purple-400'
+                                }`}>
+                                   {mapDef.difficulty}
+                                </div>
+                              </button>
+                            );
+                          })}
+                      </div>
+                    </div>
+
+                    {/* Map Preview Area */}
+                    <div className="w-full md:w-80 lg:w-[22rem] shrink-0 flex flex-col min-h-[240px] md:min-h-0 border border-[#ffcc00]/30 bg-black/40 p-3 overflow-hidden">
+                      {(() => {
+                          const selMap = MAPS[pendingLobbyMapId] || MAPS.medium;
+                          return (
+                            <div className="flex flex-col h-full overflow-hidden">
+                               <h3 className="text-base md:text-lg lg:text-xl font-black text-white uppercase tracking-wider mb-1 mt-1 shrink-0 px-1">{selMap.name}</h3>
+                               <div className={`text-[10px] md:text-xs font-bold mb-2 shrink-0 px-1 ${
+                                 selMap.difficulty === 'EASY' ? 'text-green-400' :
+                                 selMap.difficulty === 'MEDIUM' ? 'text-yellow-400' :
+                                 selMap.difficulty === 'HARD' ? 'text-red-400' :
+                                 'text-[#b500ff]'
+                               }`}>{selMap.difficulty}</div>
+                               <p className="text-[#ffcc00]/80 font-mono text-[9px] md:text-[10px] leading-relaxed mb-3 shrink-0 text-left line-clamp-3 px-1">
+                                 {selMap.description}
+                               </p>
+                               
+                               {/* Responsive map container */}
+                               <div className="flex-1 w-full min-h-[120px] flex items-center justify-center p-1 md:p-2 relative overflow-hidden shrink mt-1 mb-1">
+                                 <svg 
+                                   viewBox="0 0 3000 3000" 
+                                   className="w-full h-full aspect-square max-w-[130px] max-h-[130px] sm:max-w-[145px] sm:max-h-[145px] md:max-w-[220px] md:max-h-[220px]"
+                                   preserveAspectRatio="xMidYMid meet"
+                                 >
+                                   {/* Base Map Square Background & Outer Border */}
+                                    <rect width="3000" height="3000" fill="#050508" stroke="rgba(255, 204, 0, 0.4)" strokeWidth="15" />
+
+                                    {/* Grid lines inside preview */}
+                                   <defs>
+                                     <pattern id="mp-preview-grid" width="150" height="150" patternUnits="userSpaceOnUse">
+                                       <path d="M 150 0 L 0 0 0 150" fill="none" stroke="rgba(255, 204, 0, 0.08)" strokeWidth="4" />
+                                     </pattern>
+                                   </defs>
+                                   <rect width="3000" height="3000" fill="url(#mp-preview-grid)" />
+
+                                   {/* Render Walls */}
+                                   {selMap.walls.map((w, i) => (
+                                     <rect 
+                                       key={`wall-${i}`}
+                                       x={w.x}
+                                       y={w.y}
+                                       width={w.w}
+                                       height={w.h}
+                                       fill="rgba(0, 240, 255, 0.25)"
+                                       stroke="#00f0ff"
+                                       strokeWidth="15"
+                                     />
+                                   ))}
+
+                                   {/* Render Spawners */}
+                                   {selMap.spawners.map((s, i) => (
+                                     <circle 
+                                       key={`spawner-${i}`}
+                                       cx={s.x}
+                                       cy={s.y}
+                                       r={s.radius}
+                                       fill="#ff00ff"
+                                       stroke="rgba(255, 255, 255, 0.5)"
+                                       strokeWidth="8"
+                                     />
+                                   ))}
+
+                                   {/* Render Spawn Point */}
+                                   {selMap.spawnPoint && (
+                                     <g transform={`translate(${selMap.spawnPoint.x}, ${selMap.spawnPoint.y})`} pointerEvents="none" aria-hidden="true">
+                                       <circle r={70} fill="rgba(255, 204, 0, 0.10)" stroke="#FFCC00" strokeWidth={18} />
+                                       <circle r={18} fill="#FFCC00" />
+                                       <line x1={0} y1={-110} x2={0} y2={-80} stroke="#FFCC00" strokeWidth={18} />
+                                       <line x1={0} y1={80} x2={0} y2={110} stroke="#FFCC00" strokeWidth={18} />
+                                       <line x1={-110} y1={0} x2={-80} y2={0} stroke="#FFCC00" strokeWidth={18} />
+                                       <line x1={80} y1={0} x2={110} y2={0} stroke="#FFCC00" strokeWidth={18} />
+                                       <text 
+                                         x={100} 
+                                         y={-80} 
+                                         fill="#FFCC00" 
+                                         fontSize={120} 
+                                         fontFamily="monospace" 
+                                         fontWeight="bold" 
+                                         stroke="#080A12"
+                                         strokeWidth={30}
+                                         paintOrder="stroke"
+                                         strokeLinejoin="round"
+                                         style={{ letterSpacing: '0.1em', filter: 'drop-shadow(0px 2px 2px rgba(255, 204, 0, 0.35))' }}
+                                       >
+                                         START
+                                       </text>
+                                     </g>
+                                   )}
+                                 </svg>
+                               </div>
+                            </div>
+                          )
+                       })()}
+                    </div>
+
+                  </div>
+
+                  {mpError && (
+                    <div className="text-[#FF005C] font-mono text-xs sm:text-sm font-bold text-center px-4 py-1.5 uppercase border-t border-[#FF005C]/30 bg-[#FF005C]/10">
+                      {mpError}
+                    </div>
+                  )}
+
+                  {/* Footer / Action */}
+                  <div className="shrink-0 p-3 md:p-4 border-t border-[#ffcc00]/30 bg-[#0d0f1b] backdrop-blur-sm flex gap-3">
+                    <button 
+                      disabled={!mpState.isHost || isMatchSettingsUpdatePending}
+                      onClick={handleConfirmMpMap}
+                      className={`flex-1 py-3 md:py-4 border font-black tracking-[0.2em] transition-all duration-200 uppercase text-sm md:text-base lg:text-lg select-none ${
+                        isMatchSettingsUpdatePending
+                          ? 'bg-[#ffcc00]/20 text-[#ffcc00]/50 border-[#ffcc00]/30 cursor-not-allowed'
+                          : 'bg-[#ffcc00] hover:bg-white text-black border-[#ffcc00] cursor-pointer shadow-[0_0_15px_rgba(255,204,0,0.3)]'
+                      }`}
+                    >
+                      {isMatchSettingsUpdatePending ? 'SYNCING...' : 'CONFIRM SELECTION'}
+                    </button>
+                  </div>
+                </motion.div>
+              ) : (
+                <motion.div
+                  key="lobby-box"
+                  initial={{ scale: 0.9 * menuScale, y: 20 }}
+                  animate={{ scale: menuScale, y: 0 }}
+                  exit={{ scale: 0.9 * menuScale, y: 20 }}
+                  transition={{ duration: 0.2, ease: "easeOut" }}
+                  className="w-full max-w-md flex flex-col border-2 border-[#ffcc00] bg-[#0d0f1b]/95 p-4 sm:p-6 shadow-[10px_10px_0_#ffcc00] pointer-events-auto items-center relative z-10 origin-center"
+                >
               <h2 className="text-3xl font-black text-white tracking-widest" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>MULTIPLAYER</h2>
               
               <div className="w-full border-t border-b border-[#ffcc00]/30 py-2.5 text-center my-4">
@@ -7627,13 +7887,18 @@ export default function GameCanvas() {
                                 </div>
                               </div>
 
-                              {/* Change Map Button (Placeholder) */}
+                              {/* Change Map Button */}
                               <button
-                                disabled={true}
-                                className="w-full py-1.5 bg-[#ffcc00]/10 border border-[#ffcc00]/30 text-[#ffcc00]/60 font-mono font-bold text-[9px] sm:text-[10px] tracking-widest uppercase cursor-not-allowed text-center select-none opacity-60"
-                                title="Map selector coming next"
+                                disabled={!mpState.isHost || isMatchSettingsUpdatePending}
+                                onClick={handleOpenMpMapSelector}
+                                className={`w-full py-1.5 border font-mono font-bold text-[9px] sm:text-[10px] tracking-widest uppercase text-center select-none transition-all ${
+                                  mpState.isHost && !isMatchSettingsUpdatePending
+                                    ? 'bg-[#ffcc00]/20 border-[#ffcc00] text-[#ffcc00] hover:bg-[#ffcc00]/30 hover:shadow-[0_0_10px_rgba(255,204,0,0.3)] cursor-pointer font-black'
+                                    : 'bg-[#ffcc00]/10 border-[#ffcc00]/20 text-[#ffcc00]/40 cursor-not-allowed opacity-60 font-bold'
+                                }`}
+                                title={!mpState.isHost ? 'Host controlled' : isMatchSettingsUpdatePending ? 'Syncing...' : 'Change Map'}
                               >
-                                CHANGE MAP (COMING NEXT)
+                                CHANGE MAP
                               </button>
                             </div>
 
@@ -7763,9 +8028,11 @@ export default function GameCanvas() {
                 BACK TO MENU
               </button>
             </motion.div>
-          </motion.div>
-        )}
-      </AnimatePresence>
+          )}
+        </AnimatePresence>
+      </motion.div>
+    )}
+  </AnimatePresence>
 
       {(uiState.status === 'PLAYING' || uiState.status === 'PAUSED') && (() => {
         const toolsData = {
