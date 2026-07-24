@@ -785,6 +785,14 @@ function clamp(val: number, min: number, max: number) {
   return Math.max(min, Math.min(val, max));
 }
 
+function circleOverlapsWall(x: number, y: number, radius: number, wall: { x: number; y: number; w: number; h: number }): boolean {
+  const closestX = Math.max(wall.x, Math.min(x, wall.x + wall.w));
+  const closestY = Math.max(wall.y, Math.min(y, wall.y + wall.h));
+  const dx = x - closestX;
+  const dy = y - closestY;
+  return dx * dx + dy * dy < radius * radius;
+}
+
 function resolveWallCollisions(
   x: number,
   y: number,
@@ -792,11 +800,10 @@ function resolveWallCollisions(
   walls: { x: number; y: number; w: number; h: number }[],
   prevX?: number,
   prevY?: number
-): { x: number; y: number; nx: number; ny: number; collided: boolean } {
+): { x: number; y: number; normals: { nx: number; ny: number }[]; collided: boolean } {
   let curX = x;
   let curY = y;
-  let finalNX = 0;
-  let finalNY = 0;
+  const normals: { nx: number; ny: number }[] = [];
   let anyCollision = false;
 
   const passes = 8;
@@ -825,39 +832,72 @@ function resolveWallCollisions(
           curX += nx * (overlap + epsilon);
           curY += ny * (overlap + epsilon);
         } else {
-          // Deeply embedded
-          const left = wall.x - radius - epsilon;
-          const right = wall.x + wall.w + radius + epsilon;
-          const top = wall.y - radius - epsilon;
-          const bottom = wall.y + wall.h + radius + epsilon;
+          // Embedded centre recovery
+          const candidates = [
+            { x: wall.x - radius - epsilon, y: curY, nx: -1, ny: 0, side: 'left' },
+            { x: wall.x + wall.w + radius + epsilon, y: curY, nx: 1, ny: 0, side: 'right' },
+            { x: curX, y: wall.y - radius - epsilon, nx: 0, ny: -1, side: 'top' },
+            { x: curX, y: wall.y + wall.h + radius + epsilon, nx: 0, ny: 1, side: 'bottom' }
+          ];
 
-          const dLeft = Math.abs(curX - left);
-          const dRight = Math.abs(curX - right);
-          const dTop = Math.abs(curY - top);
-          const dBottom = Math.abs(curY - bottom);
+          // Filter out-of-bounds candidates
+          const legalCandidates = candidates.filter(c => 
+            c.x >= radius && c.x <= MAP_WIDTH - radius && 
+            c.y >= radius && c.y <= MAP_HEIGHT - radius
+          );
 
-          let bestSide = 'closest';
-          if (prevX !== undefined && prevY !== undefined) {
-             if (prevX <= wall.x - radius) bestSide = 'left';
-             else if (prevX >= wall.x + wall.w + radius) bestSide = 'right';
-             else if (prevY <= wall.y - radius) bestSide = 'top';
-             else if (prevY >= wall.y + wall.h + radius) bestSide = 'bottom';
+          let chosen;
+          if (legalCandidates.length > 0) {
+            // Prefer returning to previous position
+            if (prevX !== undefined && prevY !== undefined) {
+              if (prevX <= wall.x - radius) chosen = legalCandidates.find(c => c.side === 'left');
+              else if (prevX >= wall.x + wall.w + radius) chosen = legalCandidates.find(c => c.side === 'right');
+              else if (prevY <= wall.y - radius) chosen = legalCandidates.find(c => c.side === 'top');
+              else if (prevY >= wall.y + wall.h + radius) chosen = legalCandidates.find(c => c.side === 'bottom');
+            }
+
+            if (!chosen) {
+              // Prefer candidates that are already free
+              const freeCandidates = legalCandidates.filter(c => {
+                for (const w of walls) {
+                  if (circleOverlapsWall(c.x, c.y, radius - epsilon, w)) return false;
+                }
+                return true;
+              });
+              
+              if (freeCandidates.length > 0) {
+                freeCandidates.sort((a, b) => {
+                  const da = (a.x - curX)**2 + (a.y - curY)**2;
+                  const db = (b.x - curX)**2 + (b.y - curY)**2;
+                  return da - db;
+                });
+                chosen = freeCandidates[0];
+              } else {
+                legalCandidates.sort((a, b) => {
+                  const da = (a.x - curX)**2 + (a.y - curY)**2;
+                  const db = (b.x - curX)**2 + (b.y - curY)**2;
+                  return da - db;
+                });
+                chosen = legalCandidates[0];
+              }
+            }
           }
 
-          if (bestSide === 'left') { curX = left; nx = -1; ny = 0; }
-          else if (bestSide === 'right') { curX = right; nx = 1; ny = 0; }
-          else if (bestSide === 'top') { curY = top; nx = 0; ny = -1; }
-          else if (bestSide === 'bottom') { curY = bottom; nx = 0; ny = 1; }
-          else {
-            const minD = Math.min(dLeft, dRight, dTop, dBottom);
-            if (minD === dLeft) { curX = left; nx = -1; ny = 0; }
-            else if (minD === dRight) { curX = right; nx = 1; ny = 0; }
-            else if (minD === dTop) { curY = top; nx = 0; ny = -1; }
-            else { curY = bottom; nx = 0; ny = 1; }
+          if (chosen) {
+            curX = chosen.x;
+            curY = chosen.y;
+            nx = chosen.nx;
+            ny = chosen.ny;
+          } else {
+             curX = clamp(curX, radius + epsilon, MAP_WIDTH - radius - epsilon);
+             curY = clamp(curY, radius + epsilon, MAP_HEIGHT - radius - epsilon);
           }
         }
-        finalNX = nx;
-        finalNY = ny;
+
+        if (nx !== 0 || ny !== 0) {
+          const isDup = normals.some(n => Math.abs(n.nx - nx) < 0.1 && Math.abs(n.ny - ny) < 0.1);
+          if (!isDup) normals.push({ nx, ny });
+        }
       }
     }
     if (!passCollision) break;
@@ -868,40 +908,56 @@ function resolveWallCollisions(
 
   let stillStuck = false;
   for (const wall of walls) {
-    if (curX > wall.x - radius + epsilon/2 && curX < wall.x + wall.w + radius - epsilon/2 &&
-        curY > wall.y - radius + epsilon/2 && curY < wall.y + wall.h + radius - epsilon/2) {
-       stillStuck = true;
-       break;
+    if (circleOverlapsWall(curX, curY, radius - epsilon/2, wall)) {
+      stillStuck = true;
+      break;
     }
   }
 
   if (stillStuck) {
-    const steps = 15;
-    const ringSize = 10;
-    let found = false;
-    for (let r = 1; r <= steps && !found; r++) {
-      const d = r * ringSize;
-      const angleSteps = r * 8;
-      for (let a = 0; a < angleSteps; a++) {
-        const angle = (a / angleSteps) * Math.PI * 2;
-        const tx = curX + Math.cos(angle) * d;
-        const ty = curY + Math.sin(angle) * d;
-        if (tx < radius || tx > MAP_WIDTH - radius || ty < radius || ty > MAP_HEIGHT - radius) continue;
-        let wallHit = false;
-        for (const wall of walls) {
-           if (tx > wall.x - radius + epsilon && tx < wall.x + wall.w + radius - epsilon &&
-               ty > wall.y - radius + epsilon && ty < wall.y + wall.h + radius - epsilon) {
-             wallHit = true;
-             break;
-           }
+    if (prevX !== undefined && prevY !== undefined) {
+      let prevValid = true;
+      for (const wall of walls) {
+        if (circleOverlapsWall(prevX, prevY, radius - epsilon, wall)) {
+          prevValid = false;
+          break;
         }
-        if (!wallHit) { curX = tx; curY = ty; found = true; break; }
+      }
+      if (prevValid) {
+        curX = prevX;
+        curY = prevY;
+        stillStuck = false;
+      }
+    }
+
+    if (stillStuck) {
+      const steps = 30; 
+      const ringSize = 10;
+      let found = false;
+      for (let r = 1; r <= steps && !found; r++) {
+        const d = r * ringSize;
+        const angleSteps = r * 8;
+        for (let a = 0; a < angleSteps; a++) {
+          const angle = (a / angleSteps) * Math.PI * 2;
+          const tx = curX + Math.cos(angle) * d;
+          const ty = curY + Math.sin(angle) * d;
+          if (tx < radius || tx > MAP_WIDTH - radius || ty < radius || ty > MAP_HEIGHT - radius) continue;
+          let wallHit = false;
+          for (const wall of walls) {
+            if (circleOverlapsWall(tx, ty, radius, wall)) {
+              wallHit = true;
+              break;
+            }
+          }
+          if (!wallHit) { curX = tx; curY = ty; found = true; break; }
+        }
       }
     }
   }
 
-  return { x: curX, y: curY, nx: finalNX, ny: finalNY, collided: anyCollision };
+  return { x: curX, y: curY, normals, collided: anyCollision };
 }
+
 
 function getConnectedComponent(startBlock: { x: number; y: number }, allBlocks: { x: number; y: number }[]): { x: number; y: number }[] {
   const component: { x: number; y: number }[] = [startBlock];
@@ -3876,6 +3932,8 @@ export default function GameCanvas() {
         }
         
         // 1. Update Player Movement
+        const pBeforeX = state.player.x;
+        const pBeforeY = state.player.y;
         if (STATUS === 'PLAYING') {
           if (state.player.dash.active && currentTime >= state.player.dash.endTime) {
             state.player.dash.active = false;
@@ -3988,9 +4046,22 @@ export default function GameCanvas() {
         }
 
         // Core Player Wall Collisions & Clamping (Run locally on BOTH Client and Host to prevent wall-phasing)
-        const playerResolved = resolveWallCollisions(state.player.x, state.player.y, state.player.radius, activeWalls);
+        const playerResolved = resolveWallCollisions(state.player.x, state.player.y, state.player.radius, activeWalls, pBeforeX, pBeforeY);
         state.player.x = playerResolved.x;
         state.player.y = playerResolved.y;
+
+        for (const n of playerResolved.normals) {
+          const dotVel = state.player.vx * n.nx + state.player.vy * n.ny;
+          if (dotVel < 0) {
+            state.player.vx -= dotVel * n.nx;
+            state.player.vy -= dotVel * n.ny;
+          }
+          const dotKb = state.player.kbvx * n.nx + state.player.kbvy * n.ny;
+          if (dotKb < 0) {
+            state.player.kbvx -= dotKb * n.nx;
+            state.player.kbvy -= dotKb * n.ny;
+          }
+        }
 
         // Local player instant death trigger checks (runs in ALL modes: Solo, Host, and Client)
         if (uiRef.current.status === 'PLAYING') {
@@ -4384,6 +4455,8 @@ export default function GameCanvas() {
 
           const kbvx = enemy.kbvx || 0;
           const kbvy = enemy.kbvy || 0;
+          const enemyBeforeX = enemy.x;
+          const enemyBeforeY = enemy.y;
           enemy.x += (moveX + kbvx) * dt;
           enemy.y += (moveY + kbvy) * dt;
 
@@ -4393,9 +4466,17 @@ export default function GameCanvas() {
           if (Math.abs(enemy.kbvy) < 1) enemy.kbvy = 0;
 
           // Enemy Wall Collisions
-          const enemyResolved = resolveWallCollisions(enemy.x, enemy.y, enemy.radius, activeWalls);
+          const enemyResolved = resolveWallCollisions(enemy.x, enemy.y, enemy.radius, activeWalls, enemyBeforeX, enemyBeforeY);
           enemy.x = enemyResolved.x;
           enemy.y = enemyResolved.y;
+
+          for (const n of enemyResolved.normals) {
+            const dotKb = enemy.kbvx * n.nx + enemy.kbvy * n.ny;
+            if (dotKb < 0) {
+              enemy.kbvx -= dotKb * n.nx;
+              enemy.kbvy -= dotKb * n.ny;
+            }
+          }
 
           // Enemy Shooting
           // Only shoot if roughly in line of sight (simple range check for now)
@@ -4511,6 +4592,8 @@ export default function GameCanvas() {
 
           const kbvx = b.kbvx || 0;
           const kbvy = b.kbvy || 0;
+          const bBeforeX = b.x;
+          const bBeforeY = b.y;
           b.x += (b.dx * b.speed + kbvx) * dt;
           b.y += (b.dy * b.speed + kbvy) * dt;
 
@@ -4525,14 +4608,20 @@ export default function GameCanvas() {
           if (b.y > MAP_HEIGHT - b.radius) { b.y = MAP_HEIGHT - b.radius; b.dy *= -1; }
           
           // Collision with Walls
-          const bResolved = resolveWallCollisions(b.x, b.y, b.radius, activeWalls, b.x - (b.dx * b.speed + kbvx) * dt, b.y - (b.dy * b.speed + kbvy) * dt);
+          const bResolved = resolveWallCollisions(b.x, b.y, b.radius, activeWalls, bBeforeX, bBeforeY);
           b.x = bResolved.x;
           b.y = bResolved.y;
-          if (bResolved.collided) {
-            const dot = b.dx * bResolved.nx + b.dy * bResolved.ny;
+
+          for (const n of bResolved.normals) {
+            const dot = b.dx * n.nx + b.dy * n.ny;
             if (dot < 0) {
-              b.dx = b.dx - 2 * dot * bResolved.nx;
-              b.dy = b.dy - 2 * dot * bResolved.ny;
+              b.dx = b.dx - 2 * dot * n.nx;
+              b.dy = b.dy - 2 * dot * n.ny;
+            }
+            const dotKb = b.kbvx * n.nx + b.kbvy * n.ny;
+            if (dotKb < 0) {
+              b.kbvx -= dotKb * n.nx;
+              b.kbvy -= dotKb * n.ny;
             }
           }
           
@@ -4872,6 +4961,9 @@ export default function GameCanvas() {
             speedMultiplier = 3.5;
           }
 
+          const bulletBeforeX = bullet.x;
+          const bulletBeforeY = bullet.y;
+
           bullet.x += bullet.dx * speedMultiplier * dt;
           bullet.y += bullet.dy * speedMultiplier * dt;
 
@@ -4891,14 +4983,15 @@ export default function GameCanvas() {
           }
 
           // Wall Collisions
-          const bulletResolved = resolveWallCollisions(bullet.x, bullet.y, bullet.radius, activeWalls, prevX, prevY);
+          const bulletResolved = resolveWallCollisions(bullet.x, bullet.y, bullet.radius, activeWalls, bulletBeforeX, bulletBeforeY);
           bullet.x = bulletResolved.x;
           bullet.y = bulletResolved.y;
-          if (bulletResolved.collided) {
-            const dot = bullet.dx * bulletResolved.nx + bullet.dy * bulletResolved.ny;
+
+          for (const n of bulletResolved.normals) {
+            const dot = bullet.dx * n.nx + bullet.dy * n.ny;
             if (dot < 0) {
-              bullet.dx = bullet.dx - 2 * dot * bulletResolved.nx;
-              bullet.dy = bullet.dy - 2 * dot * bulletResolved.ny;
+              bullet.dx = bullet.dx - 2 * dot * n.nx;
+              bullet.dy = bullet.dy - 2 * dot * n.ny;
               bullet.bounceCount++;
               bullet.isNeutral = true;
               const pColor = bullet.isNeutral ? '#aaaaaa' : (!bullet.isPlayer ? '#ff0066' : '#00ccff');
