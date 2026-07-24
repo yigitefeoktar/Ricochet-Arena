@@ -10,6 +10,14 @@ import {
   isValidMapId,
 } from '../shared/matchSettings';
 
+interface ActiveMatchSettingsRequest {
+  seq: number;
+  roomId: string;
+  timeoutId: ReturnType<typeof setTimeout> | null;
+  resolve: (value: boolean) => void;
+  isResolved: boolean;
+}
+
 const MAP_WIDTH = 3000;
 const MAP_HEIGHT = 3000;
 const PLAYER_SPEED = 200; // px per second
@@ -1704,10 +1712,29 @@ export default function GameCanvas() {
   const [isMatchSettingsUpdatePending, setIsMatchSettingsUpdatePending] = useState(false);
   const matchSettingsUpdatePendingRef = useRef(false);
   const pendingUpdateSeqRef = useRef(0);
+  const activeMatchSettingsRequestRef = useRef<ActiveMatchSettingsRequest | null>(null);
 
   const setMatchSettingsPending = useCallback((pending: boolean) => {
     matchSettingsUpdatePendingRef.current = pending;
     setIsMatchSettingsUpdatePending(pending);
+  }, []);
+
+  const cancelPendingMatchSettingsUpdate = useCallback(() => {
+    pendingUpdateSeqRef.current++;
+    const activeReq = activeMatchSettingsRequestRef.current;
+    if (activeReq) {
+      if (activeReq.timeoutId) {
+        clearTimeout(activeReq.timeoutId);
+        activeReq.timeoutId = null;
+      }
+      if (!activeReq.isResolved) {
+        activeReq.isResolved = true;
+        activeReq.resolve(false);
+      }
+      activeMatchSettingsRequestRef.current = null;
+    }
+    matchSettingsUpdatePendingRef.current = false;
+    setIsMatchSettingsUpdatePending(false);
   }, []);
 
   const applyAuthoritativeMatchSettings = useCallback((rawSettings: unknown): boolean => {
@@ -2346,8 +2373,7 @@ export default function GameCanvas() {
 
   const createRoom = () => {
     setMpError(null);
-    setMatchSettingsPending(false);
-    pendingUpdateSeqRef.current++;
+    cancelPendingMatchSettingsUpdate();
     const initialMode: GameMode = uiState.hardMode ? 'hard' : 'normal';
     const initialSettings: MatchSettings = {
       mapId: uiState.mapId,
@@ -2372,8 +2398,7 @@ export default function GameCanvas() {
 
   const joinRoom = () => {
     setMpError(null);
-    setMatchSettingsPending(false);
-    pendingUpdateSeqRef.current++;
+    cancelPendingMatchSettingsUpdate();
     if (!mpRef.current.joinCode) {
       setMpState(prev => ({ ...prev, error: 'Enter a valid code!' }));
       return;
@@ -2409,71 +2434,101 @@ export default function GameCanvas() {
   };
 
   const requestMatchSettingsUpdate = useCallback((proposed: MatchSettings): Promise<boolean> => {
+    cancelPendingMatchSettingsUpdate();
+
+    if (
+      !mpRef.current.isHost ||
+      !mpRef.current.roomId ||
+      !socketRef.current?.connected ||
+      !proposed ||
+      typeof proposed !== 'object' ||
+      !isValidMapId(proposed.mapId) ||
+      !isValidGameMode(proposed.gameMode)
+    ) {
+      return Promise.resolve(false);
+    }
+
+    const currentRoomId = mpRef.current.roomId;
+    const seq = ++pendingUpdateSeqRef.current;
+
+    setMatchSettingsPending(true);
+
     return new Promise<boolean>((resolve) => {
-      if (
-        !mpRef.current.isHost ||
-        !mpRef.current.roomId ||
-        !socketRef.current?.connected ||
-        !proposed ||
-        typeof proposed !== 'object' ||
-        !isValidMapId(proposed.mapId) ||
-        !isValidGameMode(proposed.gameMode)
-      ) {
-        resolve(false);
-        return;
-      }
+      let isResolved = false;
 
-      const currentRoomId = mpRef.current.roomId;
-      const seq = ++pendingUpdateSeqRef.current;
-
-      setMatchSettingsPending(true);
-
-      let timeoutId: ReturnType<typeof setTimeout> | null = null;
-
-      const cleanupAndResolve = (success: boolean, errorMsg?: string) => {
-        if (timeoutId) {
-          clearTimeout(timeoutId);
-          timeoutId = null;
-        }
-        if (seq === pendingUpdateSeqRef.current && mpRef.current.roomId === currentRoomId) {
-          setMatchSettingsPending(false);
-          if (!success && errorMsg) {
-            setMpError(errorMsg);
+      const activeReq: ActiveMatchSettingsRequest = {
+        seq,
+        roomId: currentRoomId,
+        timeoutId: null,
+        resolve: (val: boolean) => {
+          if (!isResolved) {
+            isResolved = true;
+            resolve(val);
           }
-        }
-        resolve(success);
+        },
+        isResolved: false,
       };
 
-      timeoutId = setTimeout(() => {
-        cleanupAndResolve(false, 'SETTINGS SYNC TIMEOUT');
+      const timeoutId = setTimeout(() => {
+        if (
+          activeMatchSettingsRequestRef.current === activeReq &&
+          pendingUpdateSeqRef.current === seq &&
+          mpRef.current.roomId === currentRoomId &&
+          !activeReq.isResolved
+        ) {
+          activeReq.isResolved = true;
+          activeMatchSettingsRequestRef.current = null;
+          matchSettingsUpdatePendingRef.current = false;
+          setIsMatchSettingsUpdatePending(false);
+          setMpError('SETTINGS SYNC TIMEOUT');
+          activeReq.resolve(false);
+        }
       }, 5000);
 
-      socketRef.current.emit(
+      activeReq.timeoutId = timeoutId;
+      activeMatchSettingsRequestRef.current = activeReq;
+
+      socketRef.current?.emit(
         'update_match_settings',
         currentRoomId,
         proposed,
         (res: any) => {
-          if (seq !== pendingUpdateSeqRef.current || mpRef.current.roomId !== currentRoomId) {
-            cleanupAndResolve(false);
+          if (
+            activeMatchSettingsRequestRef.current !== activeReq ||
+            pendingUpdateSeqRef.current !== seq ||
+            mpRef.current.roomId !== currentRoomId ||
+            activeReq.isResolved
+          ) {
             return;
           }
+
+          if (activeReq.timeoutId) {
+            clearTimeout(activeReq.timeoutId);
+            activeReq.timeoutId = null;
+          }
+          activeReq.isResolved = true;
+          activeMatchSettingsRequestRef.current = null;
+          matchSettingsUpdatePendingRef.current = false;
+          setIsMatchSettingsUpdatePending(false);
 
           if (res && res.success && res.matchSettings) {
             const applied = applyAuthoritativeMatchSettings(res.matchSettings);
             if (applied) {
               setMpError(null);
-              cleanupAndResolve(true);
+              activeReq.resolve(true);
             } else {
-              cleanupAndResolve(false, 'INVALID SETTINGS RECEIVED');
+              setMpError('SETTINGS UPDATE FAILED: INVALID SETTINGS');
+              activeReq.resolve(false);
             }
           } else {
             const err = res?.error || 'UPDATE_FAILED';
-            cleanupAndResolve(false, `SETTINGS UPDATE FAILED: ${err}`);
+            setMpError(`SETTINGS UPDATE FAILED: ${err}`);
+            activeReq.resolve(false);
           }
         }
       );
     });
-  }, [applyAuthoritativeMatchSettings, setMatchSettingsPending]);
+  }, [applyAuthoritativeMatchSettings, cancelPendingMatchSettingsUpdate, setMatchSettingsPending]);
 
   const resetGame = (
     deviceType?: 'desktop' | 'mobile',
@@ -2903,7 +2958,7 @@ export default function GameCanvas() {
     });
 
     socket.on('disconnect', () => {
-      setMatchSettingsPending(false);
+      cancelPendingMatchSettingsUpdate();
       setMpState(prev => ({ ...prev, isConnected: false }));
     });
 
@@ -3540,7 +3595,7 @@ export default function GameCanvas() {
     });
 
     return () => {
-
+      cancelPendingMatchSettingsUpdate();
       socket.disconnect();
     };
   }, []);
@@ -3552,6 +3607,7 @@ export default function GameCanvas() {
       if (roomParam) {
         const cleanRoom = roomParam.trim().toUpperCase();
         
+        cancelPendingMatchSettingsUpdate();
         // Show status LOBBY immediately and set state to show join attempt
         setUiState(prev => ({ ...prev, status: 'LOBBY' }));
         setMpState(prev => ({ 
@@ -7521,6 +7577,7 @@ export default function GameCanvas() {
               
               <button onClick={() => {
                 if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
+                cancelPendingMatchSettingsUpdate();
                 setMpState(prev => ({ ...prev, roomId: null, isHost: false, error: '' }));
                 setLobbyPlayers({});
                 setUiState(prev => ({ ...prev, status: 'MENU' }));
@@ -7830,6 +7887,7 @@ export default function GameCanvas() {
                        mpMenuOpenRef.current = false;
                        stateRef.current.shake = 20;
                        if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
+                       cancelPendingMatchSettingsUpdate();
                        setMpState(prev => ({ ...prev, roomId: null, isHost: false, error: '' }));
                        setUiState(prev => ({ ...prev, status: 'MENU' }));
                      }}
@@ -8014,6 +8072,7 @@ export default function GameCanvas() {
               <button 
                 onClick={() => {
                   if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
+                  cancelPendingMatchSettingsUpdate();
                   setMpState(prev => ({ ...prev, roomId: null, isHost: false, error: '' }));
                   setUiState(prev => ({ ...prev, status: 'MENU' }));
                 }}
@@ -8145,6 +8204,7 @@ export default function GameCanvas() {
                       <button 
                         onClick={() => {
                           if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
+                          cancelPendingMatchSettingsUpdate();
                           setMpState(prev => ({ ...prev, roomId: null, isHost: false, error: '' }));
                           setUiState(prev => ({ ...prev, status: 'MENU' }));
                           setConfirmLeaveMatches(false);
