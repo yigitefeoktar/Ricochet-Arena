@@ -1796,10 +1796,10 @@ export default function GameCanvas() {
   }, [uiState.status]);
 
   useEffect(() => {
-    if (isMpMapSelectOpen && (!mpState.isHost || !mpState.roomId || uiState.status !== 'LOBBY')) {
+    if (isMpMapSelectOpen && (!mpState.isHost || !mpState.roomId || !mpState.isConnected || uiState.status !== 'LOBBY')) {
       closeMpMapSelector();
     }
-  }, [isMpMapSelectOpen, mpState.isHost, mpState.roomId, uiState.status, closeMpMapSelector]);
+  }, [isMpMapSelectOpen, mpState.isHost, mpState.roomId, mpState.isConnected, uiState.status, closeMpMapSelector]);
 
   const [isMapSelectOpen, setIsMapSelectOpen] = useState(false);
   const [mpTick, setMpTick] = useState(0);
@@ -3037,6 +3037,7 @@ export default function GameCanvas() {
 
     socket.on('disconnect', () => {
       cancelPendingMatchSettingsUpdate();
+      closeMpMapSelector();
       setMpState(prev => ({ ...prev, isConnected: false }));
     });
 
