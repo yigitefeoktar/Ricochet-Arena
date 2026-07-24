@@ -1705,7 +1705,7 @@ export default function GameCanvas() {
   const [copyFeedback, setCopyFeedback] = useState(false);
   const [copyLinkFeedback, setCopyLinkFeedback] = useState(false);
   const [showQrCode, setShowQrCode] = useState(false);
-  const [activeLobbyTab, setActiveLobbyTab] = useState<'invite' | 'players'>('invite');
+  const [activeLobbyTab, setActiveLobbyTab] = useState<'invite' | 'players' | 'match'>('invite');
   const [lobbyPlayers, setLobbyPlayers] = useState<Record<string, { name: string, colorIdx: number, isHost: boolean }>>({});
   const [lobbyMatchSettings, setLobbyMatchSettings] = useState<MatchSettings>(DEFAULT_MATCH_SETTINGS);
   const lobbyMatchSettingsRef = useRef<MatchSettings>(DEFAULT_MATCH_SETTINGS);
@@ -7360,6 +7360,16 @@ export default function GameCanvas() {
                     >
                       PLAYERS
                     </button>
+                    <button
+                      onClick={() => setActiveLobbyTab('match')}
+                      className={`flex-1 py-2 text-[10px] font-black tracking-widest text-center transition-all cursor-pointer ${
+                        activeLobbyTab === 'match'
+                          ? 'bg-[#ffcc00] text-black font-black'
+                          : 'text-[#ffcc00]/60 hover:text-white hover:bg-[#ffcc00]/10'
+                      }`}
+                    >
+                      MATCH
+                    </button>
                   </div>
 
                   <div className="w-full h-[345px] flex flex-col mb-5">
@@ -7424,7 +7434,7 @@ export default function GameCanvas() {
                           </button>
                         </div>
                       </div>
-                    ) : (
+                    ) : activeLobbyTab === 'players' ? (
                       <div className="w-full h-full flex flex-col justify-start">
                         {/* Profiling setup */}
                         <p className="text-[#ffcc00]/70 font-bold tracking-[0.15em] text-[10px] uppercase w-full text-left mb-1 text-xs">
@@ -7511,6 +7521,174 @@ export default function GameCanvas() {
                           ))}
                         </div>
                       </div>
+                    ) : (
+                      (() => {
+                        const currentMap = MAPS[lobbyMatchSettings.mapId] || MAPS.medium;
+                        const gameModesList: { id: GameMode; name: string; label: string }[] = [
+                          { id: 'normal', name: 'NORMAL', label: 'STANDARD' },
+                          { id: 'hard', name: 'HARD', label: 'FAST SPAWNS' },
+                          { id: 'impossible', name: 'IMPOSSIBLE', label: 'OVERCLOCKED' },
+                        ];
+
+                        return (
+                          <div className="w-full h-full flex flex-col justify-between overflow-y-auto pr-0.5 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+                            {/* Top Header Row inside MATCH tab */}
+                            <div className="flex items-center justify-between w-full mb-1.5 shrink-0">
+                              <span className="text-[#ffcc00]/80 font-mono font-bold tracking-[0.15em] text-[10px] uppercase">
+                                MATCH CONFIG
+                              </span>
+                              <div className="flex items-center gap-1.5">
+                                {isMatchSettingsUpdatePending && (
+                                  <span className="text-[#ffcc00] animate-pulse font-mono font-extrabold text-[9px] tracking-widest uppercase">
+                                    SYNCING...
+                                  </span>
+                                )}
+                                {!mpState.isHost && (
+                                  <span className="text-[#ffcc00]/80 border border-[#ffcc00]/40 bg-[#ffcc00]/10 px-1.5 py-0.5 font-mono text-[8px] font-black tracking-widest uppercase rounded-sm">
+                                    HOST CONTROLLED
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Map Preview Card */}
+                            <div className="w-full bg-black/40 border border-white/10 p-2 flex flex-col gap-2 shrink-0">
+                              <div className="flex items-center gap-2.5">
+                                {/* Miniature SVG Preview */}
+                                <div className="w-20 h-20 shrink-0 border border-[#ffcc00]/30 bg-[#050508] relative overflow-hidden flex items-center justify-center shadow-[inset_0_0_8px_rgba(255,204,0,0.1)]">
+                                  <svg 
+                                    viewBox="0 0 3000 3000" 
+                                    className="w-full h-full aspect-square"
+                                    preserveAspectRatio="xMidYMid meet"
+                                  >
+                                    <rect width="3000" height="3000" fill="#050508" stroke="rgba(255, 204, 0, 0.4)" strokeWidth="15" />
+                                    <defs>
+                                      <pattern id="match-tab-preview-grid" width="300" height="300" patternUnits="userSpaceOnUse">
+                                        <path d="M 300 0 L 0 0 0 300" fill="none" stroke="rgba(255, 204, 0, 0.08)" strokeWidth="8" />
+                                      </pattern>
+                                    </defs>
+                                    <rect width="3000" height="3000" fill="url(#match-tab-preview-grid)" />
+
+                                    {/* Walls */}
+                                    {currentMap.walls.map((w, i) => (
+                                      <rect 
+                                        key={`wall-${i}`}
+                                        x={w.x}
+                                        y={w.y}
+                                        width={w.w}
+                                        height={w.h}
+                                        fill="rgba(255, 204, 0, 0.25)"
+                                        stroke="#ffcc00"
+                                        strokeWidth="15"
+                                      />
+                                    ))}
+
+                                    {/* Spawners */}
+                                    {currentMap.spawners.map((s, i) => (
+                                      <circle 
+                                        key={`spawner-${i}`}
+                                        cx={s.x}
+                                        cy={s.y}
+                                        r={s.radius}
+                                        fill="#ff00ff"
+                                        stroke="rgba(255, 255, 255, 0.5)"
+                                        strokeWidth="8"
+                                      />
+                                    ))}
+
+                                    {/* Spawn Point */}
+                                    {currentMap.spawnPoint && (
+                                      <g transform={`translate(${currentMap.spawnPoint.x}, ${currentMap.spawnPoint.y})`} pointerEvents="none" aria-hidden="true">
+                                        <circle r={70} fill="rgba(255, 204, 0, 0.15)" stroke="#FFCC00" strokeWidth={18} />
+                                        <circle r={18} fill="#FFCC00" />
+                                      </g>
+                                    )}
+                                  </svg>
+                                </div>
+
+                                {/* Map info */}
+                                <div className="flex-1 min-w-0 flex flex-col justify-center text-left">
+                                  <div className="flex items-center justify-between gap-1 mb-0.5">
+                                    <span className="text-white font-mono font-black text-xs truncate uppercase tracking-wider">
+                                      {currentMap.name}
+                                    </span>
+                                    <span className={`text-[9px] font-mono font-black tracking-widest shrink-0 uppercase px-1 py-0.5 bg-black/50 border border-white/10 ${
+                                      currentMap.difficulty === 'EASY' ? 'text-green-400' :
+                                      currentMap.difficulty === 'MEDIUM' ? 'text-yellow-400' :
+                                      currentMap.difficulty === 'HARD' ? 'text-red-400' :
+                                      'text-purple-400'
+                                    }`}>
+                                      {currentMap.difficulty}
+                                    </span>
+                                  </div>
+                                  <p className="text-[#ffcc00]/70 font-mono text-[9px] leading-snug line-clamp-3 text-left">
+                                    {currentMap.description}
+                                  </p>
+                                </div>
+                              </div>
+
+                              {/* Change Map Button (Placeholder) */}
+                              <button
+                                disabled={true}
+                                className="w-full py-1.5 bg-[#ffcc00]/10 border border-[#ffcc00]/30 text-[#ffcc00]/60 font-mono font-bold text-[9px] sm:text-[10px] tracking-widest uppercase cursor-not-allowed text-center select-none opacity-60"
+                                title="Map selector coming next"
+                              >
+                                CHANGE MAP (COMING NEXT)
+                              </button>
+                            </div>
+
+                            {/* Game Mode Selection */}
+                            <div className="w-full flex flex-col mt-2 shrink-0">
+                              <p className="text-[#ffcc00]/80 font-mono font-bold tracking-[0.15em] text-[10px] uppercase w-full text-left mb-1.5">
+                                GAME MODE
+                              </p>
+
+                              <div className="grid grid-cols-3 gap-1.5 w-full">
+                                {gameModesList.map((mode) => {
+                                  const isSelected = lobbyMatchSettings.gameMode === mode.id;
+                                  const isDisabled = !mpState.isHost || isMatchSettingsUpdatePending;
+
+                                  return (
+                                    <button
+                                      key={mode.id}
+                                      disabled={isDisabled}
+                                      onClick={() => {
+                                        if (!mpState.isHost || isMatchSettingsUpdatePending) return;
+                                        requestMatchSettingsUpdate({
+                                          mapId: lobbyMatchSettings.mapId,
+                                          gameMode: mode.id,
+                                        });
+                                      }}
+                                      className={`flex flex-col items-center justify-center p-2 border font-mono transition-all text-center uppercase relative select-none ${
+                                        isSelected
+                                          ? mpState.isHost
+                                            ? 'bg-[#ffcc00] text-black border-[#ffcc00] font-black shadow-[0_0_12px_rgba(255,204,0,0.35)] cursor-pointer'
+                                            : 'bg-[#ffcc00]/30 text-[#ffcc00] border-[#ffcc00] font-black cursor-not-allowed'
+                                          : mpState.isHost
+                                            ? isMatchSettingsUpdatePending
+                                              ? 'bg-black/40 text-white/40 border-white/10 opacity-50 cursor-not-allowed'
+                                              : 'bg-black/50 text-[#ffcc00]/70 border-white/15 hover:border-[#ffcc00]/60 hover:text-[#ffcc00] hover:bg-[#ffcc00]/10 cursor-pointer font-bold'
+                                            : 'bg-black/30 text-white/30 border-white/10 cursor-not-allowed opacity-40 font-normal'
+                                      }`}
+                                    >
+                                      <span className="text-[10px] sm:text-xs font-black tracking-wider leading-tight">
+                                        {mode.name}
+                                      </span>
+                                      <span className={`text-[7px] sm:text-[8px] mt-1 font-mono tracking-tight leading-none ${
+                                        isSelected
+                                          ? mpState.isHost ? 'text-black/80 font-bold' : 'text-[#ffcc00]/80 font-bold'
+                                          : 'text-white/40'
+                                      }`}>
+                                        {mode.label}
+                                      </span>
+                                    </button>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })()
                     )}
                   </div>
 
