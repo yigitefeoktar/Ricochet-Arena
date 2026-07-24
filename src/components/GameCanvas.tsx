@@ -1723,6 +1723,11 @@ export default function GameCanvas() {
     setIsMatchSettingsUpdatePending(pending);
   }, []);
 
+  const closeMpMapSelector = useCallback(() => {
+    setIsMpMapSelectOpen(false);
+    setPendingLobbyMapId(lobbyMatchSettingsRef.current.mapId);
+  }, []);
+
   const cancelPendingMatchSettingsUpdate = useCallback(() => {
     pendingUpdateSeqRef.current++;
     const activeReq = activeMatchSettingsRequestRef.current;
@@ -1739,7 +1744,6 @@ export default function GameCanvas() {
     }
     matchSettingsUpdatePendingRef.current = false;
     setIsMatchSettingsUpdatePending(false);
-    setIsMpMapSelectOpen(false);
   }, []);
 
   const applyAuthoritativeMatchSettings = useCallback((rawSettings: unknown): boolean => {
@@ -1793,9 +1797,9 @@ export default function GameCanvas() {
 
   useEffect(() => {
     if (isMpMapSelectOpen && (!mpState.isHost || !mpState.roomId || uiState.status !== 'LOBBY')) {
-      setIsMpMapSelectOpen(false);
+      closeMpMapSelector();
     }
-  }, [isMpMapSelectOpen, mpState.isHost, mpState.roomId, uiState.status]);
+  }, [isMpMapSelectOpen, mpState.isHost, mpState.roomId, uiState.status, closeMpMapSelector]);
 
   const [isMapSelectOpen, setIsMapSelectOpen] = useState(false);
   const [mpTick, setMpTick] = useState(0);
@@ -2385,6 +2389,7 @@ export default function GameCanvas() {
   const createRoom = () => {
     setMpError(null);
     cancelPendingMatchSettingsUpdate();
+    closeMpMapSelector();
     const initialMode: GameMode = uiState.hardMode ? 'hard' : 'normal';
     const initialSettings: MatchSettings = {
       mapId: uiState.mapId,
@@ -2410,6 +2415,7 @@ export default function GameCanvas() {
   const joinRoom = () => {
     setMpError(null);
     cancelPendingMatchSettingsUpdate();
+    closeMpMapSelector();
     if (!mpRef.current.joinCode) {
       setMpState(prev => ({ ...prev, error: 'Enter a valid code!' }));
       return;
@@ -2571,18 +2577,36 @@ export default function GameCanvas() {
   }, [mpState.isHost, isMatchSettingsUpdatePending, selectAndScrollToMpMap]);
 
   const handleConfirmMpMap = useCallback(async () => {
-    if (!mpRef.current.isHost || matchSettingsUpdatePendingRef.current) return;
+    if (
+      !mpRef.current.isHost ||
+      !mpRef.current.roomId ||
+      !socketRef.current?.connected ||
+      matchSettingsUpdatePendingRef.current ||
+      !pendingLobbyMapId ||
+      !MAPS[pendingLobbyMapId]
+    ) {
+      return;
+    }
     const targetMap = pendingLobbyMapId;
-    const currentMode = lobbyMatchSettingsRef.current.gameMode;
+    const latestMode = lobbyMatchSettingsRef.current.gameMode;
     const success = await requestMatchSettingsUpdate({
       mapId: targetMap,
-      gameMode: currentMode,
+      gameMode: latestMode,
     });
     if (success) {
-      setIsMpMapSelectOpen(false);
+      closeMpMapSelector();
       setActiveLobbyTab('match');
     }
-  }, [pendingLobbyMapId, requestMatchSettingsUpdate]);
+  }, [pendingLobbyMapId, requestMatchSettingsUpdate, closeMpMapSelector]);
+
+  const handleRandomMpMap = useCallback(() => {
+    if (!mpRef.current.isHost || matchSettingsUpdatePendingRef.current) return;
+    const keys = Object.keys(MAPS);
+    if (keys.length > 0) {
+      const randomKey = keys[Math.floor(Math.random() * keys.length)];
+      selectAndScrollToMpMap(randomKey);
+    }
+  }, [selectAndScrollToMpMap]);
 
   const resetGame = (
     deviceType?: 'desktop' | 'mobile',
@@ -7577,6 +7601,18 @@ export default function GameCanvas() {
                     >
                       {isMatchSettingsUpdatePending ? 'SYNCING...' : 'CONFIRM SELECTION'}
                     </button>
+                    <button
+                      disabled={!mpState.isHost || isMatchSettingsUpdatePending}
+                      onClick={handleRandomMpMap}
+                      className={`flex-none aspect-square py-3 md:py-4 px-3 md:px-4 flex items-center justify-center border transition-all duration-200 select-none ${
+                        !mpState.isHost || isMatchSettingsUpdatePending
+                          ? 'bg-[#ffcc00]/10 border-[#ffcc00]/30 text-[#ffcc00]/40 cursor-not-allowed'
+                          : 'bg-[#ffcc00]/20 hover:bg-[#ffcc00]/40 text-[#ffcc00] border-[#ffcc00] cursor-pointer shadow-[0_0_10px_rgba(255,204,0,0.2)]'
+                      }`}
+                      title="Select Random Map"
+                    >
+                      <Shuffle className="w-5 h-5 md:w-6 md:h-6" />
+                    </button>
                   </div>
                 </motion.div>
               ) : (
@@ -8021,6 +8057,7 @@ export default function GameCanvas() {
               <button onClick={() => {
                 if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
                 cancelPendingMatchSettingsUpdate();
+                closeMpMapSelector();
                 setMpState(prev => ({ ...prev, roomId: null, isHost: false, error: '' }));
                 setLobbyPlayers({});
                 setUiState(prev => ({ ...prev, status: 'MENU' }));
