@@ -785,6 +785,124 @@ function clamp(val: number, min: number, max: number) {
   return Math.max(min, Math.min(val, max));
 }
 
+function resolveWallCollisions(
+  x: number,
+  y: number,
+  radius: number,
+  walls: { x: number; y: number; w: number; h: number }[],
+  prevX?: number,
+  prevY?: number
+): { x: number; y: number; nx: number; ny: number; collided: boolean } {
+  let curX = x;
+  let curY = y;
+  let finalNX = 0;
+  let finalNY = 0;
+  let anyCollision = false;
+
+  const passes = 8;
+  const epsilon = 0.05;
+
+  for (let p = 0; p < passes; p++) {
+    let passCollision = false;
+    for (const wall of walls) {
+      const closestX = Math.max(wall.x, Math.min(curX, wall.x + wall.w));
+      const closestY = Math.max(wall.y, Math.min(curY, wall.y + wall.h));
+      const dx = curX - closestX;
+      const dy = curY - closestY;
+      const distSq = dx * dx + dy * dy;
+
+      if (distSq < radius * radius) {
+        anyCollision = true;
+        passCollision = true;
+        const dist = Math.sqrt(distSq);
+        let nx = 0;
+        let ny = 0;
+
+        if (dist > 0.001) {
+          nx = dx / dist;
+          ny = dy / dist;
+          const overlap = radius - dist;
+          curX += nx * (overlap + epsilon);
+          curY += ny * (overlap + epsilon);
+        } else {
+          // Deeply embedded
+          const left = wall.x - radius - epsilon;
+          const right = wall.x + wall.w + radius + epsilon;
+          const top = wall.y - radius - epsilon;
+          const bottom = wall.y + wall.h + radius + epsilon;
+
+          const dLeft = Math.abs(curX - left);
+          const dRight = Math.abs(curX - right);
+          const dTop = Math.abs(curY - top);
+          const dBottom = Math.abs(curY - bottom);
+
+          let bestSide = 'closest';
+          if (prevX !== undefined && prevY !== undefined) {
+             if (prevX <= wall.x - radius) bestSide = 'left';
+             else if (prevX >= wall.x + wall.w + radius) bestSide = 'right';
+             else if (prevY <= wall.y - radius) bestSide = 'top';
+             else if (prevY >= wall.y + wall.h + radius) bestSide = 'bottom';
+          }
+
+          if (bestSide === 'left') { curX = left; nx = -1; ny = 0; }
+          else if (bestSide === 'right') { curX = right; nx = 1; ny = 0; }
+          else if (bestSide === 'top') { curY = top; nx = 0; ny = -1; }
+          else if (bestSide === 'bottom') { curY = bottom; nx = 0; ny = 1; }
+          else {
+            const minD = Math.min(dLeft, dRight, dTop, dBottom);
+            if (minD === dLeft) { curX = left; nx = -1; ny = 0; }
+            else if (minD === dRight) { curX = right; nx = 1; ny = 0; }
+            else if (minD === dTop) { curY = top; nx = 0; ny = -1; }
+            else { curY = bottom; nx = 0; ny = 1; }
+          }
+        }
+        finalNX = nx;
+        finalNY = ny;
+      }
+    }
+    if (!passCollision) break;
+  }
+
+  curX = Math.max(radius + epsilon, Math.min(curX, MAP_WIDTH - radius - epsilon));
+  curY = Math.max(radius + epsilon, Math.min(curY, MAP_HEIGHT - radius - epsilon));
+
+  let stillStuck = false;
+  for (const wall of walls) {
+    if (curX > wall.x - radius + epsilon/2 && curX < wall.x + wall.w + radius - epsilon/2 &&
+        curY > wall.y - radius + epsilon/2 && curY < wall.y + wall.h + radius - epsilon/2) {
+       stillStuck = true;
+       break;
+    }
+  }
+
+  if (stillStuck) {
+    const steps = 15;
+    const ringSize = 10;
+    let found = false;
+    for (let r = 1; r <= steps && !found; r++) {
+      const d = r * ringSize;
+      const angleSteps = r * 8;
+      for (let a = 0; a < angleSteps; a++) {
+        const angle = (a / angleSteps) * Math.PI * 2;
+        const tx = curX + Math.cos(angle) * d;
+        const ty = curY + Math.sin(angle) * d;
+        if (tx < radius || tx > MAP_WIDTH - radius || ty < radius || ty > MAP_HEIGHT - radius) continue;
+        let wallHit = false;
+        for (const wall of walls) {
+           if (tx > wall.x - radius + epsilon && tx < wall.x + wall.w + radius - epsilon &&
+               ty > wall.y - radius + epsilon && ty < wall.y + wall.h + radius - epsilon) {
+             wallHit = true;
+             break;
+           }
+        }
+        if (!wallHit) { curX = tx; curY = ty; found = true; break; }
+      }
+    }
+  }
+
+  return { x: curX, y: curY, nx: finalNX, ny: finalNY, collided: anyCollision };
+}
+
 function getConnectedComponent(startBlock: { x: number; y: number }, allBlocks: { x: number; y: number }[]): { x: number; y: number }[] {
   const component: { x: number; y: number }[] = [startBlock];
   const visited = new Set<string>();
@@ -2776,8 +2894,9 @@ export default function GameCanvas() {
       if (typeof input.x !== 'number' || !Number.isFinite(input.x)) return;
       if (typeof input.y !== 'number' || !Number.isFinite(input.y)) return;
 
-      const clampedX = clamp(input.x, PLAYER_RADIUS, MAP_WIDTH - PLAYER_RADIUS);
-      const clampedY = clamp(input.y, PLAYER_RADIUS, MAP_HEIGHT - PLAYER_RADIUS);
+      const resolved = resolveWallCollisions(input.x, input.y, PLAYER_RADIUS, activeWalls, prevPlayer.x, prevPlayer.y);
+      const clampedX = resolved.x;
+      const clampedY = resolved.y;
 
       const currentTime = performance.now();
 
@@ -3869,28 +3988,9 @@ export default function GameCanvas() {
         }
 
         // Core Player Wall Collisions & Clamping (Run locally on BOTH Client and Host to prevent wall-phasing)
-        for (const wall of activeWalls) {
-          const closestX = clamp(state.player.x, wall.x, wall.x + wall.w);
-          const closestY = clamp(state.player.y, wall.y, wall.y + wall.h);
-
-          const distX = state.player.x - closestX;
-          const distY = state.player.y - closestY;
-          const distXSquare = distX * distX;
-          const distYSquare = distY * distY;
-          const distSq = distXSquare + distYSquare;
-
-          if (distSq < state.player.radius * state.player.radius) {
-            const dist = Math.sqrt(distSq);
-            if (dist > 0) {
-              const overlap = state.player.radius - dist;
-              state.player.x += (distX / dist) * overlap;
-              state.player.y += (distY / dist) * overlap;
-            }
-          }
-        }
-
-        state.player.x = clamp(state.player.x, state.player.radius, MAP_WIDTH - state.player.radius);
-        state.player.y = clamp(state.player.y, state.player.radius, MAP_HEIGHT - state.player.radius);
+        const playerResolved = resolveWallCollisions(state.player.x, state.player.y, state.player.radius, activeWalls);
+        state.player.x = playerResolved.x;
+        state.player.y = playerResolved.y;
 
         // Local player instant death trigger checks (runs in ALL modes: Solo, Host, and Client)
         if (uiRef.current.status === 'PLAYING') {
@@ -4293,23 +4393,9 @@ export default function GameCanvas() {
           if (Math.abs(enemy.kbvy) < 1) enemy.kbvy = 0;
 
           // Enemy Wall Collisions
-          for (const wall of activeWalls) {
-            const closestX = clamp(enemy.x, wall.x, wall.x + wall.w);
-            const closestY = clamp(enemy.y, wall.y, wall.y + wall.h);
-
-            const vDistX = enemy.x - closestX;
-            const vDistY = enemy.y - closestY;
-            const distSq = vDistX * vDistX + vDistY * vDistY;
-
-            if (distSq < enemy.radius * enemy.radius) {
-              const cDist = Math.sqrt(distSq);
-              if (cDist > 0) {
-                const overlap = enemy.radius - cDist;
-                enemy.x += (vDistX / cDist) * overlap;
-                enemy.y += (vDistY / cDist) * overlap;
-              }
-            }
-          }
+          const enemyResolved = resolveWallCollisions(enemy.x, enemy.y, enemy.radius, activeWalls);
+          enemy.x = enemyResolved.x;
+          enemy.y = enemyResolved.y;
 
           // Enemy Shooting
           // Only shoot if roughly in line of sight (simple range check for now)
@@ -4439,23 +4525,14 @@ export default function GameCanvas() {
           if (b.y > MAP_HEIGHT - b.radius) { b.y = MAP_HEIGHT - b.radius; b.dy *= -1; }
           
           // Collision with Walls
-          for (const wall of activeWalls) {
-            const closestX = clamp(b.x, wall.x, wall.x + wall.w);
-            const closestY = clamp(b.y, wall.y, wall.y + wall.h);
-            const distX = b.x - closestX;
-            const distY = b.y - closestY;
-            const dist = Math.sqrt(distX * distX + distY * distY);
-            if (dist < b.radius) {
-              if (Math.abs(b.x - closestX) >= Math.abs(b.y - closestY)) {
-                  b.dx *= -1;
-              } else {
-                  b.dy *= -1;
-              }
-              const overlap = b.radius - dist;
-              if (dist > 0) {
-                  b.x += (distX / dist) * overlap;
-                  b.y += (distY / dist) * overlap;
-              }
+          const bResolved = resolveWallCollisions(b.x, b.y, b.radius, activeWalls, b.x - (b.dx * b.speed + kbvx) * dt, b.y - (b.dy * b.speed + kbvy) * dt);
+          b.x = bResolved.x;
+          b.y = bResolved.y;
+          if (bResolved.collided) {
+            const dot = b.dx * bResolved.nx + b.dy * bResolved.ny;
+            if (dot < 0) {
+              b.dx = b.dx - 2 * dot * bResolved.nx;
+              b.dy = b.dy - 2 * dot * bResolved.ny;
             }
           }
           
@@ -4814,39 +4891,18 @@ export default function GameCanvas() {
           }
 
           // Wall Collisions
-          for (const wall of activeWalls) {
-            const closestX = clamp(bullet.x, wall.x, wall.x + wall.w);
-            const closestY = clamp(bullet.y, wall.y, wall.y + wall.h);
-
-            const distX = bullet.x - closestX;
-            const distY = bullet.y - closestY;
-            const distSq = distX * distX + distY * distY;
-
-            if (distSq < bullet.radius * bullet.radius) {
-              const dist = Math.sqrt(distSq);
-              if (dist > 0) {
-                const overlap = bullet.radius - dist;
-                const nx = distX / dist;
-                const ny = distY / dist;
-
-                bullet.x += nx * overlap;
-                bullet.y += ny * overlap;
-
-                const dot = bullet.dx * nx + bullet.dy * ny;
-                bullet.dx = bullet.dx - 2 * dot * nx;
-                bullet.dy = bullet.dy - 2 * dot * ny;
-                bullet.bounceCount++;
-                bullet.isNeutral = true;
-                const pColor = bullet.isNeutral ? '#aaaaaa' : (!bullet.isPlayer ? '#ff0066' : '#00ccff');
-                spawnParticles(bullet.x, bullet.y, pColor, 5);
-              } else {
-                bullet.dx *= -1;
-                bullet.dy *= -1;
-                bullet.bounceCount++;
-                bullet.isNeutral = true;
-                const pColor = bullet.isNeutral ? '#aaaaaa' : (!bullet.isPlayer ? '#ff0066' : '#00ccff');
-                spawnParticles(bullet.x, bullet.y, pColor, 5);
-              }
+          const bulletResolved = resolveWallCollisions(bullet.x, bullet.y, bullet.radius, activeWalls, prevX, prevY);
+          bullet.x = bulletResolved.x;
+          bullet.y = bulletResolved.y;
+          if (bulletResolved.collided) {
+            const dot = bullet.dx * bulletResolved.nx + bullet.dy * bulletResolved.ny;
+            if (dot < 0) {
+              bullet.dx = bullet.dx - 2 * dot * bulletResolved.nx;
+              bullet.dy = bullet.dy - 2 * dot * bulletResolved.ny;
+              bullet.bounceCount++;
+              bullet.isNeutral = true;
+              const pColor = bullet.isNeutral ? '#aaaaaa' : (!bullet.isPlayer ? '#ff0066' : '#00ccff');
+              spawnParticles(bullet.x, bullet.y, pColor, 5);
             }
           }
 
