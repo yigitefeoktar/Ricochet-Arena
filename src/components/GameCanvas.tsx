@@ -2697,7 +2697,10 @@ export default function GameCanvas() {
       }
     }
     state.bouncerCapacity = 2;
-    state.spawners = mapDef.spawners.map((s: any) => ({ ...s }));
+    state.spawners = mapDef.spawners.map((s: any) => ({
+      ...s,
+      hp: selectedGameMode === 'impossible' ? (s.maxHp ?? s.hp ?? 100) : s.hp
+    }));
     state.particles = [];
     state.trails = [];
     state.shockwaves = [];
@@ -5665,11 +5668,13 @@ export default function GameCanvas() {
               const dx = spawner.x - bullet.x;
               const dy = spawner.y - bullet.y;
               if (dx * dx + dy * dy < (spawner.radius + bullet.radius) ** 2) {
-                spawner.hp -= 20; // 5 hits to destroy (100 HP)
+                if (state.gameMode !== 'impossible') {
+                  spawner.hp -= 20; // 5 hits to destroy (100 HP)
+                }
                 spawnParticles(bullet.x, bullet.y, '#ffffff', 10);
                 bulletDestroyed = true;
                 
-                if (spawner.hp <= 0) {
+                if (state.gameMode !== 'impossible' && spawner.hp <= 0) {
                   const destroyedSpawner = { x: spawner.x, y: spawner.y, radius: spawner.radius };
                   const spawnerColor = state.hardMode ? '#ff3300' : '#ff00ff';
                   spawnParticles(spawner.x, spawner.y, spawnerColor, 100);
@@ -6088,9 +6093,10 @@ export default function GameCanvas() {
         ctx.fill();
         
         // Hexagon shape
+        const isImpossibleMode = state.gameMode === 'impossible';
         ctx.shadowBlur = 10;
-        ctx.fillStyle = state.hardMode ? '#2a0500' : '#1a001a';
-        ctx.strokeStyle = glowColor;
+        ctx.fillStyle = isImpossibleMode ? 'rgba(226, 232, 240, 0.14)' : (state.hardMode ? '#2a0500' : '#1a001a');
+        ctx.strokeStyle = isImpossibleMode ? '#E5E7EB' : glowColor;
         ctx.lineWidth = 3;
         ctx.beginPath();
         const hexRot = currentTime / (1500 / spawnerSpeedScale);
@@ -6114,29 +6120,31 @@ export default function GameCanvas() {
 
         ctx.restore();
 
-        // Draw HP bar
-        const hpPercent = Math.max(0, spawner.hp / spawner.maxHp);
-        const barW = 60;
-        const barH = 6;
-        const barX = spawner.x - barW / 2;
-        const barY = spawner.y - spawner.radius - 20;
+        if (state.gameMode !== 'impossible') {
+          // Draw HP bar
+          const hpPercent = Math.max(0, spawner.hp / spawner.maxHp);
+          const barW = 60;
+          const barH = 6;
+          const barX = spawner.x - barW / 2;
+          const barY = spawner.y - spawner.radius - 20;
 
-        // Background
-        ctx.fillStyle = 'rgba(255, 0, 80, 0.2)';
-        ctx.fillRect(barX, barY, barW, barH);
-        
-        // Fill
-        ctx.fillStyle = '#ff0050';
-        ctx.save();
-        ctx.shadowColor = '#ff0050';
-        ctx.shadowBlur = 5;
-        ctx.fillRect(barX, barY, barW * hpPercent, barH);
-        ctx.restore();
+          // Background
+          ctx.fillStyle = 'rgba(255, 0, 80, 0.2)';
+          ctx.fillRect(barX, barY, barW, barH);
+          
+          // Fill
+          ctx.fillStyle = '#ff0050';
+          ctx.save();
+          ctx.shadowColor = '#ff0050';
+          ctx.shadowBlur = 5;
+          ctx.fillRect(barX, barY, barW * hpPercent, barH);
+          ctx.restore();
 
-        // Border
-        ctx.strokeStyle = state.hardMode ? '#ff3300' : '#ff00ff';
-        ctx.lineWidth = 1;
-        ctx.strokeRect(barX, barY, barW, barH);
+          // Border
+          ctx.strokeStyle = state.hardMode ? '#ff3300' : '#ff00ff';
+          ctx.lineWidth = 1;
+          ctx.strokeRect(barX, barY, barW, barH);
+        }
       }
 
       // Draw Bouncers
