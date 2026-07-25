@@ -2546,26 +2546,46 @@ export default function GameCanvas() {
           throw new Error("INVALID SAVE FILE");
         }
 
-        if (!data || typeof data !== 'object' || Array.isArray(data)) {
-          throw new Error("INVALID SAVE FILE");
-        }
+        const isFiniteNum = (v: any): v is number => typeof v === 'number' && Number.isFinite(v);
+        const isBoundedNum = (v: any, min: number, max: number): v is number => isFiniteNum(v) && v >= min && v <= max;
+        const isBoundedInt = (v: any, min: number, max: number): v is number => isFiniteNum(v) && Number.isInteger(v) && v >= min && v <= max;
+        const isObject = (v: any): v is Record<string, any> => v !== null && typeof v === 'object' && !Array.isArray(v);
 
-        if (data.format !== undefined && data.format !== SAVE_FORMAT) {
+        if (!isObject(data)) {
           throw new Error("INVALID SAVE FILE");
         }
 
         let version = 0;
-        if (data.version !== undefined) {
-          if (typeof data.version !== 'number' || !Number.isInteger(data.version) || data.version < 0 || data.version > SAVE_VERSION) {
+        if (data.format === undefined && data.version === undefined) {
+          version = 0;
+        } else if (data.version !== undefined) {
+          if (typeof data.version !== 'number' || !Number.isInteger(data.version) || data.version < 0) {
+            throw new Error("INVALID SAVE FILE");
+          }
+          if (data.version > SAVE_VERSION) {
             throw new Error("UNSUPPORTED SAVE VERSION");
           }
+          if (data.version === 1) {
+            if (data.format !== SAVE_FORMAT) {
+              throw new Error("INVALID SAVE FILE");
+            }
+            if (!isFiniteNum(data.savedClockMs) || data.savedClockMs < 0) {
+              throw new Error("INVALID SAVE FILE");
+            }
+            if (!isFiniteNum(data.savedAt)) {
+              throw new Error("INVALID SAVE FILE");
+            }
+          } else if (data.version === 0) {
+            if (data.format !== undefined) {
+              throw new Error("INVALID SAVE FILE");
+            }
+          }
           version = data.version;
-        }
-
-        if (!data.ui || typeof data.ui !== 'object' || Array.isArray(data.ui)) {
+        } else {
           throw new Error("INVALID SAVE FILE");
         }
-        if (!data.state || typeof data.state !== 'object' || Array.isArray(data.state)) {
+
+        if (!isObject(data.ui) || !isObject(data.state)) {
           throw new Error("INVALID SAVE FILE");
         }
 
@@ -2582,22 +2602,22 @@ export default function GameCanvas() {
           throw new Error("INVALID SAVE FILE");
         }
 
-        if (!rawState.player || typeof rawState.player !== 'object' || Array.isArray(rawState.player)) {
+        if (!isObject(rawState.player)) {
           throw new Error("INVALID SAVE FILE");
         }
 
         const rawPlayer = rawState.player;
-        if (typeof rawPlayer.x !== 'number' || !isFinite(rawPlayer.x) || typeof rawPlayer.y !== 'number' || !isFinite(rawPlayer.y)) {
+        if (!isFiniteNum(rawPlayer.x) || !isFiniteNum(rawPlayer.y)) {
           throw new Error("INVALID SAVE FILE");
         }
 
-        const rawEnemies = Array.isArray(rawState.enemies) ? rawState.enemies : null;
-        const rawBullets = Array.isArray(rawState.bullets) ? rawState.bullets : null;
-        const rawBlocks = Array.isArray(rawState.blocks) ? rawState.blocks : null;
-        const rawBouncers = Array.isArray(rawState.bouncers) ? rawState.bouncers : null;
-        const rawZones = Array.isArray(rawState.zones) ? rawState.zones : null;
+        const rawEnemies = rawState.enemies;
+        const rawBullets = rawState.bullets;
+        const rawBlocks = rawState.blocks;
+        const rawBouncers = rawState.bouncers;
+        const rawZones = rawState.zones;
 
-        if (!rawEnemies || !rawBullets || !rawBlocks || !rawBouncers || !rawZones) {
+        if (!Array.isArray(rawEnemies) || !Array.isArray(rawBullets) || !Array.isArray(rawBlocks) || !Array.isArray(rawBouncers) || !Array.isArray(rawZones)) {
           throw new Error("INVALID SAVE FILE");
         }
 
@@ -2606,38 +2626,22 @@ export default function GameCanvas() {
         }
 
         const loadNow = performance.now();
-        const savedClockMs = (version >= 1 && typeof data.savedClockMs === 'number' && isFinite(data.savedClockMs))
+        const savedClockMs = (version >= 1 && isFiniteNum(data.savedClockMs) && data.savedClockMs >= 0)
           ? data.savedClockMs
           : null;
 
         const adjustTime = (val: any): number => {
-          if (typeof val !== 'number' || !isFinite(val) || val === 0) return 0;
+          if (!isFiniteNum(val) || val <= 0) return 0;
           if (savedClockMs !== null) {
-            return loadNow + (val - savedClockMs);
-          } else {
-            return loadNow;
+            const diff = val - savedClockMs;
+            return loadNow + diff;
           }
+          return loadNow;
         };
 
         const cleanGameMode: GameMode = (rawUi.gameMode && isValidGameMode(rawUi.gameMode))
           ? rawUi.gameMode
           : (rawUi.hardMode ? 'hard' : 'normal');
-
-        const cleanUi = {
-          status: 'PAUSED' as const,
-          score: typeof rawUi.score === 'number' && isFinite(rawUi.score) ? Math.max(0, Math.floor(rawUi.score)) : 0,
-          deviceType: (rawUi.deviceType === 'mobile' || rawUi.deviceType === 'desktop') ? rawUi.deviceType : uiRef.current.deviceType,
-          activeTool: (rawUi.activeTool === 'weapon' || rawUi.activeTool === 'special' || rawUi.activeTool === 'build') ? rawUi.activeTool : 'special',
-          blocks: typeof rawUi.blocks === 'number' && isFinite(rawUi.blocks) ? Math.max(0, Math.floor(rawUi.blocks)) : 50,
-          spawnersLeft: typeof rawUi.spawnersLeft === 'number' && isFinite(rawUi.spawnersLeft) ? Math.max(0, Math.floor(rawUi.spawnersLeft)) : mapDef.spawners.length,
-          mapId: mapId,
-          hardMode: cleanGameMode !== 'normal',
-          gameMode: cleanGameMode,
-          buttonCounters: {
-            special: typeof rawUi.buttonCounters?.special === 'number' && isFinite(rawUi.buttonCounters.special) ? Math.max(0, Math.floor(rawUi.buttonCounters.special)) : 0,
-            build: typeof rawUi.buttonCounters?.build === 'number' && isFinite(rawUi.buttonCounters.build) ? Math.max(0, Math.floor(rawUi.buttonCounters.build)) : 0
-          }
-        };
 
         let px = rawPlayer.x;
         let py = rawPlayer.y;
@@ -2662,8 +2666,8 @@ export default function GameCanvas() {
           py = pSpawn.pos.y;
         }
 
-        const rawDash = rawPlayer.dash || {};
-        const rawBuild = rawPlayer.build || {};
+        const rawDash = isObject(rawPlayer.dash) ? rawPlayer.dash : {};
+        const rawBuild = isObject(rawPlayer.build) ? rawPlayer.build : {};
 
         let reconstructedDash;
         let reconstructedBuild;
@@ -2674,9 +2678,9 @@ export default function GameCanvas() {
           reconstructedDash = {
             active: Boolean(rawDash.active) && dashEndTime > loadNow,
             endTime: dashEndTime,
-            targetX: typeof rawDash.targetX === 'number' && isFinite(rawDash.targetX) ? rawDash.targetX : 0,
-            targetY: typeof rawDash.targetY === 'number' && isFinite(rawDash.targetY) ? rawDash.targetY : 0,
-            shieldRadius: typeof rawDash.shieldRadius === 'number' && isFinite(rawDash.shieldRadius) ? rawDash.shieldRadius : 60,
+            targetX: isFiniteNum(rawDash.targetX) ? rawDash.targetX : 0,
+            targetY: isFiniteNum(rawDash.targetY) ? rawDash.targetY : 0,
+            shieldRadius: isBoundedNum(rawDash.shieldRadius, 1, 500) ? rawDash.shieldRadius : 60,
             lastTime: dashLastTime,
             wasReady: Boolean(rawDash.wasReady),
           };
@@ -2686,8 +2690,8 @@ export default function GameCanvas() {
           reconstructedBuild = {
             active: Boolean(rawBuild.active) && buildEndTime > loadNow,
             endTime: buildEndTime,
-            lastBlockX: typeof rawBuild.lastBlockX === 'number' && isFinite(rawBuild.lastBlockX) ? rawBuild.lastBlockX : 0,
-            lastBlockY: typeof rawBuild.lastBlockY === 'number' && isFinite(rawBuild.lastBlockY) ? rawBuild.lastBlockY : 0,
+            lastBlockX: isFiniteNum(rawBuild.lastBlockX) ? rawBuild.lastBlockX : 0,
+            lastBlockY: isFiniteNum(rawBuild.lastBlockY) ? rawBuild.lastBlockY : 0,
             lastTime: buildLastTime,
           };
         } else {
@@ -2712,24 +2716,27 @@ export default function GameCanvas() {
         const reconstructedPlayer = {
           x: px,
           y: py,
-          vx: typeof rawPlayer.vx === 'number' && isFinite(rawPlayer.vx) ? rawPlayer.vx : 0,
-          vy: typeof rawPlayer.vy === 'number' && isFinite(rawPlayer.vy) ? rawPlayer.vy : 0,
-          kbvx: typeof rawPlayer.kbvx === 'number' && isFinite(rawPlayer.kbvx) ? rawPlayer.kbvx : 0,
-          kbvy: typeof rawPlayer.kbvy === 'number' && isFinite(rawPlayer.kbvy) ? rawPlayer.kbvy : 0,
+          vx: isFiniteNum(rawPlayer.vx) ? rawPlayer.vx : 0,
+          vy: isFiniteNum(rawPlayer.vy) ? rawPlayer.vy : 0,
+          kbvx: isFiniteNum(rawPlayer.kbvx) ? rawPlayer.kbvx : 0,
+          kbvy: isFiniteNum(rawPlayer.kbvy) ? rawPlayer.kbvy : 0,
           processedZoneKbs: Array.isArray(rawPlayer.processedZoneKbs) && savedClockMs !== null
-            ? rawPlayer.processedZoneKbs.map(adjustTime)
+            ? rawPlayer.processedZoneKbs.filter(isFiniteNum).slice(0, 50).map(adjustTime)
             : [],
           radius: PLAYER_RADIUS,
           lastShoot: savedClockMs !== null ? adjustTime(rawPlayer.lastShoot) : 0,
           dash: reconstructedDash,
           build: reconstructedBuild,
           recentBlocks: Array.isArray(rawPlayer.recentBlocks)
-            ? rawPlayer.recentBlocks.map((rb: any) => ({
-                key: String(rb.key || ''),
-                x: Number(rb.x) || 0,
-                y: Number(rb.y) || 0,
-                timestamp: adjustTime(rb.timestamp),
-              }))
+            ? rawPlayer.recentBlocks
+                .slice(0, 50)
+                .filter((rb: any) => isObject(rb) && isFiniteNum(rb.x) && isFiniteNum(rb.y) && typeof rb.key === 'string')
+                .map((rb: any) => ({
+                  key: rb.key,
+                  x: rb.x,
+                  y: rb.y,
+                  timestamp: adjustTime(rb.timestamp),
+                }))
             : [],
         };
 
@@ -2737,7 +2744,7 @@ export default function GameCanvas() {
           const savedSpawner = Array.isArray(rawState.spawners) ? rawState.spawners[idx] : null;
           const maxHp = canonicalSpawner.maxHp ?? canonicalSpawner.hp ?? 100;
           let hp = canonicalSpawner.hp;
-          if (savedSpawner && typeof savedSpawner.hp === 'number' && isFinite(savedSpawner.hp)) {
+          if (isObject(savedSpawner) && isFiniteNum(savedSpawner.hp)) {
             hp = Math.max(0, Math.min(maxHp, Math.floor(savedSpawner.hp)));
           }
           return {
@@ -2747,76 +2754,126 @@ export default function GameCanvas() {
           };
         });
 
-        const reconstructedBlocks = rawBlocks.map((b: any) => ({
-          x: Math.max(0, Math.min(MAP_WIDTH, Number(b.x) || 0)),
-          y: Math.max(0, Math.min(MAP_HEIGHT, Number(b.y) || 0)),
-          size: typeof b.size === 'number' && isFinite(b.size) ? b.size : 30,
+        const reconstructedBlocks = rawBlocks.filter((b: any) =>
+          isObject(b) && isFiniteNum(b.x) && isFiniteNum(b.y)
+        ).map((b: any) => ({
+          x: Math.max(0, Math.min(MAP_WIDTH, b.x)),
+          y: Math.max(0, Math.min(MAP_HEIGHT, b.y)),
+          size: isBoundedNum(b.size, 1, 500) ? b.size : 30,
           createdAt: adjustTime(b.createdAt),
-          colorIdx: typeof b.colorIdx === 'number' ? b.colorIdx : undefined,
-        })).filter(b => isFinite(b.x) && isFinite(b.y));
+          colorIdx: isBoundedInt(b.colorIdx, 0, 10) ? b.colorIdx : undefined,
+        }));
 
-        const reconstructedBullets = rawBullets.map((b: any) => ({
+        const reconstructedBullets = rawBullets.filter((b: any) =>
+          isObject(b) && isFiniteNum(b.x) && isFiniteNum(b.y) && isFiniteNum(b.dx) && isFiniteNum(b.dy)
+        ).map((b: any) => ({
           id: typeof b.id === 'string' ? b.id : undefined,
-          x: Math.max(0, Math.min(MAP_WIDTH, Number(b.x) || 0)),
-          y: Math.max(0, Math.min(MAP_HEIGHT, Number(b.y) || 0)),
-          dx: typeof b.dx === 'number' && isFinite(b.dx) ? b.dx : 0,
-          dy: typeof b.dy === 'number' && isFinite(b.dy) ? b.dy : 0,
-          radius: typeof b.radius === 'number' && isFinite(b.radius) ? b.radius : 6,
+          x: Math.max(0, Math.min(MAP_WIDTH, b.x)),
+          y: Math.max(0, Math.min(MAP_HEIGHT, b.y)),
+          dx: isBoundedNum(b.dx, -10000, 10000) ? b.dx : 0,
+          dy: isBoundedNum(b.dy, -10000, 10000) ? b.dy : 0,
+          radius: isBoundedNum(b.radius, 1, 100) ? b.radius : BULLET_RADIUS,
           isPlayer: Boolean(b.isPlayer),
-          bounceCount: typeof b.bounceCount === 'number' && isFinite(b.bounceCount) ? Math.max(0, Math.floor(b.bounceCount)) : 0,
+          bounceCount: isBoundedInt(b.bounceCount, 0, 1000) ? b.bounceCount : 0,
           spawnTime: adjustTime(b.spawnTime),
           isNeutral: Boolean(b.isNeutral),
-          colorIdx: typeof b.colorIdx === 'number' ? b.colorIdx : undefined,
-          targetX: typeof b.targetX === 'number' && isFinite(b.targetX) ? b.targetX : undefined,
-          targetY: typeof b.targetY === 'number' && isFinite(b.targetY) ? b.targetY : undefined,
+          colorIdx: isBoundedInt(b.colorIdx, 0, 10) ? b.colorIdx : undefined,
+          targetX: isFiniteNum(b.targetX) ? b.targetX : undefined,
+          targetY: isFiniteNum(b.targetY) ? b.targetY : undefined,
           repelMultiplied: Boolean(b.repelMultiplied),
-          allowedBlockKeys: Array.isArray(b.allowedBlockKeys) ? b.allowedBlockKeys.filter((k: any) => typeof k === 'string') : undefined,
-          leftBlockKeys: Array.isArray(b.leftBlockKeys) ? b.leftBlockKeys.filter((k: any) => typeof k === 'string') : undefined,
-        })).filter(b => isFinite(b.x) && isFinite(b.y));
+          allowedBlockKeys: Array.isArray(b.allowedBlockKeys) ? b.allowedBlockKeys.filter((k: any) => typeof k === 'string').slice(0, 50) : undefined,
+          leftBlockKeys: Array.isArray(b.leftBlockKeys) ? b.leftBlockKeys.filter((k: any) => typeof k === 'string').slice(0, 50) : undefined,
+        }));
 
-        const reconstructedEnemies = rawEnemies.map((e: any) => ({
+        const reconstructedEnemies = rawEnemies.filter((e: any) =>
+          isObject(e) && isFiniteNum(e.x) && isFiniteNum(e.y)
+        ).map((e: any) => ({
           id: typeof e.id === 'string' ? e.id : undefined,
-          x: Math.max(0, Math.min(MAP_WIDTH, Number(e.x) || 0)),
-          y: Math.max(0, Math.min(MAP_HEIGHT, Number(e.y) || 0)),
-          radius: typeof e.radius === 'number' && isFinite(e.radius) ? e.radius : ENEMY_RADIUS,
+          x: Math.max(0, Math.min(MAP_WIDTH, e.x)),
+          y: Math.max(0, Math.min(MAP_HEIGHT, e.y)),
+          radius: isBoundedNum(e.radius, 1, 200) ? e.radius : ENEMY_RADIUS,
           lastShoot: adjustTime(e.lastShoot),
-          speed: typeof e.speed === 'number' && isFinite(e.speed) ? e.speed : ENEMY_SPEED,
-          targetX: typeof e.targetX === 'number' && isFinite(e.targetX) ? e.targetX : undefined,
-          targetY: typeof e.targetY === 'number' && isFinite(e.targetY) ? e.targetY : undefined,
-          kbvx: typeof e.kbvx === 'number' && isFinite(e.kbvx) ? e.kbvx : 0,
-          kbvy: typeof e.kbvy === 'number' && isFinite(e.kbvy) ? e.kbvy : 0,
-          processedZoneKbs: Array.isArray(e.processedZoneKbs) && savedClockMs !== null ? e.processedZoneKbs.map(adjustTime) : [],
-        })).filter(e => isFinite(e.x) && isFinite(e.y));
+          speed: isBoundedNum(e.speed, 0, 2000) ? e.speed : ENEMY_SPEED,
+          targetX: isFiniteNum(e.targetX) ? e.targetX : undefined,
+          targetY: isFiniteNum(e.targetY) ? e.targetY : undefined,
+          kbvx: isFiniteNum(e.kbvx) ? e.kbvx : 0,
+          kbvy: isFiniteNum(e.kbvy) ? e.kbvy : 0,
+          processedZoneKbs: Array.isArray(e.processedZoneKbs) && savedClockMs !== null
+            ? e.processedZoneKbs.filter(isFiniteNum).slice(0, 50).map(adjustTime)
+            : [],
+        }));
 
-        const reconstructedBouncers = rawBouncers.map((b: any) => ({
+        const reconstructedBouncers = rawBouncers.filter((b: any) =>
+          isObject(b) && isFiniteNum(b.x) && isFiniteNum(b.y)
+        ).map((b: any) => ({
           id: typeof b.id === 'string' ? b.id : undefined,
-          x: Math.max(0, Math.min(MAP_WIDTH, Number(b.x) || 0)),
-          y: Math.max(0, Math.min(MAP_HEIGHT, Number(b.y) || 0)),
-          dx: typeof b.dx === 'number' && isFinite(b.dx) ? b.dx : 1,
-          dy: typeof b.dy === 'number' && isFinite(b.dy) ? b.dy : 0,
-          size: typeof b.size === 'number' && isFinite(b.size) ? b.size : 1,
-          radius: typeof b.radius === 'number' && isFinite(b.radius) ? b.radius : 24,
-          speed: typeof b.speed === 'number' && isFinite(b.speed) ? b.speed : ENEMY_SPEED,
+          x: Math.max(0, Math.min(MAP_WIDTH, b.x)),
+          y: Math.max(0, Math.min(MAP_HEIGHT, b.y)),
+          dx: isBoundedNum(b.dx, -10000, 10000) ? b.dx : 1,
+          dy: isBoundedNum(b.dy, -10000, 10000) ? b.dy : 0,
+          size: isBoundedNum(b.size, 0.1, 100) ? b.size : 1,
+          radius: isBoundedNum(b.radius, 1, 200) ? b.radius : 24,
+          speed: isBoundedNum(b.speed, 0, 2000) ? b.speed : ENEMY_SPEED,
           lastDirChange: adjustTime(b.lastDirChange),
           lastMultiply: adjustTime(b.lastMultiply),
-          targetX: typeof b.targetX === 'number' && isFinite(b.targetX) ? b.targetX : undefined,
-          targetY: typeof b.targetY === 'number' && isFinite(b.targetY) ? b.targetY : undefined,
-          kbvx: typeof b.kbvx === 'number' && isFinite(b.kbvx) ? b.kbvx : 0,
-          kbvy: typeof b.kbvy === 'number' && isFinite(b.kbvy) ? b.kbvy : 0,
-          processedZoneKbs: Array.isArray(b.processedZoneKbs) && savedClockMs !== null ? b.processedZoneKbs.map(adjustTime) : [],
-        })).filter(b => isFinite(b.x) && isFinite(b.y));
+          targetX: isFiniteNum(b.targetX) ? b.targetX : undefined,
+          targetY: isFiniteNum(b.targetY) ? b.targetY : undefined,
+          kbvx: isFiniteNum(b.kbvx) ? b.kbvx : 0,
+          kbvy: isFiniteNum(b.kbvy) ? b.kbvy : 0,
+          processedZoneKbs: Array.isArray(b.processedZoneKbs) && savedClockMs !== null
+            ? b.processedZoneKbs.filter(isFiniteNum).slice(0, 50).map(adjustTime)
+            : [],
+        }));
 
-        const reconstructedZones = rawZones.map((z: any) => ({
-          x: Math.max(0, Math.min(MAP_WIDTH, Number(z.x) || 0)),
-          y: Math.max(0, Math.min(MAP_HEIGHT, Number(z.y) || 0)),
-          innerRadius: typeof z.innerRadius === 'number' && isFinite(z.innerRadius) ? z.innerRadius : 0,
-          outerRadius: typeof z.outerRadius === 'number' && isFinite(z.outerRadius) ? z.outerRadius : 200,
-          duration: typeof z.duration === 'number' && isFinite(z.duration) ? z.duration : 1000,
+        const reconstructedZones = rawZones.filter((z: any) =>
+          isObject(z) && isFiniteNum(z.x) && isFiniteNum(z.y)
+        ).map((z: any) => ({
+          x: Math.max(0, Math.min(MAP_WIDTH, z.x)),
+          y: Math.max(0, Math.min(MAP_HEIGHT, z.y)),
+          innerRadius: isBoundedNum(z.innerRadius, 0, 1000) ? z.innerRadius : 0,
+          outerRadius: isBoundedNum(z.outerRadius, 1, 2000) ? z.outerRadius : 200,
+          duration: isBoundedNum(z.duration, 0, 60000) ? z.duration : 1000,
           spawnTime: adjustTime(z.spawnTime),
-          ownerId: typeof z.ownerId === 'string' ? z.ownerId : 'local',
-          colorIdx: typeof z.colorIdx === 'number' ? z.colorIdx : undefined,
+          ownerId: 'local',
+          colorIdx: isBoundedInt(z.colorIdx, 0, 10) ? z.colorIdx : undefined,
           type: z.type === 'repel' ? ('repel' as const) : undefined,
-        })).filter(z => isFinite(z.x) && isFinite(z.y));
+        }));
+
+        const spawnersLeftCount = reconstructedSpawners.filter(s => (s.hp ?? 0) > 0).length;
+
+        let specialCooldown = 0;
+        if (reconstructedDash.active) {
+          specialCooldown = Math.max(0, Math.ceil((reconstructedDash.endTime - loadNow) / 1000));
+        } else if (reconstructedDash.endTime > 0) {
+          specialCooldown = Math.max(0, Math.ceil((DASH_COOLDOWN - (loadNow - reconstructedDash.endTime)) / 1000));
+        } else {
+          specialCooldown = Math.max(0, Math.ceil((DASH_COOLDOWN - (loadNow - reconstructedDash.lastTime)) / 1000));
+        }
+
+        let buildCooldown = 0;
+        if (reconstructedBuild.active) {
+          buildCooldown = Math.max(0, Math.ceil((reconstructedBuild.endTime - loadNow) / 1000));
+        } else if (reconstructedBuild.endTime > 0) {
+          buildCooldown = Math.max(0, Math.ceil((BUILD_COOLDOWN - (loadNow - reconstructedBuild.endTime)) / 1000));
+        } else {
+          buildCooldown = Math.max(0, Math.ceil((BUILD_COOLDOWN - (loadNow - reconstructedBuild.lastTime)) / 1000));
+        }
+
+        const cleanUi = {
+          status: 'PAUSED' as const,
+          score: isFiniteNum(rawUi.score) ? Math.max(0, Math.floor(rawUi.score)) : 0,
+          deviceType: isMobileRef.current ? ('mobile' as const) : ('desktop' as const),
+          activeTool: (rawUi.activeTool === 'weapon' || rawUi.activeTool === 'special' || rawUi.activeTool === 'build') ? rawUi.activeTool : 'special',
+          blocks: isFiniteNum(rawUi.blocks) ? Math.max(0, Math.floor(rawUi.blocks)) : 50,
+          spawnersLeft: spawnersLeftCount,
+          mapId: mapId,
+          hardMode: cleanGameMode !== 'normal',
+          gameMode: cleanGameMode,
+          buttonCounters: {
+            special: specialCooldown,
+            build: buildCooldown,
+          }
+        };
 
         const camW = canvasRef.current?.width || containerSize.width || 1200;
         const camH = canvasRef.current?.height || containerSize.height || 800;
@@ -2833,13 +2890,13 @@ export default function GameCanvas() {
           playerActionAuthority: {},
           forceBroadcast: false,
           blocks: reconstructedBlocks,
-          nextBlockScore: typeof rawState.nextBlockScore === 'number' && isFinite(rawState.nextBlockScore) ? rawState.nextBlockScore : 100,
+          nextBlockScore: isFiniteNum(rawState.nextBlockScore) ? rawState.nextBlockScore : 100,
           bullets: reconstructedBullets,
           enemies: reconstructedEnemies,
           bouncers: reconstructedBouncers,
           zones: reconstructedZones,
-          nextEntityId: typeof rawState.nextEntityId === 'number' && isFinite(rawState.nextEntityId) ? rawState.nextEntityId : 1,
-          bouncerCapacity: typeof rawState.bouncerCapacity === 'number' && isFinite(rawState.bouncerCapacity) ? rawState.bouncerCapacity : 2,
+          nextEntityId: isFiniteNum(rawState.nextEntityId) ? rawState.nextEntityId : 1,
+          bouncerCapacity: isFiniteNum(rawState.bouncerCapacity) ? rawState.bouncerCapacity : 2,
           spawners: reconstructedSpawners,
           keys: { w: false, a: false, s: false, d: false },
           mouse: { x: 0, y: 0, worldX: 0, worldY: 0, down: false, justDown: false, rightDown: false, rightJustDown: false },
@@ -2863,7 +2920,7 @@ export default function GameCanvas() {
           shake: 0,
           lastTime: loadNow,
           lastEnemySpawn: adjustTime(rawState.lastEnemySpawn),
-          enemySpawnRate: typeof rawState.enemySpawnRate === 'number' && isFinite(rawState.enemySpawnRate) ? rawState.enemySpawnRate : 3000,
+          enemySpawnRate: isFiniteNum(rawState.enemySpawnRate) ? rawState.enemySpawnRate : 3000,
           gameMode: cleanGameMode,
           hardMode: cleanGameMode !== 'normal',
           tutorial: { active: false, spawnerIndex: null, enemySpawned: false, timer: 0 },
@@ -2887,7 +2944,10 @@ export default function GameCanvas() {
         setLoadError(null);
 
       } catch (err: any) {
-        const msg = (err && typeof err.message === 'string' && err.message.length < 30) ? err.message : "INVALID SAVE FILE";
+        const allowedMessages = ["INVALID SAVE FILE", "FILE TOO LARGE", "UNSUPPORTED SAVE VERSION", "UNKNOWN MAP"];
+        const msg = (err && typeof err.message === 'string' && allowedMessages.includes(err.message))
+          ? err.message
+          : "INVALID SAVE FILE";
         setLoadError(msg);
       } finally {
         if (fileInputRef.current) fileInputRef.current.value = "";
