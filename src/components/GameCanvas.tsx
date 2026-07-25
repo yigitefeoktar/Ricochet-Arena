@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { io, Socket } from 'socket.io-client';
-import { Copy, Check, Play, X, Shuffle } from 'lucide-react';
+import { Copy, Check, Shuffle } from 'lucide-react';
 import {
   GameMode,
   MatchSettings,
