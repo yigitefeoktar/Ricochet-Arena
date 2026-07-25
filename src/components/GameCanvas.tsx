@@ -2532,6 +2532,11 @@ export default function GameCanvas() {
       if (fileInputRef.current) fileInputRef.current.value = "";
     };
 
+    reader.onabort = () => {
+      setLoadError("INVALID SAVE FILE");
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    };
+
     reader.onload = (event) => {
       try {
         const text = event.target?.result as string;
@@ -2550,6 +2555,8 @@ export default function GameCanvas() {
         const isBoundedNum = (v: any, min: number, max: number): v is number => isFiniteNum(v) && v >= min && v <= max;
         const isBoundedInt = (v: any, min: number, max: number): v is number => isFiniteNum(v) && Number.isInteger(v) && v >= min && v <= max;
         const isObject = (v: any): v is Record<string, any> => v !== null && typeof v === 'object' && !Array.isArray(v);
+        const isValidColorIdx = (c: any): boolean => c === undefined || isBoundedInt(c, 0, PLAYER_COLORS.length - 1);
+        const isValidStringOpt = (s: any, maxLen = 128): boolean => s === undefined || (typeof s === 'string' && s.length <= maxLen);
 
         if (!isObject(data)) {
           throw new Error("INVALID SAVE FILE");
@@ -2572,13 +2579,11 @@ export default function GameCanvas() {
             if (!isFiniteNum(data.savedClockMs) || data.savedClockMs < 0) {
               throw new Error("INVALID SAVE FILE");
             }
-            if (!isFiniteNum(data.savedAt)) {
+            if (!isFiniteNum(data.savedAt) || data.savedAt < 0) {
               throw new Error("INVALID SAVE FILE");
             }
           } else if (data.version === 0) {
-            if (data.format !== undefined) {
-              throw new Error("INVALID SAVE FILE");
-            }
+            throw new Error("INVALID SAVE FILE");
           }
           version = data.version;
         } else {
@@ -2602,12 +2607,38 @@ export default function GameCanvas() {
           throw new Error("INVALID SAVE FILE");
         }
 
+        if (rawUi.score !== undefined && !isBoundedInt(rawUi.score, 0, 1_000_000_000)) {
+          throw new Error("INVALID SAVE FILE");
+        }
+        if (rawUi.blocks !== undefined && !isBoundedInt(rawUi.blocks, 0, 10_000)) {
+          throw new Error("INVALID SAVE FILE");
+        }
+
+        if (rawState.nextBlockScore !== undefined && !isBoundedNum(rawState.nextBlockScore, 0, 100_000_000)) {
+          throw new Error("INVALID SAVE FILE");
+        }
+        if (rawState.nextEntityId !== undefined && !isBoundedInt(rawState.nextEntityId, 1, 1_000_000_000)) {
+          throw new Error("INVALID SAVE FILE");
+        }
+        if (rawState.bouncerCapacity !== undefined && !isBoundedInt(rawState.bouncerCapacity, 0, 100)) {
+          throw new Error("INVALID SAVE FILE");
+        }
+        if (rawState.enemySpawnRate !== undefined && !isBoundedNum(rawState.enemySpawnRate, 100, 60000)) {
+          throw new Error("INVALID SAVE FILE");
+        }
+
         if (!isObject(rawState.player)) {
           throw new Error("INVALID SAVE FILE");
         }
 
         const rawPlayer = rawState.player;
         if (!isFiniteNum(rawPlayer.x) || !isFiniteNum(rawPlayer.y)) {
+          throw new Error("INVALID SAVE FILE");
+        }
+        if (!isBoundedNum(rawPlayer.vx, -10000, 10000) ||
+            !isBoundedNum(rawPlayer.vy, -10000, 10000) ||
+            !isBoundedNum(rawPlayer.kbvx, -10000, 10000) ||
+            !isBoundedNum(rawPlayer.kbvy, -10000, 10000)) {
           throw new Error("INVALID SAVE FILE");
         }
 
@@ -2630,11 +2661,18 @@ export default function GameCanvas() {
           ? data.savedClockMs
           : null;
 
+        const MAX_OFFSET_MS = 24 * 60 * 60 * 1000;
         const adjustTime = (val: any): number => {
-          if (!isFiniteNum(val) || val <= 0) return 0;
-          if (savedClockMs !== null) {
-            const diff = val - savedClockMs;
-            return loadNow + diff;
+          if (!isFiniteNum(val)) {
+            throw new Error("INVALID SAVE FILE");
+          }
+          if (val === 0) return 0;
+          if (version >= 1 && savedClockMs !== null) {
+            const offset = val - savedClockMs;
+            if (Math.abs(offset) > MAX_OFFSET_MS) {
+              throw new Error("INVALID SAVE FILE");
+            }
+            return loadNow + offset;
           }
           return loadNow;
         };
@@ -2666,86 +2704,115 @@ export default function GameCanvas() {
           py = pSpawn.pos.y;
         }
 
-        const rawDash = isObject(rawPlayer.dash) ? rawPlayer.dash : {};
-        const rawBuild = isObject(rawPlayer.build) ? rawPlayer.build : {};
-
-        let reconstructedDash;
-        let reconstructedBuild;
-
-        if (savedClockMs !== null) {
-          const dashEndTime = adjustTime(rawDash.endTime);
-          const dashLastTime = adjustTime(rawDash.lastTime);
-          reconstructedDash = {
-            active: Boolean(rawDash.active) && dashEndTime > loadNow,
-            endTime: dashEndTime,
-            targetX: isFiniteNum(rawDash.targetX) ? rawDash.targetX : 0,
-            targetY: isFiniteNum(rawDash.targetY) ? rawDash.targetY : 0,
-            shieldRadius: isBoundedNum(rawDash.shieldRadius, 1, 500) ? rawDash.shieldRadius : 60,
-            lastTime: dashLastTime,
-            wasReady: Boolean(rawDash.wasReady),
-          };
-
-          const buildEndTime = adjustTime(rawBuild.endTime);
-          const buildLastTime = adjustTime(rawBuild.lastTime);
-          reconstructedBuild = {
-            active: Boolean(rawBuild.active) && buildEndTime > loadNow,
-            endTime: buildEndTime,
-            lastBlockX: isFiniteNum(rawBuild.lastBlockX) ? rawBuild.lastBlockX : 0,
-            lastBlockY: isFiniteNum(rawBuild.lastBlockY) ? rawBuild.lastBlockY : 0,
-            lastTime: buildLastTime,
-          };
-        } else {
-          reconstructedDash = {
-            active: false,
-            endTime: 0,
-            targetX: 0,
-            targetY: 0,
-            shieldRadius: 60,
-            lastTime: loadNow - DASH_COOLDOWN,
-            wasReady: true,
-          };
-          reconstructedBuild = {
-            active: false,
-            endTime: 0,
-            lastBlockX: 0,
-            lastBlockY: 0,
-            lastTime: loadNow - BUILD_COOLDOWN,
-          };
+        let processedZoneKbs: number[] = [];
+        if (rawPlayer.processedZoneKbs !== undefined) {
+          if (!Array.isArray(rawPlayer.processedZoneKbs) || rawPlayer.processedZoneKbs.length > 50) {
+            throw new Error("INVALID SAVE FILE");
+          }
+          processedZoneKbs = rawPlayer.processedZoneKbs.map((t: any) => adjustTime(t));
+        } else if (version >= 1) {
+          throw new Error("INVALID SAVE FILE");
         }
+
+        if (!isObject(rawPlayer.dash) || !isObject(rawPlayer.build)) {
+          throw new Error("INVALID SAVE FILE");
+        }
+
+        const rawDash = rawPlayer.dash;
+        const rawBuild = rawPlayer.build;
+
+        if (typeof rawDash.active !== 'boolean' || typeof rawDash.wasReady !== 'boolean') {
+          throw new Error("INVALID SAVE FILE");
+        }
+        if (!isBoundedNum(rawDash.targetX, -100000, 100000) ||
+            !isBoundedNum(rawDash.targetY, -100000, 100000) ||
+            !isBoundedNum(rawDash.shieldRadius, 1, 500)) {
+          throw new Error("INVALID SAVE FILE");
+        }
+
+        if (typeof rawBuild.active !== 'boolean') {
+          throw new Error("INVALID SAVE FILE");
+        }
+        if (!isBoundedNum(rawBuild.lastBlockX, -100000, 100000) ||
+            !isBoundedNum(rawBuild.lastBlockY, -100000, 100000)) {
+          throw new Error("INVALID SAVE FILE");
+        }
+
+        const dashEndTime = adjustTime(rawDash.endTime);
+        const dashLastTime = adjustTime(rawDash.lastTime);
+        const reconstructedDash = {
+          active: rawDash.active && dashEndTime > loadNow,
+          endTime: dashEndTime,
+          targetX: rawDash.targetX,
+          targetY: rawDash.targetY,
+          shieldRadius: rawDash.shieldRadius,
+          lastTime: dashLastTime,
+          wasReady: rawDash.wasReady,
+        };
+
+        const buildEndTime = adjustTime(rawBuild.endTime);
+        const buildLastTime = adjustTime(rawBuild.lastTime);
+        const reconstructedBuild = {
+          active: rawBuild.active && buildEndTime > loadNow,
+          endTime: buildEndTime,
+          lastBlockX: rawBuild.lastBlockX,
+          lastBlockY: rawBuild.lastBlockY,
+          lastTime: buildLastTime,
+        };
+
+        let recentBlocks: { key: string; x: number; y: number; timestamp: number }[] = [];
+        if (rawPlayer.recentBlocks !== undefined) {
+          if (!Array.isArray(rawPlayer.recentBlocks) || rawPlayer.recentBlocks.length > 50) {
+            throw new Error("INVALID SAVE FILE");
+          }
+          recentBlocks = rawPlayer.recentBlocks.map((rb: any) => {
+            if (!isObject(rb)) throw new Error("INVALID SAVE FILE");
+            if (typeof rb.key !== 'string' || rb.key.length > 64) throw new Error("INVALID SAVE FILE");
+            if (!isBoundedNum(rb.x, 0, MAP_WIDTH) || !isBoundedNum(rb.y, 0, MAP_HEIGHT)) throw new Error("INVALID SAVE FILE");
+            const ts = adjustTime(rb.timestamp);
+            return {
+              key: rb.key,
+              x: rb.x,
+              y: rb.y,
+              timestamp: ts,
+            };
+          });
+        } else if (version >= 1) {
+          throw new Error("INVALID SAVE FILE");
+        }
+
+        const lastShootTime = adjustTime(rawPlayer.lastShoot);
 
         const reconstructedPlayer = {
           x: px,
           y: py,
-          vx: isFiniteNum(rawPlayer.vx) ? rawPlayer.vx : 0,
-          vy: isFiniteNum(rawPlayer.vy) ? rawPlayer.vy : 0,
-          kbvx: isFiniteNum(rawPlayer.kbvx) ? rawPlayer.kbvx : 0,
-          kbvy: isFiniteNum(rawPlayer.kbvy) ? rawPlayer.kbvy : 0,
-          processedZoneKbs: Array.isArray(rawPlayer.processedZoneKbs) && savedClockMs !== null
-            ? rawPlayer.processedZoneKbs.filter(isFiniteNum).slice(0, 50).map(adjustTime)
-            : [],
+          vx: rawPlayer.vx,
+          vy: rawPlayer.vy,
+          kbvx: rawPlayer.kbvx,
+          kbvy: rawPlayer.kbvy,
+          processedZoneKbs,
           radius: PLAYER_RADIUS,
-          lastShoot: savedClockMs !== null ? adjustTime(rawPlayer.lastShoot) : 0,
+          lastShoot: lastShootTime,
           dash: reconstructedDash,
           build: reconstructedBuild,
-          recentBlocks: Array.isArray(rawPlayer.recentBlocks)
-            ? rawPlayer.recentBlocks
-                .slice(0, 50)
-                .filter((rb: any) => isObject(rb) && isFiniteNum(rb.x) && isFiniteNum(rb.y) && typeof rb.key === 'string')
-                .map((rb: any) => ({
-                  key: rb.key,
-                  x: rb.x,
-                  y: rb.y,
-                  timestamp: adjustTime(rb.timestamp),
-                }))
-            : [],
+          recentBlocks,
         };
+
+        if (rawState.spawners !== undefined) {
+          if (!Array.isArray(rawState.spawners) || rawState.spawners.length !== mapDef.spawners.length) {
+            throw new Error("INVALID SAVE FILE");
+          }
+        }
 
         const reconstructedSpawners = mapDef.spawners.map((canonicalSpawner, idx) => {
           const savedSpawner = Array.isArray(rawState.spawners) ? rawState.spawners[idx] : null;
           const maxHp = canonicalSpawner.maxHp ?? canonicalSpawner.hp ?? 100;
           let hp = canonicalSpawner.hp;
-          if (isObject(savedSpawner) && isFiniteNum(savedSpawner.hp)) {
-            hp = Math.max(0, Math.min(maxHp, Math.floor(savedSpawner.hp)));
+          if (savedSpawner) {
+            if (!isObject(savedSpawner) || !isBoundedNum(savedSpawner.hp, 0, maxHp)) {
+              throw new Error("INVALID SAVE FILE");
+            }
+            hp = Math.floor(savedSpawner.hp);
           }
           return {
             ...canonicalSpawner,
@@ -2754,90 +2821,203 @@ export default function GameCanvas() {
           };
         });
 
-        const reconstructedBlocks = rawBlocks.filter((b: any) =>
-          isObject(b) && isFiniteNum(b.x) && isFiniteNum(b.y)
-        ).map((b: any) => ({
-          x: Math.max(0, Math.min(MAP_WIDTH, b.x)),
-          y: Math.max(0, Math.min(MAP_HEIGHT, b.y)),
-          size: isBoundedNum(b.size, 1, 500) ? b.size : 30,
-          createdAt: adjustTime(b.createdAt),
-          colorIdx: isBoundedInt(b.colorIdx, 0, 10) ? b.colorIdx : undefined,
-        }));
+        const reconstructedBlocks = rawBlocks.map((b: any) => {
+          if (!isObject(b)) throw new Error("INVALID SAVE FILE");
+          if (!isBoundedNum(b.x, 0, MAP_WIDTH) || !isBoundedNum(b.y, 0, MAP_HEIGHT)) {
+            throw new Error("INVALID SAVE FILE");
+          }
+          if (!isBoundedNum(b.size, 1, 500)) throw new Error("INVALID SAVE FILE");
+          if (!isValidColorIdx(b.colorIdx)) throw new Error("INVALID SAVE FILE");
+          const createdAt = adjustTime(b.createdAt);
+          return {
+            x: b.x,
+            y: b.y,
+            size: b.size,
+            createdAt,
+            colorIdx: b.colorIdx,
+            ownerId: 'local',
+          };
+        });
 
-        const reconstructedBullets = rawBullets.filter((b: any) =>
-          isObject(b) && isFiniteNum(b.x) && isFiniteNum(b.y) && isFiniteNum(b.dx) && isFiniteNum(b.dy)
-        ).map((b: any) => ({
-          id: typeof b.id === 'string' ? b.id : undefined,
-          x: Math.max(0, Math.min(MAP_WIDTH, b.x)),
-          y: Math.max(0, Math.min(MAP_HEIGHT, b.y)),
-          dx: isBoundedNum(b.dx, -10000, 10000) ? b.dx : 0,
-          dy: isBoundedNum(b.dy, -10000, 10000) ? b.dy : 0,
-          radius: isBoundedNum(b.radius, 1, 100) ? b.radius : BULLET_RADIUS,
-          isPlayer: Boolean(b.isPlayer),
-          bounceCount: isBoundedInt(b.bounceCount, 0, 1000) ? b.bounceCount : 0,
-          spawnTime: adjustTime(b.spawnTime),
-          isNeutral: Boolean(b.isNeutral),
-          colorIdx: isBoundedInt(b.colorIdx, 0, 10) ? b.colorIdx : undefined,
-          targetX: isFiniteNum(b.targetX) ? b.targetX : undefined,
-          targetY: isFiniteNum(b.targetY) ? b.targetY : undefined,
-          repelMultiplied: Boolean(b.repelMultiplied),
-          allowedBlockKeys: Array.isArray(b.allowedBlockKeys) ? b.allowedBlockKeys.filter((k: any) => typeof k === 'string').slice(0, 50) : undefined,
-          leftBlockKeys: Array.isArray(b.leftBlockKeys) ? b.leftBlockKeys.filter((k: any) => typeof k === 'string').slice(0, 50) : undefined,
-        }));
+        const reconstructedBullets = rawBullets.map((b: any) => {
+          if (!isObject(b)) throw new Error("INVALID SAVE FILE");
+          if (!isValidStringOpt(b.id, 128)) throw new Error("INVALID SAVE FILE");
+          if (!isBoundedNum(b.x, 0, MAP_WIDTH) || !isBoundedNum(b.y, 0, MAP_HEIGHT)) {
+            throw new Error("INVALID SAVE FILE");
+          }
+          if (!isBoundedNum(b.dx, -10000, 10000) || !isBoundedNum(b.dy, -10000, 10000)) {
+            throw new Error("INVALID SAVE FILE");
+          }
+          if (!isBoundedNum(b.radius, 1, 100)) throw new Error("INVALID SAVE FILE");
+          if (typeof b.isPlayer !== 'boolean' || typeof b.isNeutral !== 'boolean') {
+            throw new Error("INVALID SAVE FILE");
+          }
+          if (!isBoundedInt(b.bounceCount, 0, 1000)) throw new Error("INVALID SAVE FILE");
+          if (!isValidColorIdx(b.colorIdx)) throw new Error("INVALID SAVE FILE");
+          if (b.targetX !== undefined && !isFiniteNum(b.targetX)) throw new Error("INVALID SAVE FILE");
+          if (b.targetY !== undefined && !isFiniteNum(b.targetY)) throw new Error("INVALID SAVE FILE");
+          if (b.repelMultiplied !== undefined && typeof b.repelMultiplied !== 'boolean') {
+            throw new Error("INVALID SAVE FILE");
+          }
 
-        const reconstructedEnemies = rawEnemies.filter((e: any) =>
-          isObject(e) && isFiniteNum(e.x) && isFiniteNum(e.y)
-        ).map((e: any) => ({
-          id: typeof e.id === 'string' ? e.id : undefined,
-          x: Math.max(0, Math.min(MAP_WIDTH, e.x)),
-          y: Math.max(0, Math.min(MAP_HEIGHT, e.y)),
-          radius: isBoundedNum(e.radius, 1, 200) ? e.radius : ENEMY_RADIUS,
-          lastShoot: adjustTime(e.lastShoot),
-          speed: isBoundedNum(e.speed, 0, 2000) ? e.speed : ENEMY_SPEED,
-          targetX: isFiniteNum(e.targetX) ? e.targetX : undefined,
-          targetY: isFiniteNum(e.targetY) ? e.targetY : undefined,
-          kbvx: isFiniteNum(e.kbvx) ? e.kbvx : 0,
-          kbvy: isFiniteNum(e.kbvy) ? e.kbvy : 0,
-          processedZoneKbs: Array.isArray(e.processedZoneKbs) && savedClockMs !== null
-            ? e.processedZoneKbs.filter(isFiniteNum).slice(0, 50).map(adjustTime)
-            : [],
-        }));
+          let allowedBlockKeys: string[] | undefined = undefined;
+          if (b.allowedBlockKeys !== undefined) {
+            if (!Array.isArray(b.allowedBlockKeys) || b.allowedBlockKeys.length > 50) {
+              throw new Error("INVALID SAVE FILE");
+            }
+            for (const k of b.allowedBlockKeys) {
+              if (typeof k !== 'string' || k.length > 64) throw new Error("INVALID SAVE FILE");
+            }
+            allowedBlockKeys = b.allowedBlockKeys;
+          }
 
-        const reconstructedBouncers = rawBouncers.filter((b: any) =>
-          isObject(b) && isFiniteNum(b.x) && isFiniteNum(b.y)
-        ).map((b: any) => ({
-          id: typeof b.id === 'string' ? b.id : undefined,
-          x: Math.max(0, Math.min(MAP_WIDTH, b.x)),
-          y: Math.max(0, Math.min(MAP_HEIGHT, b.y)),
-          dx: isBoundedNum(b.dx, -10000, 10000) ? b.dx : 1,
-          dy: isBoundedNum(b.dy, -10000, 10000) ? b.dy : 0,
-          size: isBoundedNum(b.size, 0.1, 100) ? b.size : 1,
-          radius: isBoundedNum(b.radius, 1, 200) ? b.radius : 24,
-          speed: isBoundedNum(b.speed, 0, 2000) ? b.speed : ENEMY_SPEED,
-          lastDirChange: adjustTime(b.lastDirChange),
-          lastMultiply: adjustTime(b.lastMultiply),
-          targetX: isFiniteNum(b.targetX) ? b.targetX : undefined,
-          targetY: isFiniteNum(b.targetY) ? b.targetY : undefined,
-          kbvx: isFiniteNum(b.kbvx) ? b.kbvx : 0,
-          kbvy: isFiniteNum(b.kbvy) ? b.kbvy : 0,
-          processedZoneKbs: Array.isArray(b.processedZoneKbs) && savedClockMs !== null
-            ? b.processedZoneKbs.filter(isFiniteNum).slice(0, 50).map(adjustTime)
-            : [],
-        }));
+          let leftBlockKeys: string[] | undefined = undefined;
+          if (b.leftBlockKeys !== undefined) {
+            if (!Array.isArray(b.leftBlockKeys) || b.leftBlockKeys.length > 50) {
+              throw new Error("INVALID SAVE FILE");
+            }
+            for (const k of b.leftBlockKeys) {
+              if (typeof k !== 'string' || k.length > 64) throw new Error("INVALID SAVE FILE");
+            }
+            leftBlockKeys = b.leftBlockKeys;
+          }
 
-        const reconstructedZones = rawZones.filter((z: any) =>
-          isObject(z) && isFiniteNum(z.x) && isFiniteNum(z.y)
-        ).map((z: any) => ({
-          x: Math.max(0, Math.min(MAP_WIDTH, z.x)),
-          y: Math.max(0, Math.min(MAP_HEIGHT, z.y)),
-          innerRadius: isBoundedNum(z.innerRadius, 0, 1000) ? z.innerRadius : 0,
-          outerRadius: isBoundedNum(z.outerRadius, 1, 2000) ? z.outerRadius : 200,
-          duration: isBoundedNum(z.duration, 0, 60000) ? z.duration : 1000,
-          spawnTime: adjustTime(z.spawnTime),
-          ownerId: 'local',
-          colorIdx: isBoundedInt(z.colorIdx, 0, 10) ? z.colorIdx : undefined,
-          type: z.type === 'repel' ? ('repel' as const) : undefined,
-        }));
+          const spawnTime = adjustTime(b.spawnTime);
+
+          return {
+            id: b.id,
+            x: b.x,
+            y: b.y,
+            dx: b.dx,
+            dy: b.dy,
+            radius: b.radius,
+            isPlayer: b.isPlayer,
+            bounceCount: b.bounceCount,
+            spawnTime,
+            isNeutral: b.isNeutral,
+            ownerId: b.isPlayer ? 'local' : (b.ownerId !== undefined && typeof b.ownerId === 'string' && b.ownerId.length <= 128 ? 'local' : undefined),
+            colorIdx: b.colorIdx,
+            targetX: b.targetX,
+            targetY: b.targetY,
+            repelMultiplied: Boolean(b.repelMultiplied),
+            allowedBlockKeys,
+            leftBlockKeys,
+          };
+        });
+
+        const reconstructedEnemies = rawEnemies.map((e: any) => {
+          if (!isObject(e)) throw new Error("INVALID SAVE FILE");
+          if (!isValidStringOpt(e.id, 128)) throw new Error("INVALID SAVE FILE");
+          if (!isBoundedNum(e.x, 0, MAP_WIDTH) || !isBoundedNum(e.y, 0, MAP_HEIGHT)) {
+            throw new Error("INVALID SAVE FILE");
+          }
+          if (!isBoundedNum(e.radius, 1, 200)) throw new Error("INVALID SAVE FILE");
+          if (!isBoundedNum(e.speed, 0, 2000)) throw new Error("INVALID SAVE FILE");
+          if (e.targetX !== undefined && !isFiniteNum(e.targetX)) throw new Error("INVALID SAVE FILE");
+          if (e.targetY !== undefined && !isFiniteNum(e.targetY)) throw new Error("INVALID SAVE FILE");
+          if (!isBoundedNum(e.kbvx, -10000, 10000) || !isBoundedNum(e.kbvy, -10000, 10000)) {
+            throw new Error("INVALID SAVE FILE");
+          }
+
+          let enemyProcessedZoneKbs: number[] = [];
+          if (e.processedZoneKbs !== undefined) {
+            if (!Array.isArray(e.processedZoneKbs) || e.processedZoneKbs.length > 50) {
+              throw new Error("INVALID SAVE FILE");
+            }
+            enemyProcessedZoneKbs = e.processedZoneKbs.map((t: any) => adjustTime(t));
+          }
+
+          const lastShoot = adjustTime(e.lastShoot);
+
+          return {
+            id: e.id,
+            x: e.x,
+            y: e.y,
+            radius: e.radius,
+            lastShoot,
+            speed: e.speed,
+            targetX: e.targetX,
+            targetY: e.targetY,
+            kbvx: e.kbvx,
+            kbvy: e.kbvy,
+            processedZoneKbs: enemyProcessedZoneKbs,
+          };
+        });
+
+        const reconstructedBouncers = rawBouncers.map((b: any) => {
+          if (!isObject(b)) throw new Error("INVALID SAVE FILE");
+          if (!isValidStringOpt(b.id, 128)) throw new Error("INVALID SAVE FILE");
+          if (!isBoundedNum(b.x, 0, MAP_WIDTH) || !isBoundedNum(b.y, 0, MAP_HEIGHT)) {
+            throw new Error("INVALID SAVE FILE");
+          }
+          if (!isBoundedNum(b.dx, -10000, 10000) || !isBoundedNum(b.dy, -10000, 10000)) {
+            throw new Error("INVALID SAVE FILE");
+          }
+          if (!isBoundedNum(b.size, 0.1, 100)) throw new Error("INVALID SAVE FILE");
+          if (!isBoundedNum(b.radius, 1, 200)) throw new Error("INVALID SAVE FILE");
+          if (!isBoundedNum(b.speed, 0, 2000)) throw new Error("INVALID SAVE FILE");
+          if (b.targetX !== undefined && !isFiniteNum(b.targetX)) throw new Error("INVALID SAVE FILE");
+          if (b.targetY !== undefined && !isFiniteNum(b.targetY)) throw new Error("INVALID SAVE FILE");
+          if (!isBoundedNum(b.kbvx, -10000, 10000) || !isBoundedNum(b.kbvy, -10000, 10000)) {
+            throw new Error("INVALID SAVE FILE");
+          }
+
+          let bouncerProcessedZoneKbs: number[] = [];
+          if (b.processedZoneKbs !== undefined) {
+            if (!Array.isArray(b.processedZoneKbs) || b.processedZoneKbs.length > 50) {
+              throw new Error("INVALID SAVE FILE");
+            }
+            bouncerProcessedZoneKbs = b.processedZoneKbs.map((t: any) => adjustTime(t));
+          }
+
+          const lastDirChange = adjustTime(b.lastDirChange);
+          const lastMultiply = adjustTime(b.lastMultiply);
+
+          return {
+            id: b.id,
+            x: b.x,
+            y: b.y,
+            dx: b.dx,
+            dy: b.dy,
+            size: b.size,
+            radius: b.radius,
+            speed: b.speed,
+            lastDirChange,
+            lastMultiply,
+            targetX: b.targetX,
+            targetY: b.targetY,
+            kbvx: b.kbvx,
+            kbvy: b.kbvy,
+            processedZoneKbs: bouncerProcessedZoneKbs,
+          };
+        });
+
+        const reconstructedZones = rawZones.map((z: any) => {
+          if (!isObject(z)) throw new Error("INVALID SAVE FILE");
+          if (!isBoundedNum(z.x, 0, MAP_WIDTH) || !isBoundedNum(z.y, 0, MAP_HEIGHT)) {
+            throw new Error("INVALID SAVE FILE");
+          }
+          if (!isBoundedNum(z.innerRadius, 0, 1000) || !isBoundedNum(z.outerRadius, 1, 2000)) {
+            throw new Error("INVALID SAVE FILE");
+          }
+          if (!isBoundedNum(z.duration, 0, 60000)) throw new Error("INVALID SAVE FILE");
+          if (!isValidColorIdx(z.colorIdx)) throw new Error("INVALID SAVE FILE");
+          if (z.type !== undefined && z.type !== 'repel') throw new Error("INVALID SAVE FILE");
+
+          const spawnTime = adjustTime(z.spawnTime);
+
+          return {
+            x: z.x,
+            y: z.y,
+            innerRadius: z.innerRadius,
+            outerRadius: z.outerRadius,
+            duration: z.duration,
+            spawnTime,
+            ownerId: 'local',
+            colorIdx: z.colorIdx,
+            type: z.type === 'repel' ? ('repel' as const) : undefined,
+          };
+        });
 
         const spawnersLeftCount = reconstructedSpawners.filter(s => (s.hp ?? 0) > 0).length;
 
@@ -2861,10 +3041,10 @@ export default function GameCanvas() {
 
         const cleanUi = {
           status: 'PAUSED' as const,
-          score: isFiniteNum(rawUi.score) ? Math.max(0, Math.floor(rawUi.score)) : 0,
+          score: rawUi.score !== undefined ? rawUi.score : 0,
           deviceType: isMobileRef.current ? ('mobile' as const) : ('desktop' as const),
           activeTool: (rawUi.activeTool === 'weapon' || rawUi.activeTool === 'special' || rawUi.activeTool === 'build') ? rawUi.activeTool : 'special',
-          blocks: isFiniteNum(rawUi.blocks) ? Math.max(0, Math.floor(rawUi.blocks)) : 50,
+          blocks: rawUi.blocks !== undefined ? rawUi.blocks : 50,
           spawnersLeft: spawnersLeftCount,
           mapId: mapId,
           hardMode: cleanGameMode !== 'normal',
@@ -2878,6 +3058,8 @@ export default function GameCanvas() {
         const camW = canvasRef.current?.width || containerSize.width || 1200;
         const camH = canvasRef.current?.height || containerSize.height || 800;
 
+        const lastEnemySpawnTime = adjustTime(rawState.lastEnemySpawn);
+
         const cleanState = {
           player: reconstructedPlayer,
           multiplayerPlayers: {},
@@ -2890,13 +3072,13 @@ export default function GameCanvas() {
           playerActionAuthority: {},
           forceBroadcast: false,
           blocks: reconstructedBlocks,
-          nextBlockScore: isFiniteNum(rawState.nextBlockScore) ? rawState.nextBlockScore : 100,
+          nextBlockScore: rawState.nextBlockScore !== undefined ? rawState.nextBlockScore : 100,
           bullets: reconstructedBullets,
           enemies: reconstructedEnemies,
           bouncers: reconstructedBouncers,
           zones: reconstructedZones,
-          nextEntityId: isFiniteNum(rawState.nextEntityId) ? rawState.nextEntityId : 1,
-          bouncerCapacity: isFiniteNum(rawState.bouncerCapacity) ? rawState.bouncerCapacity : 2,
+          nextEntityId: rawState.nextEntityId !== undefined ? rawState.nextEntityId : 1,
+          bouncerCapacity: rawState.bouncerCapacity !== undefined ? rawState.bouncerCapacity : 2,
           spawners: reconstructedSpawners,
           keys: { w: false, a: false, s: false, d: false },
           mouse: { x: 0, y: 0, worldX: 0, worldY: 0, down: false, justDown: false, rightDown: false, rightJustDown: false },
@@ -2919,8 +3101,8 @@ export default function GameCanvas() {
           floatingTexts: [],
           shake: 0,
           lastTime: loadNow,
-          lastEnemySpawn: adjustTime(rawState.lastEnemySpawn),
-          enemySpawnRate: isFiniteNum(rawState.enemySpawnRate) ? rawState.enemySpawnRate : 3000,
+          lastEnemySpawn: lastEnemySpawnTime,
+          enemySpawnRate: rawState.enemySpawnRate !== undefined ? rawState.enemySpawnRate : 3000,
           gameMode: cleanGameMode,
           hardMode: cleanGameMode !== 'normal',
           tutorial: { active: false, spawnerIndex: null, enemySpawned: false, timer: 0 },
@@ -2953,7 +3135,13 @@ export default function GameCanvas() {
         if (fileInputRef.current) fileInputRef.current.value = "";
       }
     };
-    reader.readAsText(file);
+
+    try {
+      reader.readAsText(file);
+    } catch {
+      setLoadError("INVALID SAVE FILE");
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
   };
 
   const selectAndScrollToMap = (mapId: string) => {
