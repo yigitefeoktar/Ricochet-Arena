@@ -2291,12 +2291,6 @@ export default function GameCanvas() {
         name,
         colorIdx
       });
-      socketRef.current?.emit('client_action', mpRef.current.roomId, {
-        type: 'lobby_update',
-        name,
-        colorIdx,
-        isHost: mpRef.current.isHost
-      });
     }
   };
 
@@ -2431,21 +2425,13 @@ export default function GameCanvas() {
         if (res.colorIdx !== undefined) {
           setPlayerProfile(prev => ({ ...prev, colorIdx: res.colorIdx }));
         }
-
-        // Inform existing players of our profile and ask for theirs
-        setTimeout(() => {
-          socketRef.current?.emit('client_action', cleanRoom, {
-            type: 'lobby_update',
-            name: playerProfileRef.current.name,
-            colorIdx: res.colorIdx !== undefined ? res.colorIdx : playerProfileRef.current.colorIdx,
-            isHost: false
-          });
-          socketRef.current?.emit('client_action', cleanRoom, {
-            type: 'lobby_request_sync'
-          });
-        }, 200);
       } else {
-        setMpState(prev => ({ ...prev, error: res.error || 'Failed to join' }));
+        const errorMsg = res?.error === 'MATCH_IN_PROGRESS'
+          ? 'MATCH ALREADY IN PROGRESS'
+          : res?.error === 'ROOM_NOT_FOUND'
+          ? 'ROOM NOT FOUND'
+          : res?.error || 'Failed to join';
+        setMpState(prev => ({ ...prev, error: errorMsg }));
       }
     });
   };
@@ -3084,13 +3070,6 @@ export default function GameCanvas() {
         ...prev,
         [id]: { name: 'CONNECTING...', colorIdx: 0, isHost: false }
       }));
-
-      socketRef.current?.emit('client_action', mpRef.current.roomId, {
-        type: 'lobby_update',
-        name: playerProfileRef.current.name,
-        colorIdx: playerProfileRef.current.colorIdx,
-        isHost: mpRef.current.isHost
-      });
     });
 
     socket.on('player_left', (id) => {
@@ -3118,14 +3097,9 @@ export default function GameCanvas() {
       playersList.forEach((p) => {
         if (p.id === socket.id) {
           // Sync our local profile if changed/assigned by server
-          setPlayerProfile(prev => {
-            const currentName = prev.name.trim().toUpperCase();
-            const shouldUpdateName = !currentName || currentName === 'PLAYER' || currentName === 'HOST';
-            return {
-              ...prev,
-              name: shouldUpdateName ? p.name : prev.name,
-              colorIdx: p.colorIdx
-            };
+          setPlayerProfile({
+            name: p.name,
+            colorIdx: p.colorIdx
           });
           // Also set our local host status directly from server-authoritative list!
           const hostAssigned = p.isHost;
@@ -3485,23 +3459,7 @@ export default function GameCanvas() {
     });
 
     socket.on('client_action', (clientId, action) => {
-       if (action.type === 'lobby_update') {
-         setLobbyPlayers(prev => ({
-           ...prev,
-           [clientId]: {
-             name: action.name,
-             colorIdx: action.colorIdx,
-             isHost: action.isHost || false
-           }
-         }));
-       } else if (action.type === 'lobby_request_sync') {
-         socketRef.current?.emit('client_action', mpRef.current.roomId, {
-           type: 'lobby_update',
-           name: playerProfileRef.current.name,
-           colorIdx: playerProfileRef.current.colorIdx,
-           isHost: mpRef.current.isHost
-         });
-       } else if (mpRef.current.isHost) {
+       if (mpRef.current.isHost) {
           // Confirm clientId exists in matchPlayers and multiplayerPlayers
           const matchPlayer = stateRef.current.matchPlayers[clientId];
           const clientPlayer = stateRef.current.multiplayerPlayers[clientId];
@@ -3746,21 +3704,13 @@ export default function GameCanvas() {
             if (res.colorIdx !== undefined) {
               setPlayerProfile(prev => ({ ...prev, colorIdx: res.colorIdx }));
             }
-
-            // Inform existing players of our profile and ask for theirs
-            setTimeout(() => {
-              socketRef.current?.emit('client_action', cleanRoom, {
-                type: 'lobby_update',
-                name: playerProfileRef.current.name,
-                colorIdx: res.colorIdx !== undefined ? res.colorIdx : playerProfileRef.current.colorIdx,
-                isHost: false
-              });
-              socketRef.current?.emit('client_action', cleanRoom, {
-                type: 'lobby_request_sync'
-              });
-            }, 300);
           } else {
-            setMpState(prev => ({ ...prev, joinCode: cleanRoom, error: res.error || 'Failed to auto-join room' }));
+            const errorMsg = res?.error === 'MATCH_IN_PROGRESS'
+              ? 'MATCH ALREADY IN PROGRESS'
+              : res?.error === 'ROOM_NOT_FOUND'
+              ? 'ROOM NOT FOUND'
+              : res?.error || 'Failed to auto-join room';
+            setMpState(prev => ({ ...prev, joinCode: cleanRoom, error: errorMsg }));
           }
         });
       }

@@ -36,6 +36,31 @@ async function startServer() {
 
   const rooms = new Map<string, RoomInfo>();
 
+  function sanitizeName(rawName: any, fallback: string): string {
+    if (typeof rawName !== "string") {
+      return fallback;
+    }
+    let clean = rawName.trim().replace(/[\x00-\x1F\x7F-\x9F]/g, "");
+    if (clean.length > 12) {
+      clean = clean.substring(0, 12);
+    }
+    if (!clean) {
+      return fallback;
+    }
+    return clean;
+  }
+
+  function sanitizeColor(rawColor: any, currentPlayers: Player[], currentPlayerId?: string): number {
+    if (typeof rawColor !== "number" || !Number.isInteger(rawColor) || rawColor < 0 || rawColor > 4) {
+      return -1;
+    }
+    const isTaken = currentPlayers.some(p => p.id !== currentPlayerId && p.colorIdx === rawColor);
+    if (isTaken) {
+      return -1;
+    }
+    return rawColor;
+  }
+
   // Multiplayer logic
   io.on("connection", (socket) => {
     console.log("User connected", socket.id);
@@ -96,14 +121,23 @@ async function startServer() {
       } while (rooms.has(roomId));
       socket.join(roomId);
 
-      const clientName = (clientData.name || "").trim().toUpperCase();
-      const isDefaultName = !clientName || clientName === "PLAYER" || clientName === "HOST";
-      const assignedName = isDefaultName ? "PLAYER 1" : clientData.name;
+      const rawName = clientData.name;
+      const clean = sanitizeName(rawName, "PLAYER 1");
+      const upper = clean.toUpperCase();
+      const assignedName = (upper === "PLAYER" || upper === "HOST") ? "PLAYER 1" : clean;
+
+      let chosenColor = 0;
+      if (clientData.colorIdx !== undefined) {
+        const validColor = sanitizeColor(clientData.colorIdx, []);
+        if (validColor !== -1) {
+          chosenColor = validColor;
+        }
+      }
 
       const hostPlayer: Player = {
         id: socket.id,
         name: assignedName,
-        colorIdx: 0, // Green (at index 0)
+        colorIdx: chosenColor,
         isHost: true
       };
 
@@ -142,75 +176,79 @@ async function startServer() {
       });
 
       io.to(roomId).emit("lobby_players", [hostPlayer]);
-      if (cb) cb({ roomId, colorIdx: 0, matchSettings });
+      if (cb) cb({ roomId, colorIdx: chosenColor, matchSettings });
     });
 
     socket.on("join_room", (roomId, arg2, arg3) => {
       const cb = typeof arg2 === "function" ? arg2 : arg3;
       const clientData = typeof arg2 === "object" && arg2 !== null ? arg2 : { name: "PLAYER" };
       if (!roomId || typeof roomId !== "string") {
-        if (cb) cb({ success: false, error: "Invalid Room ID" });
+        if (cb) cb({ success: false, error: "ROOM_NOT_FOUND" });
         return;
       }
       const roomIdUpper = roomId.trim().toUpperCase();
-      const ioRoom = io.sockets.adapter.rooms.get(roomIdUpper);
+      const room = rooms.get(roomIdUpper);
 
-      if (ioRoom) {
-        socket.join(roomIdUpper);
+      if (!room) {
+        if (cb) cb({ success: false, error: "ROOM_NOT_FOUND" });
+        return;
+      }
 
-        let room = rooms.get(roomIdUpper);
-        if (!room) {
-          room = {
-            roomId: roomIdUpper,
-            players: [],
-            lastHostStateTime: Date.now(),
-            matchActive: false,
-            matchSettings: { ...DEFAULT_MATCH_SETTINGS },
-          };
-          rooms.set(roomIdUpper, room);
-        }
+      if (room.matchActive) {
+        if (cb) cb({ success: false, error: "MATCH_IN_PROGRESS" });
+        return;
+      }
 
-        const isHost = room.players.length === 0 || !room.players.some(p => p.isHost);
+      socket.join(roomIdUpper);
 
-        // Calculate available colors
-        const usedColors = room.players.map(p => p.colorIdx);
-        const availableColors = [0, 1, 2, 3, 4].filter(c => !usedColors.includes(c));
-        let chosenColor = 0;
+      const isHost = room.players.length === 0 || !room.players.some(p => p.isHost);
 
-        if (isHost) {
-          chosenColor = 0; // Green
+      // Calculate available colors
+      const usedColors = room.players.map(p => p.colorIdx);
+      const availableColors = [0, 1, 2, 3, 4].filter(c => !usedColors.includes(c));
+      let chosenColor = 0;
+
+      if (clientData && typeof clientData === "object" && clientData.colorIdx !== undefined) {
+        const requestedColor = sanitizeColor(clientData.colorIdx, room.players);
+        if (requestedColor !== -1) {
+          chosenColor = requestedColor;
         } else if (availableColors.length > 0) {
-          // Assign random color that no other player is currently using
-          chosenColor = availableColors[Math.floor(Math.random() * availableColors.length)];
+          chosenColor = availableColors[0];
         } else {
           chosenColor = Math.floor(Math.random() * 5);
         }
-
-        const clientName = (clientData.name || "").trim().toUpperCase();
-        const isDefaultName = !clientName || clientName === "PLAYER" || clientName === "HOST";
-        const assignedName = isDefaultName ? getUniqueDefaultName(room.players) : clientData.name;
-
-        const newPlayer: Player = {
-          id: socket.id,
-          name: assignedName,
-          colorIdx: chosenColor,
-          isHost
-        };
-
-        room.players.push(newPlayer);
-
-        socket.to(roomIdUpper).emit("player_joined", socket.id);
-        io.to(roomIdUpper).emit("lobby_players", room.players);
-
-        if (cb) cb({
-          success: true,
-          hostId: room.players.find(p => p.isHost)?.id || socket.id,
-          colorIdx: chosenColor,
-          matchSettings: room.matchSettings
-        });
+      } else if (isHost) {
+        chosenColor = 0;
+      } else if (availableColors.length > 0) {
+        chosenColor = availableColors[0];
       } else {
-        if (cb) cb({ success: false, error: "Room not found" });
+        chosenColor = Math.floor(Math.random() * 5);
       }
+
+      const defaultName = getUniqueDefaultName(room.players);
+      const rawName = clientData && typeof clientData === "object" ? clientData.name : undefined;
+      const cleanName = sanitizeName(rawName, defaultName);
+      const upper = cleanName.toUpperCase();
+      const assignedName = (upper === "PLAYER" || upper === "HOST") ? defaultName : cleanName;
+
+      const newPlayer: Player = {
+        id: socket.id,
+        name: assignedName,
+        colorIdx: chosenColor,
+        isHost
+      };
+
+      room.players.push(newPlayer);
+
+      socket.to(roomIdUpper).emit("player_joined", socket.id);
+      io.to(roomIdUpper).emit("lobby_players", room.players);
+
+      if (cb) cb({
+        success: true,
+        hostId: room.players.find(p => p.isHost)?.id || socket.id,
+        colorIdx: chosenColor,
+        matchSettings: room.matchSettings
+      });
     });
 
     socket.on("update_match_settings", (roomId, proposedSettings, callback) => {
@@ -267,20 +305,23 @@ async function startServer() {
     });
     
     socket.on("update_profile", (roomId, data) => {
-      if (!roomId || typeof roomId !== "string" || !data) return;
+      if (!roomId || typeof roomId !== "string" || !data || typeof data !== "object") return;
       const roomIdUpper = roomId.trim().toUpperCase();
       const room = rooms.get(roomIdUpper);
       if (room) {
         const player = room.players.find(p => p.id === socket.id);
         if (player) {
           if (data.name !== undefined) {
-            player.name = data.name;
+            const cleanName = sanitizeName(data.name, player.name);
+            const upper = cleanName.toUpperCase();
+            if (upper !== "PLAYER" && upper !== "HOST") {
+              player.name = cleanName;
+            }
           }
           if (data.colorIdx !== undefined) {
-            // Verify chosen color index is not currently taken by any other lobby player
-            const isTaken = room.players.some(p => p.id !== socket.id && p.colorIdx === data.colorIdx);
-            if (!isTaken) {
-              player.colorIdx = data.colorIdx;
+            const validColor = sanitizeColor(data.colorIdx, room.players, socket.id);
+            if (validColor !== -1) {
+              player.colorIdx = validColor;
             }
           }
           io.to(roomIdUpper).emit("lobby_players", room.players);
@@ -403,7 +444,7 @@ async function startServer() {
       if (!player) return;
 
       // Reject unknown action types
-      const knownActionTypes = ["lobby_update", "lobby_request_sync", "shoot", "build", "build_remove", "special", "build_start"];
+      const knownActionTypes = ["shoot", "build", "build_remove", "special", "build_start"];
       if (typeof action.type !== "string" || !knownActionTypes.includes(action.type)) return;
 
       // Reject non-finite coordinates or directions
@@ -412,14 +453,9 @@ async function startServer() {
       if (action.dx !== undefined && (typeof action.dx !== "number" || !Number.isFinite(action.dx))) return;
       if (action.dy !== undefined && (typeof action.dy !== "number" || !Number.isFinite(action.dy))) return;
 
-      // Lobby actions are broadcast to all members, gameplay actions go strictly to the host
-      if (action.type === "lobby_update" || action.type === "lobby_request_sync") {
-        socket.to(roomIdUpper).emit("client_action", socket.id, action);
-      } else {
-        const host = room.players.find(p => p.isHost);
-        if (host && host.id !== socket.id) {
-          io.to(host.id).emit("client_action", socket.id, action);
-        }
+      const host = room.players.find(p => p.isHost);
+      if (host && host.id !== socket.id) {
+        io.to(host.id).emit("client_action", socket.id, action);
       }
     });
 
