@@ -3823,6 +3823,8 @@ export default function GameCanvas() {
     }
     handleResize();
 
+    const canAcceptGameplayInput = () => !document.hidden && document.hasFocus();
+
     const handleKeyDown = (e: KeyboardEvent) => {
       const key = e.key.toLowerCase();
       
@@ -3857,6 +3859,10 @@ export default function GameCanvas() {
              return prev;
           });
         }
+        return;
+      }
+
+      if (!canAcceptGameplayInput()) {
         return;
       }
 
@@ -3906,28 +3912,30 @@ export default function GameCanvas() {
          }
       }
       if (key === '2') {
-         if (isOpeningProtectionActiveLocal(currentTime)) return;
-         if (!stateRef.current.player.build.active && (stateRef.current.player.build.endTime === 0 || currentTime - stateRef.current.player.build.endTime >= BUILD_COOLDOWN)) {
-            if (socketRef.current && mpRef.current.roomId && !mpRef.current.isHost) {
-               socketRef.current.emit('client_action', mpRef.current.roomId, { type: 'build_start' });
+         if (uiRef.current.status === 'PLAYING') {
+            if (isOpeningProtectionActiveLocal(currentTime)) return;
+            if (!stateRef.current.player.build.active && (stateRef.current.player.build.endTime === 0 || currentTime - stateRef.current.player.build.endTime >= BUILD_COOLDOWN)) {
+               if (socketRef.current && mpRef.current.roomId && !mpRef.current.isHost) {
+                  socketRef.current.emit('client_action', mpRef.current.roomId, { type: 'build_start' });
+               }
+               stateRef.current.player.build.active = true;
+               stateRef.current.player.build.endTime = currentTime + 8000;
+               stateRef.current.player.build.lastTime = currentTime;
+               if (mpRef.current.roomId && mpRef.current.isHost) {
+                  const myId = socketRef.current?.id;
+                  if (myId) {
+                     const auth = getOrInitializeAuthority(myId);
+                     auth.buildActiveUntil = currentTime + 8000;
+                     auth.buildReadyAt = currentTime + 8000 + BUILD_COOLDOWN;
+                  }
+               }
+               const gridX = Math.round(stateRef.current.player.x / 40) * 40;
+               const gridY = Math.round(stateRef.current.player.y / 40) * 40;
+               stateRef.current.player.build.lastBlockX = gridX;
+               stateRef.current.player.build.lastBlockY = gridY;
+               const cIdx = playerProfileRef.current.colorIdx;
+               tryPlaceBuildBlock(currentTime, gridX, gridY, cIdx);
             }
-            stateRef.current.player.build.active = true;
-            stateRef.current.player.build.endTime = currentTime + 8000;
-            stateRef.current.player.build.lastTime = currentTime;
-            if (mpRef.current.roomId && mpRef.current.isHost) {
-                                    const myId = socketRef.current?.id;
-                                    if (myId) {
-                                      const auth = getOrInitializeAuthority(myId);
-                                      auth.buildActiveUntil = currentTime + 8000;
-                                      auth.buildReadyAt = currentTime + 8000 + BUILD_COOLDOWN;
-                                    }
-                                  }
-                                  const gridX = Math.round(stateRef.current.player.x / 40) * 40;
-            const gridY = Math.round(stateRef.current.player.y / 40) * 40;
-            stateRef.current.player.build.lastBlockX = gridX;
-            stateRef.current.player.build.lastBlockY = gridY;
-            const cIdx = playerProfileRef.current.colorIdx;
-            tryPlaceBuildBlock(currentTime, gridX, gridY, cIdx);
          }
       }
     };
@@ -3954,6 +3962,7 @@ export default function GameCanvas() {
     };
 
     const handleMouseDown = (e: MouseEvent) => {
+      if (!canAcceptGameplayInput()) return;
       if (e.target !== canvas) return;
       if (uiRef.current.status !== 'PLAYING') return;
       if (mpRef.current.roomId && (mpMenuOpenRef.current || confirmResignRef.current)) {
@@ -3977,6 +3986,7 @@ export default function GameCanvas() {
     };
 
     const handleTouchStart = (e: TouchEvent) => {
+      if (!canAcceptGameplayInput()) return;
       if (uiRef.current.status !== 'PLAYING') return; // let normal touches pass
       if (mpRef.current.roomId && (mpMenuOpenRef.current || confirmResignRef.current)) {
          return;
