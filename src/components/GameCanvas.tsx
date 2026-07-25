@@ -31,6 +31,10 @@ const ENEMY_SPEED = 60;
 const DASH_COOLDOWN = 25000;
 const BUILD_COOLDOWN = 25000;
 
+const SAVE_FORMAT = "ricochet-arena-save";
+const SAVE_VERSION = 1;
+const MAX_SAVE_FILE_BYTES = 5 * 1024 * 1024;
+
 const WALLS = [
   // Outer boundaries
   { x: 0, y: 0, w: MAP_WIDTH, h: 50 },
@@ -1705,6 +1709,7 @@ export default function GameCanvas() {
   const [isEditingCallsign, setIsEditingCallsign] = useState<boolean>(false);
   const isEditingCallsignRef = useRef<boolean>(false);
   const [containerSize, setContainerSize] = useState({ width: 1200, height: 800 });
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [copyFeedback, setCopyFeedback] = useState(false);
   const [copyLinkFeedback, setCopyLinkFeedback] = useState(false);
   const [showQrCode, setShowQrCode] = useState(false);
@@ -2385,11 +2390,113 @@ export default function GameCanvas() {
   };
 
   const handleSaveMatch = () => {
+    // Single-player saving only; guard against saving or loading during a multiplayer room
+    if (mpRef.current.roomId) return;
+
     setUiState(prev => ({ ...prev, status: 'PAUSED' }));
-    const saveData = {
-        ui: uiRef.current,
-        state: stateRef.current
+
+    const now = Date.now();
+    const perfNow = performance.now();
+
+    const state = stateRef.current;
+    const ui = uiRef.current;
+
+    // Safe snapshot: Do not mutate live state while saving.
+    const snapshotUi = {
+      ...ui,
+      status: 'PAUSED' as const,
     };
+
+    const snapshotState = {
+      player: {
+        x: state.player.x,
+        y: state.player.y,
+        vx: state.player.vx,
+        vy: state.player.vy,
+        kbvx: state.player.kbvx,
+        kbvy: state.player.kbvy,
+        processedZoneKbs: [...(state.player.processedZoneKbs || [])],
+        radius: state.player.radius,
+        lastShoot: state.player.lastShoot,
+        dash: { ...state.player.dash },
+        build: { ...state.player.build },
+        recentBlocks: (state.player.recentBlocks || []).map(rb => ({ ...rb })),
+      },
+      // Neutralize multiplayer / authority / room / roster state
+      multiplayerPlayers: {},
+      matchPhase: 'PLAYING' as const,
+      finalRunnerId: null,
+      finalRunDeadline: null,
+      openingProtectionDeadline: null,
+      winnerId: null,
+      matchPlayers: {},
+      playerActionAuthority: {},
+      forceBroadcast: false,
+      lastBroadcastTime: 0,
+
+      blocks: (state.blocks || []).map(b => ({ ...b })),
+      nextBlockScore: state.nextBlockScore,
+      bullets: (state.bullets || []).map(b => ({
+        ...b,
+        allowedBlockKeys: b.allowedBlockKeys ? [...b.allowedBlockKeys] : undefined,
+        leftBlockKeys: b.leftBlockKeys ? [...b.leftBlockKeys] : undefined,
+      })),
+      enemies: (state.enemies || []).map(e => ({
+        ...e,
+        processedZoneKbs: e.processedZoneKbs ? [...e.processedZoneKbs] : [],
+      })),
+      bouncers: (state.bouncers || []).map(b => ({
+        ...b,
+        processedZoneKbs: b.processedZoneKbs ? [...b.processedZoneKbs] : [],
+      })),
+      zones: (state.zones || []).map(z => ({ ...z })),
+      nextEntityId: state.nextEntityId,
+      bouncerCapacity: state.bouncerCapacity,
+      spawners: (state.spawners || []).map(s => ({ ...s })),
+
+      // Neutralize transient input
+      keys: { w: false, a: false, s: false, d: false },
+      mouse: {
+        x: state.mouse.x,
+        y: state.mouse.y,
+        worldX: state.mouse.worldX,
+        worldY: state.mouse.worldY,
+        down: false,
+        justDown: false,
+        rightDown: false,
+        rightJustDown: false,
+      },
+      touches: {
+        left: { active: false, id: -1, startX: 0, startY: 0, currentX: 0, currentY: 0, dirX: 0, dirY: 0 },
+        right: { active: false, id: -1, startX: 0, startY: 0, currentX: 0, currentY: 0, dirX: 0, dirY: 0, justReleased: false, releaseDx: 0, releaseDy: 0, aimLength: 0, startTime: 0 },
+        tap: { active: false, x: 0, y: 0 },
+      },
+      camera: { ...state.camera },
+
+      // Transient visual effects cleared from snapshot
+      particles: [],
+      trails: [],
+      shockwaves: [],
+      floatingTexts: [],
+      shake: 0,
+
+      lastTime: state.lastTime,
+      lastEnemySpawn: state.lastEnemySpawn,
+      enemySpawnRate: state.enemySpawnRate,
+      gameMode: state.gameMode,
+      hardMode: state.hardMode,
+      tutorial: { active: false, spawnerIndex: null, enemySpawned: false, timer: 0 },
+    };
+
+    const saveData = {
+      format: SAVE_FORMAT,
+      version: SAVE_VERSION,
+      savedAt: now,
+      savedClockMs: perfNow,
+      ui: snapshotUi,
+      state: snapshotState,
+    };
+
     const blob = new Blob([JSON.stringify(saveData)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -2402,24 +2509,391 @@ export default function GameCanvas() {
   };
 
   const handleLoadMatch = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setLoadError(null);
     const file = e.target.files?.[0];
     if (!file) return;
+
+    if (mpRef.current.roomId) {
+      setLoadError("INVALID SAVE FILE");
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
+
+    if (file.size > MAX_SAVE_FILE_BYTES) {
+      setLoadError("FILE TOO LARGE");
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
+
     const reader = new FileReader();
+
+    reader.onerror = () => {
+      setLoadError("INVALID SAVE FILE");
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    };
+
     reader.onload = (event) => {
       try {
-        const data = JSON.parse(event.target?.result as string);
-        if (data && data.ui && data.state) {
-            if (pulseTimeoutRef.current) clearTimeout(pulseTimeoutRef.current);
-            setPulseSpawnerCounter(false);
-            setUiState({ ...data.ui, status: 'PAUSED' });
-            stateRef.current = data.state;
+        const text = event.target?.result as string;
+        if (!text || typeof text !== 'string') {
+          throw new Error("INVALID SAVE FILE");
         }
-      } catch (err) {
-        alert("Failed to load save file. Corrupt or wrong format.");
+
+        let data: any;
+        try {
+          data = JSON.parse(text);
+        } catch {
+          throw new Error("INVALID SAVE FILE");
+        }
+
+        if (!data || typeof data !== 'object' || Array.isArray(data)) {
+          throw new Error("INVALID SAVE FILE");
+        }
+
+        if (data.format !== undefined && data.format !== SAVE_FORMAT) {
+          throw new Error("INVALID SAVE FILE");
+        }
+
+        let version = 0;
+        if (data.version !== undefined) {
+          if (typeof data.version !== 'number' || !Number.isInteger(data.version) || data.version < 0 || data.version > SAVE_VERSION) {
+            throw new Error("UNSUPPORTED SAVE VERSION");
+          }
+          version = data.version;
+        }
+
+        if (!data.ui || typeof data.ui !== 'object' || Array.isArray(data.ui)) {
+          throw new Error("INVALID SAVE FILE");
+        }
+        if (!data.state || typeof data.state !== 'object' || Array.isArray(data.state)) {
+          throw new Error("INVALID SAVE FILE");
+        }
+
+        const rawUi = data.ui;
+        const rawState = data.state;
+
+        if (typeof rawUi.mapId !== 'string' || !MAPS[rawUi.mapId]) {
+          throw new Error("UNKNOWN MAP");
+        }
+        const mapId = rawUi.mapId;
+        const mapDef = MAPS[mapId];
+
+        if (rawUi.gameMode !== undefined && !isValidGameMode(rawUi.gameMode)) {
+          throw new Error("INVALID SAVE FILE");
+        }
+
+        if (!rawState.player || typeof rawState.player !== 'object' || Array.isArray(rawState.player)) {
+          throw new Error("INVALID SAVE FILE");
+        }
+
+        const rawPlayer = rawState.player;
+        if (typeof rawPlayer.x !== 'number' || !isFinite(rawPlayer.x) || typeof rawPlayer.y !== 'number' || !isFinite(rawPlayer.y)) {
+          throw new Error("INVALID SAVE FILE");
+        }
+
+        const rawEnemies = Array.isArray(rawState.enemies) ? rawState.enemies : null;
+        const rawBullets = Array.isArray(rawState.bullets) ? rawState.bullets : null;
+        const rawBlocks = Array.isArray(rawState.blocks) ? rawState.blocks : null;
+        const rawBouncers = Array.isArray(rawState.bouncers) ? rawState.bouncers : null;
+        const rawZones = Array.isArray(rawState.zones) ? rawState.zones : null;
+
+        if (!rawEnemies || !rawBullets || !rawBlocks || !rawBouncers || !rawZones) {
+          throw new Error("INVALID SAVE FILE");
+        }
+
+        if (rawBullets.length > 1000 || rawBlocks.length > 500 || rawEnemies.length > 200 || rawBouncers.length > 200 || rawZones.length > 50) {
+          throw new Error("INVALID SAVE FILE");
+        }
+
+        const loadNow = performance.now();
+        const savedClockMs = (version >= 1 && typeof data.savedClockMs === 'number' && isFinite(data.savedClockMs))
+          ? data.savedClockMs
+          : null;
+
+        const adjustTime = (val: any): number => {
+          if (typeof val !== 'number' || !isFinite(val) || val === 0) return 0;
+          if (savedClockMs !== null) {
+            return loadNow + (val - savedClockMs);
+          } else {
+            return loadNow;
+          }
+        };
+
+        const cleanGameMode: GameMode = (rawUi.gameMode && isValidGameMode(rawUi.gameMode))
+          ? rawUi.gameMode
+          : (rawUi.hardMode ? 'hard' : 'normal');
+
+        const cleanUi = {
+          status: 'PAUSED' as const,
+          score: typeof rawUi.score === 'number' && isFinite(rawUi.score) ? Math.max(0, Math.floor(rawUi.score)) : 0,
+          deviceType: (rawUi.deviceType === 'mobile' || rawUi.deviceType === 'desktop') ? rawUi.deviceType : uiRef.current.deviceType,
+          activeTool: (rawUi.activeTool === 'weapon' || rawUi.activeTool === 'special' || rawUi.activeTool === 'build') ? rawUi.activeTool : 'special',
+          blocks: typeof rawUi.blocks === 'number' && isFinite(rawUi.blocks) ? Math.max(0, Math.floor(rawUi.blocks)) : 50,
+          spawnersLeft: typeof rawUi.spawnersLeft === 'number' && isFinite(rawUi.spawnersLeft) ? Math.max(0, Math.floor(rawUi.spawnersLeft)) : mapDef.spawners.length,
+          mapId: mapId,
+          hardMode: cleanGameMode !== 'normal',
+          gameMode: cleanGameMode,
+          buttonCounters: {
+            special: typeof rawUi.buttonCounters?.special === 'number' && isFinite(rawUi.buttonCounters.special) ? Math.max(0, Math.floor(rawUi.buttonCounters.special)) : 0,
+            build: typeof rawUi.buttonCounters?.build === 'number' && isFinite(rawUi.buttonCounters.build) ? Math.max(0, Math.floor(rawUi.buttonCounters.build)) : 0
+          }
+        };
+
+        let px = rawPlayer.x;
+        let py = rawPlayer.y;
+
+        px = Math.max(PLAYER_RADIUS, Math.min(MAP_WIDTH - PLAYER_RADIUS, px));
+        py = Math.max(PLAYER_RADIUS, Math.min(MAP_HEIGHT - PLAYER_RADIUS, py));
+
+        const wallResolved = resolveWallCollisions(px, py, PLAYER_RADIUS, mapDef.walls);
+        px = wallResolved.x;
+        py = wallResolved.y;
+
+        let stillOverlaps = false;
+        for (const wall of mapDef.walls) {
+          if (circleOverlapsWall(px, py, PLAYER_RADIUS, wall)) {
+            stillOverlaps = true;
+            break;
+          }
+        }
+        if (stillOverlaps) {
+          const pSpawn = getPlayerSpawn(mapDef);
+          px = pSpawn.pos.x;
+          py = pSpawn.pos.y;
+        }
+
+        const rawDash = rawPlayer.dash || {};
+        const rawBuild = rawPlayer.build || {};
+
+        let reconstructedDash;
+        let reconstructedBuild;
+
+        if (savedClockMs !== null) {
+          const dashEndTime = adjustTime(rawDash.endTime);
+          const dashLastTime = adjustTime(rawDash.lastTime);
+          reconstructedDash = {
+            active: Boolean(rawDash.active) && dashEndTime > loadNow,
+            endTime: dashEndTime,
+            targetX: typeof rawDash.targetX === 'number' && isFinite(rawDash.targetX) ? rawDash.targetX : 0,
+            targetY: typeof rawDash.targetY === 'number' && isFinite(rawDash.targetY) ? rawDash.targetY : 0,
+            shieldRadius: typeof rawDash.shieldRadius === 'number' && isFinite(rawDash.shieldRadius) ? rawDash.shieldRadius : 60,
+            lastTime: dashLastTime,
+            wasReady: Boolean(rawDash.wasReady),
+          };
+
+          const buildEndTime = adjustTime(rawBuild.endTime);
+          const buildLastTime = adjustTime(rawBuild.lastTime);
+          reconstructedBuild = {
+            active: Boolean(rawBuild.active) && buildEndTime > loadNow,
+            endTime: buildEndTime,
+            lastBlockX: typeof rawBuild.lastBlockX === 'number' && isFinite(rawBuild.lastBlockX) ? rawBuild.lastBlockX : 0,
+            lastBlockY: typeof rawBuild.lastBlockY === 'number' && isFinite(rawBuild.lastBlockY) ? rawBuild.lastBlockY : 0,
+            lastTime: buildLastTime,
+          };
+        } else {
+          reconstructedDash = {
+            active: false,
+            endTime: 0,
+            targetX: 0,
+            targetY: 0,
+            shieldRadius: 60,
+            lastTime: loadNow - DASH_COOLDOWN,
+            wasReady: true,
+          };
+          reconstructedBuild = {
+            active: false,
+            endTime: 0,
+            lastBlockX: 0,
+            lastBlockY: 0,
+            lastTime: loadNow - BUILD_COOLDOWN,
+          };
+        }
+
+        const reconstructedPlayer = {
+          x: px,
+          y: py,
+          vx: typeof rawPlayer.vx === 'number' && isFinite(rawPlayer.vx) ? rawPlayer.vx : 0,
+          vy: typeof rawPlayer.vy === 'number' && isFinite(rawPlayer.vy) ? rawPlayer.vy : 0,
+          kbvx: typeof rawPlayer.kbvx === 'number' && isFinite(rawPlayer.kbvx) ? rawPlayer.kbvx : 0,
+          kbvy: typeof rawPlayer.kbvy === 'number' && isFinite(rawPlayer.kbvy) ? rawPlayer.kbvy : 0,
+          processedZoneKbs: Array.isArray(rawPlayer.processedZoneKbs) && savedClockMs !== null
+            ? rawPlayer.processedZoneKbs.map(adjustTime)
+            : [],
+          radius: PLAYER_RADIUS,
+          lastShoot: savedClockMs !== null ? adjustTime(rawPlayer.lastShoot) : 0,
+          dash: reconstructedDash,
+          build: reconstructedBuild,
+          recentBlocks: Array.isArray(rawPlayer.recentBlocks)
+            ? rawPlayer.recentBlocks.map((rb: any) => ({
+                key: String(rb.key || ''),
+                x: Number(rb.x) || 0,
+                y: Number(rb.y) || 0,
+                timestamp: adjustTime(rb.timestamp),
+              }))
+            : [],
+        };
+
+        const reconstructedSpawners = mapDef.spawners.map((canonicalSpawner, idx) => {
+          const savedSpawner = Array.isArray(rawState.spawners) ? rawState.spawners[idx] : null;
+          const maxHp = canonicalSpawner.maxHp ?? canonicalSpawner.hp ?? 100;
+          let hp = canonicalSpawner.hp;
+          if (savedSpawner && typeof savedSpawner.hp === 'number' && isFinite(savedSpawner.hp)) {
+            hp = Math.max(0, Math.min(maxHp, Math.floor(savedSpawner.hp)));
+          }
+          return {
+            ...canonicalSpawner,
+            hp,
+            maxHp,
+          };
+        });
+
+        const reconstructedBlocks = rawBlocks.map((b: any) => ({
+          x: Math.max(0, Math.min(MAP_WIDTH, Number(b.x) || 0)),
+          y: Math.max(0, Math.min(MAP_HEIGHT, Number(b.y) || 0)),
+          size: typeof b.size === 'number' && isFinite(b.size) ? b.size : 30,
+          createdAt: adjustTime(b.createdAt),
+          colorIdx: typeof b.colorIdx === 'number' ? b.colorIdx : undefined,
+        })).filter(b => isFinite(b.x) && isFinite(b.y));
+
+        const reconstructedBullets = rawBullets.map((b: any) => ({
+          id: typeof b.id === 'string' ? b.id : undefined,
+          x: Math.max(0, Math.min(MAP_WIDTH, Number(b.x) || 0)),
+          y: Math.max(0, Math.min(MAP_HEIGHT, Number(b.y) || 0)),
+          dx: typeof b.dx === 'number' && isFinite(b.dx) ? b.dx : 0,
+          dy: typeof b.dy === 'number' && isFinite(b.dy) ? b.dy : 0,
+          radius: typeof b.radius === 'number' && isFinite(b.radius) ? b.radius : 6,
+          isPlayer: Boolean(b.isPlayer),
+          bounceCount: typeof b.bounceCount === 'number' && isFinite(b.bounceCount) ? Math.max(0, Math.floor(b.bounceCount)) : 0,
+          spawnTime: adjustTime(b.spawnTime),
+          isNeutral: Boolean(b.isNeutral),
+          colorIdx: typeof b.colorIdx === 'number' ? b.colorIdx : undefined,
+          targetX: typeof b.targetX === 'number' && isFinite(b.targetX) ? b.targetX : undefined,
+          targetY: typeof b.targetY === 'number' && isFinite(b.targetY) ? b.targetY : undefined,
+          repelMultiplied: Boolean(b.repelMultiplied),
+          allowedBlockKeys: Array.isArray(b.allowedBlockKeys) ? b.allowedBlockKeys.filter((k: any) => typeof k === 'string') : undefined,
+          leftBlockKeys: Array.isArray(b.leftBlockKeys) ? b.leftBlockKeys.filter((k: any) => typeof k === 'string') : undefined,
+        })).filter(b => isFinite(b.x) && isFinite(b.y));
+
+        const reconstructedEnemies = rawEnemies.map((e: any) => ({
+          id: typeof e.id === 'string' ? e.id : undefined,
+          x: Math.max(0, Math.min(MAP_WIDTH, Number(e.x) || 0)),
+          y: Math.max(0, Math.min(MAP_HEIGHT, Number(e.y) || 0)),
+          radius: typeof e.radius === 'number' && isFinite(e.radius) ? e.radius : ENEMY_RADIUS,
+          lastShoot: adjustTime(e.lastShoot),
+          speed: typeof e.speed === 'number' && isFinite(e.speed) ? e.speed : ENEMY_SPEED,
+          targetX: typeof e.targetX === 'number' && isFinite(e.targetX) ? e.targetX : undefined,
+          targetY: typeof e.targetY === 'number' && isFinite(e.targetY) ? e.targetY : undefined,
+          kbvx: typeof e.kbvx === 'number' && isFinite(e.kbvx) ? e.kbvx : 0,
+          kbvy: typeof e.kbvy === 'number' && isFinite(e.kbvy) ? e.kbvy : 0,
+          processedZoneKbs: Array.isArray(e.processedZoneKbs) && savedClockMs !== null ? e.processedZoneKbs.map(adjustTime) : [],
+        })).filter(e => isFinite(e.x) && isFinite(e.y));
+
+        const reconstructedBouncers = rawBouncers.map((b: any) => ({
+          id: typeof b.id === 'string' ? b.id : undefined,
+          x: Math.max(0, Math.min(MAP_WIDTH, Number(b.x) || 0)),
+          y: Math.max(0, Math.min(MAP_HEIGHT, Number(b.y) || 0)),
+          dx: typeof b.dx === 'number' && isFinite(b.dx) ? b.dx : 1,
+          dy: typeof b.dy === 'number' && isFinite(b.dy) ? b.dy : 0,
+          size: typeof b.size === 'number' && isFinite(b.size) ? b.size : 1,
+          radius: typeof b.radius === 'number' && isFinite(b.radius) ? b.radius : 24,
+          speed: typeof b.speed === 'number' && isFinite(b.speed) ? b.speed : ENEMY_SPEED,
+          lastDirChange: adjustTime(b.lastDirChange),
+          lastMultiply: adjustTime(b.lastMultiply),
+          targetX: typeof b.targetX === 'number' && isFinite(b.targetX) ? b.targetX : undefined,
+          targetY: typeof b.targetY === 'number' && isFinite(b.targetY) ? b.targetY : undefined,
+          kbvx: typeof b.kbvx === 'number' && isFinite(b.kbvx) ? b.kbvx : 0,
+          kbvy: typeof b.kbvy === 'number' && isFinite(b.kbvy) ? b.kbvy : 0,
+          processedZoneKbs: Array.isArray(b.processedZoneKbs) && savedClockMs !== null ? b.processedZoneKbs.map(adjustTime) : [],
+        })).filter(b => isFinite(b.x) && isFinite(b.y));
+
+        const reconstructedZones = rawZones.map((z: any) => ({
+          x: Math.max(0, Math.min(MAP_WIDTH, Number(z.x) || 0)),
+          y: Math.max(0, Math.min(MAP_HEIGHT, Number(z.y) || 0)),
+          innerRadius: typeof z.innerRadius === 'number' && isFinite(z.innerRadius) ? z.innerRadius : 0,
+          outerRadius: typeof z.outerRadius === 'number' && isFinite(z.outerRadius) ? z.outerRadius : 200,
+          duration: typeof z.duration === 'number' && isFinite(z.duration) ? z.duration : 1000,
+          spawnTime: adjustTime(z.spawnTime),
+          ownerId: typeof z.ownerId === 'string' ? z.ownerId : 'local',
+          colorIdx: typeof z.colorIdx === 'number' ? z.colorIdx : undefined,
+          type: z.type === 'repel' ? ('repel' as const) : undefined,
+        })).filter(z => isFinite(z.x) && isFinite(z.y));
+
+        const camW = canvasRef.current?.width || containerSize.width || 1200;
+        const camH = canvasRef.current?.height || containerSize.height || 800;
+
+        const cleanState = {
+          player: reconstructedPlayer,
+          multiplayerPlayers: {},
+          matchPhase: 'PLAYING' as const,
+          finalRunnerId: null,
+          finalRunDeadline: null,
+          openingProtectionDeadline: null,
+          winnerId: null,
+          matchPlayers: {},
+          playerActionAuthority: {},
+          forceBroadcast: false,
+          blocks: reconstructedBlocks,
+          nextBlockScore: typeof rawState.nextBlockScore === 'number' && isFinite(rawState.nextBlockScore) ? rawState.nextBlockScore : 100,
+          bullets: reconstructedBullets,
+          enemies: reconstructedEnemies,
+          bouncers: reconstructedBouncers,
+          zones: reconstructedZones,
+          nextEntityId: typeof rawState.nextEntityId === 'number' && isFinite(rawState.nextEntityId) ? rawState.nextEntityId : 1,
+          bouncerCapacity: typeof rawState.bouncerCapacity === 'number' && isFinite(rawState.bouncerCapacity) ? rawState.bouncerCapacity : 2,
+          spawners: reconstructedSpawners,
+          keys: { w: false, a: false, s: false, d: false },
+          mouse: { x: 0, y: 0, worldX: 0, worldY: 0, down: false, justDown: false, rightDown: false, rightJustDown: false },
+          touches: {
+            left: { active: false, id: -1, startX: 0, startY: 0, currentX: 0, currentY: 0, dirX: 0, dirY: 0 },
+            right: { active: false, id: -1, startX: 0, startY: 0, currentX: 0, currentY: 0, dirX: 0, dirY: 0, justReleased: false, releaseDx: 0, releaseDy: 0, aimLength: 0, startTime: 0 },
+            tap: { active: false, x: 0, y: 0 }
+          },
+          camera: {
+            x: px - camW / 2,
+            y: py - camH / 2,
+            width: camW,
+            height: camH,
+            z: 1,
+          },
+          lastBroadcastTime: 0,
+          particles: [],
+          trails: [],
+          shockwaves: [],
+          floatingTexts: [],
+          shake: 0,
+          lastTime: loadNow,
+          lastEnemySpawn: adjustTime(rawState.lastEnemySpawn),
+          enemySpawnRate: typeof rawState.enemySpawnRate === 'number' && isFinite(rawState.enemySpawnRate) ? rawState.enemySpawnRate : 3000,
+          gameMode: cleanGameMode,
+          hardMode: cleanGameMode !== 'normal',
+          tutorial: { active: false, spawnerIndex: null, enemySpawned: false, timer: 0 },
+        };
+
+        activeWalls = mapDef.walls;
+        stateRef.current = cleanState;
+
+        if (pulseTimeoutRef.current) {
+          clearTimeout(pulseTimeoutRef.current);
+          pulseTimeoutRef.current = null;
+        }
+        setPulseSpawnerCounter(false);
+        setPulseKey(0);
+        spawnerPointerAnimRef.current = null;
+
+        releaseAllInputs();
+
+        uiRef.current = cleanUi;
+        setUiState(cleanUi);
+        setLoadError(null);
+
+      } catch (err: any) {
+        const msg = (err && typeof err.message === 'string' && err.message.length < 30) ? err.message : "INVALID SAVE FILE";
+        setLoadError(msg);
+      } finally {
+        if (fileInputRef.current) fileInputRef.current.value = "";
       }
     };
     reader.readAsText(file);
-    if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
   const selectAndScrollToMap = (mapId: string) => {
@@ -7285,12 +7759,20 @@ export default function GameCanvas() {
                       MULTIPLAYER
                     </button>
                     <button
-                      onClick={() => fileInputRef.current?.click()}
+                      onClick={() => {
+                        setLoadError(null);
+                        fileInputRef.current?.click();
+                      }}
                       className="flex-1 py-2.5 sm:py-3 bg-[#0d0f1b] text-[#b500ff] border-2 border-[#b500ff]/60 hover:bg-[#b500ff]/10 hover:border-[#b500ff] font-black tracking-[0.15em] transition-all duration-200 uppercase text-[10px] sm:text-xs flex items-center justify-center shadow-[3px_3px_0_rgba(181,0,255,0.3)] hover:shadow-[3px_3px_0_rgba(181,0,255,0.6)] active:translate-x-[3px] active:translate-y-[3px] active:shadow-none"
                     >
                       LOAD MATCH
                     </button>
                   </div>
+                  {loadError && (
+                    <div role="alert" className="mt-2 text-center text-[#ff003c] text-xs font-mono font-bold tracking-wider uppercase">
+                      {loadError}
+                    </div>
+                  )}
                 </motion.div>
               ) : (
                 <motion.div
