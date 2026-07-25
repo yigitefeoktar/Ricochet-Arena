@@ -2112,6 +2112,13 @@ export default function GameCanvas() {
       if (b.score !== a.score) {
         return b.score - a.score;
       }
+      if (stateRef.current?.matchPhase === 'FINISHED') {
+        const winnerId = stateRef.current?.winnerId;
+        if (winnerId) {
+          if (a.id === winnerId) return -1;
+          if (b.id === winnerId) return 1;
+        }
+      }
       return a.id.localeCompare(b.id);
     });
 
@@ -2624,7 +2631,7 @@ export default function GameCanvas() {
         if (rawState.nextEntityId !== undefined && !isBoundedInt(rawState.nextEntityId, 1, 1_000_000_000)) {
           throw new Error("INVALID SAVE FILE");
         }
-        if (rawState.bouncerCapacity !== undefined && !isBoundedInt(rawState.bouncerCapacity, 0, 100)) {
+        if (rawState.bouncerCapacity !== undefined && !isBoundedNum(rawState.bouncerCapacity, 0, 100)) {
           throw new Error("INVALID SAVE FILE");
         }
         if (rawState.enemySpawnRate !== undefined && !isBoundedNum(rawState.enemySpawnRate, 100, 60000)) {
