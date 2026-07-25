@@ -2270,6 +2270,38 @@ export default function GameCanvas() {
     return stateRef.current.playerActionAuthority[clientId];
   };
 
+  const releaseAllInputs = useCallback(() => {
+    const state = stateRef.current;
+    if (!state) return;
+
+    state.keys.w = false;
+    state.keys.a = false;
+    state.keys.s = false;
+    state.keys.d = false;
+
+    state.mouse.down = false;
+    state.mouse.justDown = false;
+    state.mouse.rightDown = false;
+    state.mouse.rightJustDown = false;
+
+    state.touches.left.active = false;
+    state.touches.left.id = -1;
+    state.touches.left.dirX = 0;
+    state.touches.left.dirY = 0;
+
+    state.touches.right.active = false;
+    state.touches.right.id = -1;
+    state.touches.right.dirX = 0;
+    state.touches.right.dirY = 0;
+    state.touches.right.justReleased = false;
+    state.touches.right.releaseDx = 0;
+    state.touches.right.releaseDy = 0;
+    state.touches.right.aimLength = 0;
+    state.touches.right.startTime = 0;
+
+    state.touches.tap = { active: false, x: 0, y: 0 };
+  }, []);
+
   const handleCopyCode = () => {
     if (mpState.roomId) {
       navigator.clipboard.writeText(mpState.roomId);
@@ -2729,12 +2761,7 @@ export default function GameCanvas() {
     state.lastTime = performance.now();
     state.lastEnemySpawn = performance.now();
     state.enemySpawnRate = 3000;
-    state.keys = { w: false, a: false, s: false, d: false };
-    state.mouse.down = false;
-    state.mouse.justDown = false;
-    state.touches.left.active = false;
-    state.touches.right.active = false;
-    state.touches.tap.active = false;
+    releaseAllInputs();
     
     const uiHardMode = isMultiplayer ? (selectedGameMode !== 'normal') : isHardMode;
     const newUi = { status: 'PLAYING' as const, score: 0, deviceType: dType, activeTool: 'special' as const, blocks: 50, spawnersLeft: state.spawners.length, mapId: selectedMapId, hardMode: uiHardMode, gameMode: selectedGameMode, buttonCounters: { special: 0, build: 0 } };
@@ -3811,12 +3838,7 @@ export default function GameCanvas() {
               const next = !prev;
               mpMenuOpenRef.current = next;
               if (next) {
-                stateRef.current.keys = { w: false, a: false, s: false, d: false };
-                stateRef.current.mouse.down = false;
-                stateRef.current.mouse.rightDown = false;
-                stateRef.current.mouse.rightJustDown = false;
-                stateRef.current.touches.left.active = false;
-                stateRef.current.touches.right.active = false;
+                releaseAllInputs();
               }
               return next;
             });
@@ -4123,6 +4145,39 @@ export default function GameCanvas() {
       }
     };
 
+    const handleBlurOrHide = () => {
+      releaseAllInputs();
+      stateRef.current.lastTime = performance.now();
+
+      const isMultiplayer = !!mpRef.current.roomId;
+      if (!isMultiplayer && uiRef.current.status === 'PLAYING') {
+        const newStatus = 'PAUSED';
+        uiRef.current = { ...uiRef.current, status: newStatus };
+        setUiState(prev => (prev.status === 'PLAYING' ? { ...prev, status: newStatus } : prev));
+      }
+    };
+
+    const handleFocusOrShow = () => {
+      releaseAllInputs();
+      stateRef.current.lastTime = performance.now();
+    };
+
+    const handleWindowBlur = () => {
+      handleBlurOrHide();
+    };
+
+    const handleWindowFocus = () => {
+      handleFocusOrShow();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.hidden) {
+        handleBlurOrHide();
+      } else {
+        handleFocusOrShow();
+      }
+    };
+
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('keyup', handleKeyUp);
     canvas.addEventListener('contextmenu', handleContextMenu);
@@ -4133,6 +4188,9 @@ export default function GameCanvas() {
     canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
     canvas.addEventListener('touchend', handleTouchEnd, { passive: false });
     canvas.addEventListener('touchcancel', handleTouchEnd, { passive: false });
+    window.addEventListener('blur', handleWindowBlur);
+    window.addEventListener('focus', handleWindowFocus);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     const triggerEliminationAnimation = (x: number, y: number, colorIdx: number, label: string) => {
       const pDef = PLAYER_COLORS[colorIdx !== undefined ? colorIdx : 0] || PLAYER_COLORS[0];
@@ -7112,6 +7170,9 @@ export default function GameCanvas() {
         canvas.removeEventListener('touchend', handleTouchEnd);
         canvas.removeEventListener('touchcancel', handleTouchEnd);
       }
+      window.removeEventListener('blur', handleWindowBlur);
+      window.removeEventListener('focus', handleWindowFocus);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       cancelAnimationFrame(animationFrameId);
     };
   }, []);
@@ -8245,12 +8306,7 @@ export default function GameCanvas() {
                             const next = !prev;
                             mpMenuOpenRef.current = next;
                             if (next) {
-                              stateRef.current.keys = { w: false, a: false, s: false, d: false };
-                              stateRef.current.mouse.down = false;
-                              stateRef.current.mouse.rightDown = false;
-                              stateRef.current.mouse.rightJustDown = false;
-                              stateRef.current.touches.left.active = false;
-                              stateRef.current.touches.right.active = false;
+                              releaseAllInputs();
                             }
                             return next;
                           });
@@ -8276,12 +8332,7 @@ export default function GameCanvas() {
                       onPointerDown={(e) => {
                         e.stopPropagation();
                         if (mpState.roomId) {
-                          stateRef.current.keys = { w: false, a: false, s: false, d: false };
-                          stateRef.current.mouse.down = false;
-                          stateRef.current.mouse.rightDown = false;
-                          stateRef.current.mouse.rightJustDown = false;
-                          stateRef.current.touches.left.active = false;
-                          stateRef.current.touches.right.active = false;
+                          releaseAllInputs();
 
                           setConfirmResign(true);
                           confirmResignRef.current = true;
