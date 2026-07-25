@@ -1701,6 +1701,9 @@ export default function GameCanvas() {
   ];
 
   const [playerProfile, setPlayerProfile] = useState<{name: string, colorIdx: number}>({ name: 'PLAYER', colorIdx: 0 });
+  const [callsignDraft, setCallsignDraft] = useState<string>('PLAYER');
+  const [isEditingCallsign, setIsEditingCallsign] = useState<boolean>(false);
+  const isEditingCallsignRef = useRef<boolean>(false);
   const [containerSize, setContainerSize] = useState({ width: 1200, height: 800 });
   const [copyFeedback, setCopyFeedback] = useState(false);
   const [copyLinkFeedback, setCopyLinkFeedback] = useState(false);
@@ -2286,11 +2289,42 @@ export default function GameCanvas() {
 
   const updateProfile = (name: string, colorIdx: number) => {
     setPlayerProfile({ name, colorIdx });
+    if (!isEditingCallsignRef.current) {
+      setCallsignDraft(name);
+    }
     if (mpRef.current.roomId) {
       socketRef.current?.emit('update_profile', mpRef.current.roomId, {
         name,
         colorIdx
       });
+    }
+  };
+
+  const startCallsignEditing = () => {
+    setIsEditingCallsign(true);
+    isEditingCallsignRef.current = true;
+    setCallsignDraft(playerProfile.name);
+  };
+
+  const cancelCallsignEditing = () => {
+    if (!isEditingCallsignRef.current) return;
+    setIsEditingCallsign(false);
+    isEditingCallsignRef.current = false;
+    setCallsignDraft(playerProfile.name);
+  };
+
+  const commitCallsignDraft = () => {
+    if (!isEditingCallsignRef.current) return;
+    setIsEditingCallsign(false);
+    isEditingCallsignRef.current = false;
+    const trimmed = callsignDraft.trim();
+    if (trimmed === '') {
+      setCallsignDraft(playerProfile.name);
+    } else {
+      setCallsignDraft(trimmed);
+      if (trimmed !== playerProfile.name) {
+        updateProfile(trimmed, playerProfile.colorIdx);
+      }
     }
   };
 
@@ -3101,6 +3135,9 @@ export default function GameCanvas() {
             name: p.name,
             colorIdx: p.colorIdx
           });
+          if (!isEditingCallsignRef.current) {
+            setCallsignDraft(p.name);
+          }
           // Also set our local host status directly from server-authoritative list!
           const hostAssigned = p.isHost;
           if (mpRef.current.isHost !== hostAssigned) {
@@ -7731,10 +7768,21 @@ export default function GameCanvas() {
                         <input 
                           type="text" 
                           maxLength={12}
-                          value={playerProfile.name}
+                          value={isEditingCallsign ? callsignDraft : playerProfile.name}
+                          onFocus={startCallsignEditing}
                           onChange={(e) => {
-                            const val = e.target.value.toUpperCase();
-                            updateProfile(val, playerProfile.colorIdx);
+                            const val = e.target.value.toUpperCase().slice(0, 12);
+                            setCallsignDraft(val);
+                          }}
+                          onBlur={commitCallsignDraft}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              commitCallsignDraft();
+                              e.currentTarget.blur();
+                            } else if (e.key === 'Escape') {
+                              cancelCallsignEditing();
+                              e.currentTarget.blur();
+                            }
                           }}
                           className="w-full bg-black border border-white/10 text-white font-mono px-3 py-1.5 text-xs uppercase focus:outline-none focus:border-[#ffcc00]/50 mb-3"
                         />
