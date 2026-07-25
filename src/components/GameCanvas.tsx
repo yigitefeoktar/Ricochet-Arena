@@ -2443,10 +2443,14 @@ export default function GameCanvas() {
       })),
       enemies: (state.enemies || []).map(e => ({
         ...e,
+        kbvx: e.kbvx ?? 0,
+        kbvy: e.kbvy ?? 0,
         processedZoneKbs: e.processedZoneKbs ? [...e.processedZoneKbs] : [],
       })),
       bouncers: (state.bouncers || []).map(b => ({
         ...b,
+        kbvx: b.kbvx ?? 0,
+        kbvy: b.kbvy ?? 0,
         processedZoneKbs: b.processedZoneKbs ? [...b.processedZoneKbs] : [],
       })),
       zones: (state.zones || []).map(z => ({ ...z })),
@@ -2709,79 +2713,109 @@ export default function GameCanvas() {
           if (!Array.isArray(rawPlayer.processedZoneKbs) || rawPlayer.processedZoneKbs.length > 50) {
             throw new Error("INVALID SAVE FILE");
           }
-          processedZoneKbs = rawPlayer.processedZoneKbs.map((t: any) => adjustTime(t));
+          if (version >= 1) {
+            processedZoneKbs = rawPlayer.processedZoneKbs.map((t: any) => adjustTime(t));
+          } else {
+            processedZoneKbs = [];
+          }
         } else if (version >= 1) {
           throw new Error("INVALID SAVE FILE");
         }
 
-        if (!isObject(rawPlayer.dash) || !isObject(rawPlayer.build)) {
-          throw new Error("INVALID SAVE FILE");
-        }
+        let reconstructedDash;
+        let reconstructedBuild;
 
-        const rawDash = rawPlayer.dash;
-        const rawBuild = rawPlayer.build;
+        if (version === 0) {
+          reconstructedDash = {
+            active: false,
+            endTime: 0,
+            targetX: 0,
+            targetY: 0,
+            shieldRadius: 60,
+            lastTime: loadNow - DASH_COOLDOWN,
+            wasReady: true,
+          };
+          reconstructedBuild = {
+            active: false,
+            endTime: 0,
+            lastBlockX: 0,
+            lastBlockY: 0,
+            lastTime: loadNow - BUILD_COOLDOWN,
+          };
+        } else {
+          if (!isObject(rawPlayer.dash) || !isObject(rawPlayer.build)) {
+            throw new Error("INVALID SAVE FILE");
+          }
 
-        if (typeof rawDash.active !== 'boolean' || typeof rawDash.wasReady !== 'boolean') {
-          throw new Error("INVALID SAVE FILE");
-        }
-        if (!isBoundedNum(rawDash.targetX, -100000, 100000) ||
-            !isBoundedNum(rawDash.targetY, -100000, 100000) ||
-            !isBoundedNum(rawDash.shieldRadius, 1, 500)) {
-          throw new Error("INVALID SAVE FILE");
-        }
+          const rawDash = rawPlayer.dash;
+          const rawBuild = rawPlayer.build;
 
-        if (typeof rawBuild.active !== 'boolean') {
-          throw new Error("INVALID SAVE FILE");
-        }
-        if (!isBoundedNum(rawBuild.lastBlockX, -100000, 100000) ||
-            !isBoundedNum(rawBuild.lastBlockY, -100000, 100000)) {
-          throw new Error("INVALID SAVE FILE");
-        }
+          if (typeof rawDash.active !== 'boolean' || typeof rawDash.wasReady !== 'boolean') {
+            throw new Error("INVALID SAVE FILE");
+          }
+          if (!isBoundedNum(rawDash.targetX, -100000, 100000) ||
+              !isBoundedNum(rawDash.targetY, -100000, 100000) ||
+              !isBoundedNum(rawDash.shieldRadius, 1, 500)) {
+            throw new Error("INVALID SAVE FILE");
+          }
 
-        const dashEndTime = adjustTime(rawDash.endTime);
-        const dashLastTime = adjustTime(rawDash.lastTime);
-        const reconstructedDash = {
-          active: rawDash.active && dashEndTime > loadNow,
-          endTime: dashEndTime,
-          targetX: rawDash.targetX,
-          targetY: rawDash.targetY,
-          shieldRadius: rawDash.shieldRadius,
-          lastTime: dashLastTime,
-          wasReady: rawDash.wasReady,
-        };
+          if (typeof rawBuild.active !== 'boolean') {
+            throw new Error("INVALID SAVE FILE");
+          }
+          if (!isBoundedNum(rawBuild.lastBlockX, -100000, 100000) ||
+              !isBoundedNum(rawBuild.lastBlockY, -100000, 100000)) {
+            throw new Error("INVALID SAVE FILE");
+          }
 
-        const buildEndTime = adjustTime(rawBuild.endTime);
-        const buildLastTime = adjustTime(rawBuild.lastTime);
-        const reconstructedBuild = {
-          active: rawBuild.active && buildEndTime > loadNow,
-          endTime: buildEndTime,
-          lastBlockX: rawBuild.lastBlockX,
-          lastBlockY: rawBuild.lastBlockY,
-          lastTime: buildLastTime,
-        };
+          const dashEndTime = adjustTime(rawDash.endTime);
+          const dashLastTime = adjustTime(rawDash.lastTime);
+          reconstructedDash = {
+            active: rawDash.active && dashEndTime > loadNow,
+            endTime: dashEndTime,
+            targetX: rawDash.targetX,
+            targetY: rawDash.targetY,
+            shieldRadius: rawDash.shieldRadius,
+            lastTime: dashLastTime,
+            wasReady: rawDash.wasReady,
+          };
+
+          const buildEndTime = adjustTime(rawBuild.endTime);
+          const buildLastTime = adjustTime(rawBuild.lastTime);
+          reconstructedBuild = {
+            active: rawBuild.active && buildEndTime > loadNow,
+            endTime: buildEndTime,
+            lastBlockX: rawBuild.lastBlockX,
+            lastBlockY: rawBuild.lastBlockY,
+            lastTime: buildLastTime,
+          };
+        }
 
         let recentBlocks: { key: string; x: number; y: number; timestamp: number }[] = [];
         if (rawPlayer.recentBlocks !== undefined) {
           if (!Array.isArray(rawPlayer.recentBlocks) || rawPlayer.recentBlocks.length > 50) {
             throw new Error("INVALID SAVE FILE");
           }
-          recentBlocks = rawPlayer.recentBlocks.map((rb: any) => {
-            if (!isObject(rb)) throw new Error("INVALID SAVE FILE");
-            if (typeof rb.key !== 'string' || rb.key.length > 64) throw new Error("INVALID SAVE FILE");
-            if (!isBoundedNum(rb.x, 0, MAP_WIDTH) || !isBoundedNum(rb.y, 0, MAP_HEIGHT)) throw new Error("INVALID SAVE FILE");
-            const ts = adjustTime(rb.timestamp);
-            return {
-              key: rb.key,
-              x: rb.x,
-              y: rb.y,
-              timestamp: ts,
-            };
-          });
+          if (version >= 1) {
+            recentBlocks = rawPlayer.recentBlocks.map((rb: any) => {
+              if (!isObject(rb)) throw new Error("INVALID SAVE FILE");
+              if (typeof rb.key !== 'string' || rb.key.length > 64) throw new Error("INVALID SAVE FILE");
+              if (!isBoundedNum(rb.x, 0, MAP_WIDTH) || !isBoundedNum(rb.y, 0, MAP_HEIGHT)) throw new Error("INVALID SAVE FILE");
+              const ts = adjustTime(rb.timestamp);
+              return {
+                key: rb.key,
+                x: rb.x,
+                y: rb.y,
+                timestamp: ts,
+              };
+            });
+          } else {
+            recentBlocks = [];
+          }
         } else if (version >= 1) {
           throw new Error("INVALID SAVE FILE");
         }
 
-        const lastShootTime = adjustTime(rawPlayer.lastShoot);
+        const lastShootTime = version === 0 ? (loadNow - 1000) : adjustTime(rawPlayer.lastShoot);
 
         const reconstructedPlayer = {
           x: px,
@@ -2798,7 +2832,7 @@ export default function GameCanvas() {
           recentBlocks,
         };
 
-        if (rawState.spawners !== undefined) {
+        if (version >= 1) {
           if (!Array.isArray(rawState.spawners) || rawState.spawners.length !== mapDef.spawners.length) {
             throw new Error("INVALID SAVE FILE");
           }
@@ -2813,6 +2847,8 @@ export default function GameCanvas() {
               throw new Error("INVALID SAVE FILE");
             }
             hp = Math.floor(savedSpawner.hp);
+          } else if (version >= 1) {
+            throw new Error("INVALID SAVE FILE");
           }
           return {
             ...canonicalSpawner,
@@ -2915,8 +2951,17 @@ export default function GameCanvas() {
           if (!isBoundedNum(e.speed, 0, 2000)) throw new Error("INVALID SAVE FILE");
           if (e.targetX !== undefined && !isFiniteNum(e.targetX)) throw new Error("INVALID SAVE FILE");
           if (e.targetY !== undefined && !isFiniteNum(e.targetY)) throw new Error("INVALID SAVE FILE");
-          if (!isBoundedNum(e.kbvx, -10000, 10000) || !isBoundedNum(e.kbvy, -10000, 10000)) {
-            throw new Error("INVALID SAVE FILE");
+
+          let ekbvx = 0;
+          if (e.kbvx !== undefined) {
+            if (!isBoundedNum(e.kbvx, -10000, 10000)) throw new Error("INVALID SAVE FILE");
+            ekbvx = e.kbvx;
+          }
+
+          let ekbvy = 0;
+          if (e.kbvy !== undefined) {
+            if (!isBoundedNum(e.kbvy, -10000, 10000)) throw new Error("INVALID SAVE FILE");
+            ekbvy = e.kbvy;
           }
 
           let enemyProcessedZoneKbs: number[] = [];
@@ -2924,7 +2969,11 @@ export default function GameCanvas() {
             if (!Array.isArray(e.processedZoneKbs) || e.processedZoneKbs.length > 50) {
               throw new Error("INVALID SAVE FILE");
             }
-            enemyProcessedZoneKbs = e.processedZoneKbs.map((t: any) => adjustTime(t));
+            if (version >= 1) {
+              enemyProcessedZoneKbs = e.processedZoneKbs.map((t: any) => adjustTime(t));
+            } else {
+              enemyProcessedZoneKbs = [];
+            }
           }
 
           const lastShoot = adjustTime(e.lastShoot);
@@ -2938,8 +2987,8 @@ export default function GameCanvas() {
             speed: e.speed,
             targetX: e.targetX,
             targetY: e.targetY,
-            kbvx: e.kbvx,
-            kbvy: e.kbvy,
+            kbvx: ekbvx,
+            kbvy: ekbvy,
             processedZoneKbs: enemyProcessedZoneKbs,
           };
         });
@@ -2958,8 +3007,17 @@ export default function GameCanvas() {
           if (!isBoundedNum(b.speed, 0, 2000)) throw new Error("INVALID SAVE FILE");
           if (b.targetX !== undefined && !isFiniteNum(b.targetX)) throw new Error("INVALID SAVE FILE");
           if (b.targetY !== undefined && !isFiniteNum(b.targetY)) throw new Error("INVALID SAVE FILE");
-          if (!isBoundedNum(b.kbvx, -10000, 10000) || !isBoundedNum(b.kbvy, -10000, 10000)) {
-            throw new Error("INVALID SAVE FILE");
+
+          let bkbvx = 0;
+          if (b.kbvx !== undefined) {
+            if (!isBoundedNum(b.kbvx, -10000, 10000)) throw new Error("INVALID SAVE FILE");
+            bkbvx = b.kbvx;
+          }
+
+          let bkbvy = 0;
+          if (b.kbvy !== undefined) {
+            if (!isBoundedNum(b.kbvy, -10000, 10000)) throw new Error("INVALID SAVE FILE");
+            bkbvy = b.kbvy;
           }
 
           let bouncerProcessedZoneKbs: number[] = [];
@@ -2967,7 +3025,11 @@ export default function GameCanvas() {
             if (!Array.isArray(b.processedZoneKbs) || b.processedZoneKbs.length > 50) {
               throw new Error("INVALID SAVE FILE");
             }
-            bouncerProcessedZoneKbs = b.processedZoneKbs.map((t: any) => adjustTime(t));
+            if (version >= 1) {
+              bouncerProcessedZoneKbs = b.processedZoneKbs.map((t: any) => adjustTime(t));
+            } else {
+              bouncerProcessedZoneKbs = [];
+            }
           }
 
           const lastDirChange = adjustTime(b.lastDirChange);
@@ -2986,8 +3048,8 @@ export default function GameCanvas() {
             lastMultiply,
             targetX: b.targetX,
             targetY: b.targetY,
-            kbvx: b.kbvx,
-            kbvy: b.kbvy,
+            kbvx: bkbvx,
+            kbvy: bkbvy,
             processedZoneKbs: bouncerProcessedZoneKbs,
           };
         });
@@ -3043,7 +3105,7 @@ export default function GameCanvas() {
           status: 'PAUSED' as const,
           score: rawUi.score !== undefined ? rawUi.score : 0,
           deviceType: isMobileRef.current ? ('mobile' as const) : ('desktop' as const),
-          activeTool: (rawUi.activeTool === 'weapon' || rawUi.activeTool === 'special' || rawUi.activeTool === 'build') ? rawUi.activeTool : 'special',
+          activeTool: rawUi.activeTool === 'build' ? ('build' as const) : ('special' as const),
           blocks: rawUi.blocks !== undefined ? rawUi.blocks : 50,
           spawnersLeft: spawnersLeftCount,
           mapId: mapId,
