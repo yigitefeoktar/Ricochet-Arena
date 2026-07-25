@@ -3808,6 +3808,7 @@ export default function GameCanvas() {
       canvas.height = h;
       state.camera.width = w;
       state.camera.height = h;
+      state.lastTime = performance.now();
       setContainerSize({ width: w, height: h });
     };
 
@@ -4001,10 +4002,11 @@ export default function GameCanvas() {
         const y = t.clientY - rect.top;
         
         if (isMobile) {
-          const leftJoyX = 80;
-          const leftJoyY = canvas.height - 160;
-          const rightJoyX = canvas.width - 80;
-          const rightJoyY = canvas.height - 160;
+          const joyOffset = Math.min(160, Math.max(85, Math.floor(canvas.height * 0.22)));
+          const leftJoyX = Math.min(80, Math.floor(canvas.width * 0.18));
+          const leftJoyY = canvas.height - joyOffset;
+          const rightJoyX = canvas.width - leftJoyX;
+          const rightJoyY = canvas.height - joyOffset;
           const joyRadius = 120; // Radius for activation
           const maxDist = 40;
           
@@ -4081,10 +4083,11 @@ export default function GameCanvas() {
       const isMobile = uiRef.current.deviceType === 'mobile';
       const rect = canvas.getBoundingClientRect();
       const maxDist = 40;
-      const leftJoyX = 80;
-      const leftJoyY = canvas.height - 160;
-      const rightJoyX = canvas.width - 80;
-      const rightJoyY = canvas.height - 160;
+      const joyOffset = Math.min(160, Math.max(85, Math.floor(canvas.height * 0.22)));
+      const leftJoyX = Math.min(80, Math.floor(canvas.width * 0.18));
+      const leftJoyY = canvas.height - joyOffset;
+      const rightJoyX = canvas.width - leftJoyX;
+      const rightJoyY = canvas.height - joyOffset;
 
       for (let i = 0; i < e.changedTouches.length; i++) {
         const t = e.changedTouches[i];
@@ -7094,10 +7097,11 @@ export default function GameCanvas() {
 
       // Draw UI over canvas (Joysticks)
       if (uiRef.current.status === 'PLAYING' && uiRef.current.deviceType === 'mobile') {
-        const leftJoyX = 80;
-        const leftJoyY = canvas.height - 160;
-        const rightJoyX = canvas.width - 80;
-        const rightJoyY = canvas.height - 160;
+        const joyOffset = Math.min(160, Math.max(85, Math.floor(canvas.height * 0.22)));
+        const leftJoyX = Math.min(80, Math.floor(canvas.width * 0.18));
+        const leftJoyY = canvas.height - joyOffset;
+        const rightJoyX = canvas.width - leftJoyX;
+        const rightJoyY = canvas.height - joyOffset;
         
         const drawJoystick = (baseX: number, baseY: number, touchState: typeof state.touches.left, colorStr: string) => {
           ctx.save();
@@ -7187,8 +7191,8 @@ export default function GameCanvas() {
     };
   }, []);
 
-  const menuScale = Math.max(0.45, Math.min(1.4, Math.min(containerSize.width / 460, containerSize.height / 710)));
-  const mapScale = Math.max(0.45, Math.min(1.15, Math.min(containerSize.width / 950, containerSize.height / 710)));
+  const menuScale = Math.max(0.75, Math.min(1.2, Math.min(containerSize.width / 460, containerSize.height / 650)));
+  const mapScale = Math.max(0.75, Math.min(1.1, Math.min(containerSize.width / 920, containerSize.height / 650)));
 
   return (
     <div ref={wrapperRef} className="w-full h-full relative overflow-hidden bg-[#050508] font-mono select-none">
@@ -7317,7 +7321,7 @@ export default function GameCanvas() {
                     <div className="flex-1 flex flex-col min-h-0 border border-[#00f0ff]/30 bg-black/40 overflow-hidden">
                       <div 
                         ref={mapListRef}
-                        className="flex-1 overflow-y-auto p-2 grid grid-cols-2 gap-2 content-start [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
+                        className="flex-1 overflow-y-auto p-2 grid grid-cols-1 sm:grid-cols-2 gap-2 content-start [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
                       >
                         {Object.entries(MAPS)
                           .sort((a, b) => {
@@ -7531,7 +7535,7 @@ export default function GameCanvas() {
                     <div className="flex-1 flex flex-col min-h-0 border border-[#ffcc00]/30 bg-black/40 overflow-hidden">
                       <div 
                         ref={mpMapListRef}
-                        className="flex-1 overflow-y-auto p-2 grid grid-cols-2 gap-2 content-start [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
+                        className="flex-1 overflow-y-auto p-2 grid grid-cols-1 sm:grid-cols-2 gap-2 content-start [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
                       >
                         {Object.entries(MAPS)
                           .sort((a, b) => {
@@ -7722,7 +7726,7 @@ export default function GameCanvas() {
                   animate={{ scale: menuScale, y: 0 }}
                   exit={{ scale: 0.9 * menuScale, y: 20 }}
                   transition={{ duration: 0.2, ease: "easeOut" }}
-                  className="w-full max-w-md flex flex-col border-2 border-[#ffcc00] bg-[#0d0f1b]/95 p-4 sm:p-6 shadow-[10px_10px_0_#ffcc00] pointer-events-auto items-center relative z-10 origin-center"
+                  className="w-full max-w-md flex flex-col border-2 border-[#ffcc00] bg-[#0d0f1b]/95 p-3 sm:p-6 shadow-[10px_10px_0_#ffcc00] pointer-events-auto items-center relative z-10 origin-center max-h-[92vh] overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
                 >
               <h2 className="text-3xl font-black text-white tracking-widest" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>MULTIPLAYER</h2>
               
@@ -7768,7 +7772,7 @@ export default function GameCanvas() {
                     </button>
                   </div>
 
-                  <div className="w-full h-[345px] flex flex-col mb-5">
+                  <div className="w-full min-h-[220px] sm:h-[345px] flex flex-col mb-3 sm:mb-5 shrink min-h-0">
                     {activeLobbyTab === 'invite' ? (
                       <div className="w-full h-full flex flex-col justify-between">
                         <div>
@@ -8247,9 +8251,16 @@ export default function GameCanvas() {
                   </div>
                 )}
 
-                <div className="absolute top-0 left-0 right-0 p-4 sm:p-6 flex flex-row justify-between items-start pointer-events-none z-10 w-full max-w-7xl mx-auto">
+                <div 
+                  className="absolute top-0 left-0 right-0 p-3 sm:p-6 flex flex-row justify-between items-start pointer-events-none z-10 w-full max-w-7xl mx-auto"
+                  style={{
+                    paddingTop: 'calc(0.75rem + env(safe-area-inset-top, 0px))',
+                    paddingLeft: 'calc(0.75rem + env(safe-area-inset-left, 0px))',
+                    paddingRight: 'calc(0.75rem + env(safe-area-inset-right, 0px))',
+                  }}
+                >
                   {/* Left: Score & Spawners / Target Counters */}
-                  <div className="flex items-stretch gap-4 sm:gap-6 ml-4 sm:ml-8">
+                  <div className="flex items-stretch gap-2 sm:gap-6 ml-0 sm:ml-4">
                     <motion.div 
                       animate={flashScore ? {
                         filter: [
@@ -8307,7 +8318,7 @@ export default function GameCanvas() {
                   </div>
 
                   {/* Right: Pause & Quit buttons */}
-                  <div className="flex flex-col sm:flex-row items-end sm:items-center justify-center gap-3 sm:gap-4 pointer-events-auto h-full pr-2">
+                  <div className="flex flex-col sm:flex-row items-end sm:items-center justify-center gap-2 sm:gap-4 pointer-events-auto h-full pr-0 sm:pr-2">
                     <button
                       onPointerDown={(e) => {
                         e.stopPropagation();
@@ -8367,21 +8378,21 @@ export default function GameCanvas() {
 
             {uiState.status === 'PAUSED' && !confirmResign && (
               <div 
-                className="absolute inset-0 bg-black/[0.78] pointer-events-auto z-[70] flex flex-col items-center justify-center backdrop-blur-sm select-none"
+                className="absolute inset-0 bg-black/[0.78] pointer-events-auto z-[70] flex flex-col items-center justify-center backdrop-blur-sm select-none p-4 overflow-y-auto"
               >
                 <div className="flex flex-col items-center">
                   <h2 
-                    className="text-[48px] md:text-[68px] font-black text-[#F5F7FF] uppercase drop-shadow-[0_0_10px_rgba(255,255,255,0.28)] leading-none"
+                    className="text-[36px] sm:text-[48px] md:text-[68px] font-black text-[#F5F7FF] uppercase drop-shadow-[0_0_10px_rgba(255,255,255,0.28)] leading-none"
                     style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}
                   >
                     HALTED
                   </h2>
-                  <p className="text-[#F5F7FF]/55 font-mono text-[12px] md:text-[14px] tracking-[0.25em] uppercase mt-3">
+                  <p className="text-[#F5F7FF]/55 font-mono text-[12px] md:text-[14px] tracking-[0.25em] uppercase mt-2 sm:mt-3">
                     SYSTEM PAUSED
                   </p>
                 </div>
                 
-                <div className="flex flex-col gap-3 mt-11 w-[calc(100vw-48px)] max-w-[280px]">
+                <div className="flex flex-col gap-3 mt-5 sm:mt-11 w-[calc(100vw-48px)] max-w-[280px]">
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
@@ -8418,21 +8429,21 @@ export default function GameCanvas() {
 
             {mpState.roomId && mpMenuOpen && !confirmResign && (
               <div 
-                className="absolute inset-0 bg-black/[0.78] pointer-events-auto z-[70] flex flex-col items-center justify-center backdrop-blur-sm select-none"
+                className="absolute inset-0 bg-black/[0.78] pointer-events-auto z-[70] flex flex-col items-center justify-center backdrop-blur-sm select-none p-4 overflow-y-auto"
               >
                 <div className="flex flex-col items-center">
                   <h2 
-                    className="text-[48px] md:text-[68px] font-black text-[#FBBF24] uppercase drop-shadow-[0_0_10px_rgba(251,191,36,0.28)] leading-none"
+                    className="text-[36px] sm:text-[48px] md:text-[68px] font-black text-[#FBBF24] uppercase drop-shadow-[0_0_10px_rgba(251,191,36,0.28)] leading-none"
                     style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}
                   >
                     OPTIONS
                   </h2>
-                  <p className="text-[#F5F7FF]/55 font-mono text-[12px] md:text-[14px] tracking-[0.25em] uppercase mt-3">
+                  <p className="text-[#F5F7FF]/55 font-mono text-[12px] md:text-[14px] tracking-[0.25em] uppercase mt-2 sm:mt-3">
                     MATCH ACTIVE
                   </p>
                 </div>
                 
-                <div className="flex flex-col gap-3 mt-11 w-[calc(100vw-48px)] max-w-[280px]">
+                <div className="flex flex-col gap-3 mt-5 sm:mt-11 w-[calc(100vw-48px)] max-w-[280px]">
                   <button
                     onClick={(e) => {
                       e.stopPropagation();
@@ -8457,8 +8468,8 @@ export default function GameCanvas() {
             )}
 
             {confirmResign && (
-              <div className="absolute inset-0 bg-black/80 pointer-events-auto z-[70] flex flex-col items-center justify-center backdrop-blur-md">
-                 <h2 className="text-4xl sm:text-6xl md:text-7xl font-black text-[#ff003c] tracking-tighter drop-shadow-[0_0_15px_rgba(255,0,60,0.8)] mb-8 text-center px-4" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>
+              <div className="absolute inset-0 bg-black/80 pointer-events-auto z-[70] flex flex-col items-center justify-center backdrop-blur-md p-4 overflow-y-auto">
+                 <h2 className="text-3xl sm:text-6xl md:text-7xl font-black text-[#ff003c] tracking-tighter drop-shadow-[0_0_15px_rgba(255,0,60,0.8)] mb-4 sm:mb-8 text-center px-4" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>
                    CONFIRM RESIGNATION?
                  </h2>
                  <div className="flex gap-4 sm:gap-8 flex-col sm:flex-row">
@@ -8498,7 +8509,12 @@ export default function GameCanvas() {
                      {uiState.deviceType === 'mobile' ? 'JOYSTICK TO MOVE' : 'WASD TO MOVE'}
                    </div>
                 </div>
-                <div className={`absolute left-1/2 -translate-x-1/2 pointer-events-none z-10 flex gap-[14px] sm:gap-[16px] bottom-4 sm:bottom-6`}>
+                <div 
+                  className={`absolute left-1/2 -translate-x-1/2 pointer-events-none z-10 flex gap-[10px] sm:gap-[16px] bottom-3 sm:bottom-6 max-w-[calc(100vw-24px)]`}
+                  style={{
+                    bottom: 'calc(0.75rem + env(safe-area-inset-bottom, 0px))',
+                  }}
+                >
                    {(Object.keys(toolsData) as Array<keyof typeof toolsData>).map((toolKey) => {
                      const tool = toolsData[toolKey];
                      const isProtected = isOpeningProtectionActiveLocal(performance.now());
@@ -8570,7 +8586,7 @@ export default function GameCanvas() {
                                }
                              }
                            }}
-                           className={`pointer-events-auto w-[162px] h-[44px] border-2 font-black tracking-widest uppercase text-[13px] sm:text-[14px] relative overflow-hidden flex justify-center items-center gap-1 sm:gap-2 focus:outline-none ${isReady ? 'hover:brightness-110 active:brightness-90 active:scale-95 cursor-pointer' : 'cursor-default'}`}
+                           className={`pointer-events-auto w-[136px] sm:w-[162px] h-[38px] sm:h-[44px] border-2 font-black tracking-widest uppercase text-[12px] sm:text-[14px] relative overflow-hidden flex justify-center items-center gap-1 sm:gap-2 focus:outline-none ${isReady ? 'hover:brightness-110 active:brightness-90 active:scale-95 cursor-pointer' : 'cursor-default'}`}
                            style={{
                              borderColor: isReady ? tool.usableBorder : tool.unusableBorder,
                              background: isReady ? tool.usableFill : tool.unusableFill,
@@ -8603,10 +8619,10 @@ export default function GameCanvas() {
       })()}
 
       {uiState.status === 'VICTORY' && !mpState.roomId && (
-        <div className="absolute inset-0 bg-[#00f0ff]/90 flex flex-col items-center justify-center p-4 sm:p-6 text-center backdrop-blur-md z-[70]">
-          <div className="max-w-xl w-full bg-[#0a0000] border-2 border-[#00f0ff] p-6 sm:p-8 md:p-12 shadow-[10px_10px_0_#00f0ff]">
-            <h2 className="text-5xl sm:text-6xl md:text-7xl font-black text-[#00f0ff] mb-2 sm:mb-4 tracking-tighter" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>VICTORY</h2>
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-4 sm:gap-8 text-xs sm:text-sm font-mono text-[#00f0ff]/80 mb-6 md:mb-10 uppercase tracking-widest border-t border-b border-[#00f0ff]/30 py-4 sm:py-6">
+        <div className="absolute inset-0 bg-[#00f0ff]/90 flex flex-col items-center justify-center p-3 sm:p-6 text-center backdrop-blur-md z-[70] overflow-y-auto">
+          <div className="max-w-xl w-full bg-[#0a0000] border-2 border-[#00f0ff] p-4 sm:p-8 md:p-12 shadow-[10px_10px_0_#00f0ff] max-h-[92vh] overflow-y-auto">
+            <h2 className="text-4xl sm:text-6xl md:text-7xl font-black text-[#00f0ff] mb-2 sm:mb-4 tracking-tighter" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>VICTORY</h2>
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-8 text-xs sm:text-sm font-mono text-[#00f0ff]/80 mb-4 sm:mb-6 md:mb-10 uppercase tracking-widest border-t border-b border-[#00f0ff]/30 py-3 sm:py-6">
               <div>FINAL SCORE: <span className="text-white font-bold text-xl sm:text-2xl ml-2">{uiState.score}</span></div>
               <div className="hidden sm:block w-px h-6 bg-[#00f0ff]/30"></div>
               <div>SPAWNERS LEFT: <span className="text-white font-bold text-xl sm:text-2xl ml-2">{uiState.spawnersLeft}/{(MAPS[uiState.mapId] || MAPS.medium).spawners.length}</span></div>
@@ -8636,10 +8652,10 @@ export default function GameCanvas() {
       )}
 
       {uiState.status === 'GAME_OVER' && !mpState.roomId && (
-        <div className="absolute inset-0 bg-red-950/90 flex flex-col items-center justify-center p-4 sm:p-6 text-center backdrop-blur-md z-[70]">
-          <div className="max-w-xl w-full bg-[#0a0000] border-2 border-[#ff003c] p-6 sm:p-8 md:p-12 shadow-[10px_10px_0_#ff003c]">
-            <h2 className="text-5xl sm:text-6xl md:text-7xl font-black text-[#ff003c] mb-2 sm:mb-4 tracking-tighter" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>ANNIHILATED</h2>
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-4 sm:gap-8 text-xs sm:text-sm font-mono text-red-200/80 mb-6 md:mb-10 uppercase tracking-widest border-t border-b border-red-500/30 py-4 sm:py-6">
+        <div className="absolute inset-0 bg-red-950/90 flex flex-col items-center justify-center p-3 sm:p-6 text-center backdrop-blur-md z-[70] overflow-y-auto">
+          <div className="max-w-xl w-full bg-[#0a0000] border-2 border-[#ff003c] p-4 sm:p-8 md:p-12 shadow-[10px_10px_0_#ff003c] max-h-[92vh] overflow-y-auto">
+            <h2 className="text-4xl sm:text-6xl md:text-7xl font-black text-[#ff003c] mb-2 sm:mb-4 tracking-tighter" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>ANNIHILATED</h2>
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-8 text-xs sm:text-sm font-mono text-red-200/80 mb-4 sm:mb-6 md:mb-10 uppercase tracking-widest border-t border-b border-red-500/30 py-3 sm:py-6">
               <div>FINAL SCORE: <span className="text-white font-bold text-xl sm:text-2xl ml-2">{uiState.score}</span></div>
               <div>SPAWNERS LEFT: <span className="text-white font-bold text-xl sm:text-2xl ml-2">{uiState.spawnersLeft}/{(MAPS[uiState.mapId] || MAPS.medium).spawners.length}</span></div>
             </div>

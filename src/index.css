@@ -14,5 +14,15 @@ html, body, #root {
   padding: 0;
   overflow: hidden;
   position: relative;
+  touch-action: none;
+  overscroll-behavior: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+input, textarea {
+  -webkit-user-select: text;
+  user-select: text;
+  touch-action: manipulation;
 }
 
