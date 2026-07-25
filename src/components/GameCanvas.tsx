@@ -37,27 +37,27 @@ const WALLS = [
   { x: 0, y: 0, w: 50, h: MAP_HEIGHT },
   { x: MAP_WIDTH - 50, y: 0, w: 50, h: MAP_HEIGHT },
   { x: 0, y: MAP_HEIGHT - 50, w: MAP_WIDTH, h: 50 },
-  
+
   // Custom inner walls - Creating open areas and maze-like structures
   // Top left maze
   { x: 300, y: 300, w: 400, h: 40 },
   { x: 300, y: 300, w: 40, h: 400 },
   { x: 500, y: 500, w: 400, h: 40 },
   { x: 860, y: 300, w: 40, h: 240 },
-  
+
   // Center large bloc
   { x: 1200, y: 1200, w: 600, h: 600 },
-  
+
   // Bottom right corridors
   { x: 2000, y: 2000, w: 700, h: 40 },
   { x: 2000, y: 2300, w: 700, h: 40 },
   { x: 2000, y: 2000, w: 40, h: 340 },
-  
+
   // Top right open but scattered pillars
   { x: 2200, y: 400, w: 80, h: 80 },
   { x: 2500, y: 700, w: 80, h: 80 },
   { x: 2000, y: 800, w: 80, h: 80 },
-  
+
   // Bottom left open with weird angles (just rects for now)
   { x: 400, y: 2200, w: 100, h: 400 },
   { x: 700, y: 2400, w: 400, h: 100 },
@@ -115,25 +115,25 @@ const MAPS: Record<string, MapDefinition> = {
       { x: 300, y: 300, w: 50, h: 900 },
       { x: 1700, y: 300, w: 1000, h: 50 },
       { x: 2650, y: 300, w: 50, h: 900 },
-      
+
       { x: 300, y: 1700, w: 50, h: 1000 },
       { x: 300, y: 2650, w: 1000, h: 50 },
-      
+
       { x: 2650, y: 1700, w: 50, h: 1000 },
       { x: 1700, y: 2650, w: 1000, h: 50 },
-      
+
       { x: 800, y: 800, w: 500, h: 50 },
       { x: 800, y: 800, w: 50, h: 500 },
-      
+
       { x: 1700, y: 800, w: 500, h: 50 },
       { x: 2150, y: 800, w: 50, h: 500 },
-      
+
       { x: 800, y: 1700, w: 50, h: 500 },
       { x: 800, y: 2150, w: 500, h: 50 },
-      
+
       { x: 2150, y: 1700, w: 50, h: 500 },
       { x: 1700, y: 2150, w: 500, h: 50 },
-      
+
       { x: 1200, y: 1200, w: 600, h: 600 },
     ],
     spawners: [
@@ -181,11 +181,11 @@ const MAPS: Record<string, MapDefinition> = {
       { x: 1200, y: 2100, w: 600, h: 900 },
       { x: 0, y: 1200, w: 900, h: 600 },
       { x: 2100, y: 1200, w: 900, h: 600 },
-      
+
       // Top-Left: L-Shape
       { x: 300, y: 300, w: 500, h: 50 },
       { x: 300, y: 300, w: 50, h: 500 },
-      
+
       // Top-Right: Parallel horizontal shields
       { x: 2150, y: 300, w: 500, h: 50 },
       { x: 2150, y: 850, w: 500, h: 50 },
@@ -224,7 +224,7 @@ const MAPS: Record<string, MapDefinition> = {
       { x: 1100, y: 1600, w: 50, h: 300 },
       { x: 1850, y: 1100, w: 50, h: 300 },
       { x: 1850, y: 1600, w: 50, h: 300 },
-      
+
       // Left Spawner Cover
       { x: 150, y: 1200, w: 50, h: 600 },
       { x: 150, y: 1200, w: 400, h: 50 },
@@ -364,18 +364,18 @@ const MAPS: Record<string, MapDefinition> = {
       { x: 2400, y: 2400, w: 400, h: 50 },
       { x: 2400, y: 2400, w: 50, h: 400 },
       { x: 2400, y: 2800, w: 400, h: 50 },
-      
+
       // Bumpers (small walls)
       { x: 900, y: 900, w: 100, h: 100 },
       { x: 2000, y: 900, w: 100, h: 100 },
       { x: 900, y: 2000, w: 100, h: 100 },
       { x: 2000, y: 2000, w: 100, h: 100 },
-      
+
       { x: 1450, y: 600, w: 100, h: 100 },
       { x: 1450, y: 2300, w: 100, h: 100 },
       { x: 600, y: 1450, w: 100, h: 100 },
       { x: 2300, y: 1450, w: 100, h: 100 },
-      
+
       { x: 1150, y: 1150, w: 150, h: 150 },
       { x: 1700, y: 1150, w: 150, h: 150 },
       { x: 1150, y: 1700, w: 150, h: 150 },
@@ -435,14 +435,14 @@ const MAPS: Record<string, MapDefinition> = {
       { x: 250, y: 250, w: 500, h: 40 },
       { x: 750, y: 250, w: 40, h: 250 },
       { x: 250, y: 750, w: 300, h: 40 },
-      
+
       // Sector 2 (Top-Right, Kinetic Deflectors)
       { x: 2100, y: 300, w: 80, h: 80 },
       { x: 2400, y: 200, w: 80, h: 80 },
       { x: 2700, y: 350, w: 80, h: 80 },
       { x: 2300, y: 650, w: 120, h: 40 },
       { x: 2600, y: 750, w: 40, h: 120 },
-      
+
       // Sector 3 (Center, Gravitational Singularity)
       { x: 1200, y: 1200, w: 150, h: 40 },
       { x: 1650, y: 1200, w: 150, h: 40 },
@@ -450,12 +450,12 @@ const MAPS: Record<string, MapDefinition> = {
       { x: 1650, y: 1760, w: 150, h: 40 },
       { x: 1100, y: 1350, w: 40, h: 300 },
       { x: 1860, y: 1350, w: 40, h: 300 },
-      
+
       // Sector 4 (Bottom-Left, Thermal Vent)
       { x: 200, y: 2100, w: 600, h: 40 },
       { x: 800, y: 2100, w: 40, h: 500 },
       { x: 400, y: 2700, w: 400, h: 40 },
-      
+
       // Sector 5 (Bottom-Right, Crystal Spire)
       { x: 1900, y: 2000, w: 40, h: 600 },
       { x: 1900, y: 2000, w: 600, h: 40 },
@@ -480,21 +480,21 @@ const MAPS: Record<string, MapDefinition> = {
       { x: 1750, y: 1450, w: 1200, h: 100 },
       { x: 1450, y: 50, w: 100, h: 1200 },
       { x: 1450, y: 1750, w: 100, h: 1200 },
-      
+
       // Sector Control Quadrant walls (additions)
       // Top-Left (Sector Alpha, Shield) - around (500, 500)
       { x: 300, y: 300, w: 40, h: 400 },
       { x: 300, y: 300, w: 400, h: 40 },
       { x: 300, y: 700, w: 400, h: 40 },
-      
+
       // Top-Right (Sector Beta, Kinetic) - around (2500, 500)
       { x: 2300, y: 300, w: 40, h: 400 },
       { x: 2660, y: 300, w: 40, h: 400 },
-      
+
       // Bottom-Left (Sector Gamma, Lava) - around (500, 2500)
       { x: 300, y: 2300, w: 400, h: 40 },
       { x: 300, y: 2660, w: 400, h: 40 },
-      
+
       // Bottom-Right (Sector Delta, Crystal) - around (2500, 2500)
       { x: 2320, y: 2320, w: 80, h: 80 },
       { x: 2600, y: 2320, w: 80, h: 80 },
@@ -739,15 +739,15 @@ const MAPS: Record<string, MapDefinition> = {
       { x: 1000, y: 400, w: 100, h: 300 },
       { x: 1600, y: 300, w: 150, h: 150 },
       { x: 2200, y: 800, w: 200, h: 100 },
-      
+
       { x: 800, y: 1200, w: 100, h: 250 },
       { x: 1300, y: 1000, w: 300, h: 100 },
       { x: 1900, y: 1300, w: 150, h: 150 },
-      
+
       { x: 600, y: 1700, w: 250, h: 100 },
       { x: 1200, y: 1900, w: 100, h: 300 },
       { x: 1700, y: 2100, w: 300, h: 100 },
-      
+
       { x: 2300, y: 1800, w: 150, h: 250 },
       { x: 1100, y: 2500, w: 200, h: 100 },
       { x: 2100, y: 2500, w: 100, h: 200 }
@@ -856,8 +856,8 @@ function resolveWallCollisions(
           ];
 
           // Filter out-of-bounds candidates
-          const legalCandidates = candidates.filter(c => 
-            c.x >= radius && c.x <= MAP_WIDTH - radius && 
+          const legalCandidates = candidates.filter(c =>
+            c.x >= radius && c.x <= MAP_WIDTH - radius &&
             c.y >= radius && c.y <= MAP_HEIGHT - radius
           );
 
@@ -879,7 +879,7 @@ function resolveWallCollisions(
                 }
                 return true;
               });
-              
+
               if (freeCandidates.length > 0) {
                 freeCandidates.sort((a, b) => {
                   const da = (a.x - curX)**2 + (a.y - curY)**2;
@@ -946,7 +946,7 @@ function resolveWallCollisions(
     }
 
     if (stillStuck) {
-      const steps = 30; 
+      const steps = 30;
       const ringSize = 10;
       let found = false;
       for (let r = 1; r <= steps && !found; r++) {
@@ -978,14 +978,14 @@ function getConnectedComponent(startBlock: { x: number; y: number }, allBlocks: 
   const component: { x: number; y: number }[] = [startBlock];
   const visited = new Set<string>();
   visited.add(`${startBlock.x}_${startBlock.y}`);
-  
+
   let head = 0;
   while (head < component.length) {
     const current = component[head++];
     for (const other of allBlocks) {
       const otherKey = `${other.x}_${other.y}`;
       if (visited.has(otherKey)) continue;
-      
+
       if (Math.abs(current.x - other.x) <= 45 && Math.abs(current.y - other.y) <= 45) {
         visited.add(otherKey);
         component.push(other);
@@ -1076,18 +1076,18 @@ function lineIntersectsRect(x1: number, y1: number, x2: number, y2: number, rx: 
 
 function isValidPlayerSpawnPos(px: number, py: number, targetSpawner: {x: number, y: number} | null, mapDef: MapDefinition): boolean {
   const MIN_DIST = 60; // 20 radius + 40 padding
-  
+
   if (px < MIN_DIST || px > MAP_WIDTH - MIN_DIST || py < MIN_DIST || py > MAP_HEIGHT - MIN_DIST) {
     return false;
   }
-  
+
   for (const wall of mapDef.walls) {
     if (px > wall.x - MIN_DIST && px < wall.x + wall.w + MIN_DIST &&
         py > wall.y - MIN_DIST && py < wall.y + wall.h + MIN_DIST) {
       return false;
     }
   }
-  
+
   for (const spawner of mapDef.spawners) {
     const dx = px - spawner.x;
     const dy = py - spawner.y;
@@ -1095,7 +1095,7 @@ function isValidPlayerSpawnPos(px: number, py: number, targetSpawner: {x: number
       return false;
     }
   }
-  
+
   if (targetSpawner) {
     for (const wall of mapDef.walls) {
       if (lineIntersectsRect(px, py, targetSpawner.x, targetSpawner.y, wall.x, wall.y, wall.w, wall.h)) {
@@ -1103,7 +1103,7 @@ function isValidPlayerSpawnPos(px: number, py: number, targetSpawner: {x: number
       }
     }
   }
-  
+
   return true;
 }
 
@@ -1313,19 +1313,19 @@ function getPlayerSpawn(mapDef: MapDefinition): { pos: { x: number; y: number },
 
   for (const idx of spawnerIndices) {
     const spawner = mapDef.spawners[idx];
-    
+
     // try random angles/distances first
     for (let attempt = 0; attempt < 50; attempt++) {
       const angle = Math.random() * Math.PI * 2;
       const dist = 220 + Math.random() * 100; // 220 to 320
       const px = spawner.x + Math.cos(angle) * dist;
       const py = spawner.y + Math.sin(angle) * dist;
-      
+
       if (isValidPlayerSpawnPos(px, py, spawner, mapDef)) {
         return { pos: { x: px, y: py }, tutorialSpawnerIndex: idx };
       }
     }
-    
+
     // deterministic sweep if random fails
     for (let dist = 220; dist <= 320; dist += 20) {
       for (let a = 0; a < 360; a += 15) {
@@ -1382,7 +1382,7 @@ function getBulletRelicCollision(
     const vy = by - ay;
     const wx = bulletX - ax;
     const wy = bulletY - ay;
-    
+
     const vLenSq = vx * vx + vy * vy;
     if (vLenSq === 0) return checkCircle(ax, ay, thickness);
 
@@ -1542,7 +1542,7 @@ const DashStatus = ({ stateRef }: { stateRef: any }) => {
   const [text, setText] = useState('READY');
   const [color, setColor] = useState('#fff');
   const [shadow, setShadow] = useState('0 0 10px rgba(181,0,255,0.8)');
-  
+
   useEffect(() => {
     let animationFrameId: number;
     let wasReady = true;
@@ -1550,7 +1550,7 @@ const DashStatus = ({ stateRef }: { stateRef: any }) => {
     const loop = () => {
       const currentTime = performance.now();
       const dashRemaining = DASH_COOLDOWN - (currentTime - stateRef.current.player.dash.lastTime);
-      
+
       if (dashRemaining > 0) {
         setText((dashRemaining / 1000).toFixed(1) + 'S');
         setColor('rgba(181, 0, 255, 0.5)');
@@ -1562,7 +1562,7 @@ const DashStatus = ({ stateRef }: { stateRef: any }) => {
           setColor('#fff');
           setShadow('0 0 10px rgba(181,0,255,0.8)');
           wasReady = true;
-          
+
           const specialBtn = document.getElementById('tool-btn-special');
           if (specialBtn) {
             specialBtn.animate([
@@ -1580,10 +1580,10 @@ const DashStatus = ({ stateRef }: { stateRef: any }) => {
   }, [stateRef]);
 
   return (
-    <div className="text-white font-black tracking-tighter text-2xl sm:text-4xl leading-none" 
-         style={{ 
-           fontFamily: 'var(--font-display, Anton, sans-serif)', 
-           minWidth: '60px', 
+    <div className="text-white font-black tracking-tighter text-2xl sm:text-4xl leading-none"
+         style={{
+           fontFamily: 'var(--font-display, Anton, sans-serif)',
+           minWidth: '60px',
            textAlign: 'right',
            color: color,
            textShadow: shadow
@@ -1639,8 +1639,8 @@ function calculateEdgePointerPosition(
 ) {
   const boxMarginLeft = isMobile ? 45 : 35;
   const boxMarginRight = isMobile ? 45 : 35;
-  const boxMarginTop = 85; 
-  const boxMarginBottom = isMobile ? 135 : 45; 
+  const boxMarginTop = 85;
+  const boxMarginBottom = isMobile ? 135 : 45;
 
   const boxX1 = boxMarginLeft;
   const boxY1 = boxMarginTop;
@@ -1769,7 +1769,7 @@ export default function GameCanvas() {
   const [uiState, setUiState] = useState<{ status: 'MENU' | 'PLAYING' | 'PAUSED' | 'GAME_OVER' | 'VICTORY' | 'LOBBY'; score: number; deviceType: 'desktop' | 'mobile'; activeTool: 'weapon' | 'special' | 'build'; blocks: number; spawnersLeft: number; mapId: string; hardMode: boolean; gameMode: GameMode; buttonCounters: { special: number; build: number } }>({ status: 'MENU', score: 0, deviceType: 'desktop', activeTool: 'special', blocks: 50, spawnersLeft: 5, mapId: 'medium', hardMode: false, gameMode: 'normal', buttonCounters: { special: 0, build: 0 } });
   const uiRef = useRef(uiState);
   uiRef.current = uiState;
-  
+
   const playerProfileRef = useRef(playerProfile);
   playerProfileRef.current = playerProfile;
 
@@ -1961,7 +1961,7 @@ export default function GameCanvas() {
       }
     }
   }, []);
-  
+
   const triggerSpawnerPulse = useCallback(() => {
     if (mpRef.current.roomId) return;
     if (pulseTimeoutRef.current) {
@@ -1999,14 +1999,14 @@ export default function GameCanvas() {
   useEffect(() => {
     if (uiState.status === 'PLAYING') {
       const mode = mpState.roomId ? 'multi' : 'single';
-      
+
       // Easy toggle switch for the objective banner pop-up. Change to true to re-enable!
       const enableObjectiveBanner = false;
 
       if (!enableObjectiveBanner) {
         setBannerState({ show: false, isLeaving: false, mode: null });
         bannerShowingRef.current = false;
-        
+
         setFlashScore(false);
         return;
       }
@@ -2014,7 +2014,7 @@ export default function GameCanvas() {
       setBannerState({ show: true, isLeaving: false, mode });
       bannerShowingRef.current = true;
       setBannerCountdown(3);
-      
+
       setFlashScore(false);
 
       const interval = setInterval(() => {
@@ -2031,8 +2031,8 @@ export default function GameCanvas() {
         setBannerState({ show: false, isLeaving: false, mode: null });
         bannerShowingRef.current = false;
         if (mode === 'single') {
-          
-          
+
+
         } else {
           setFlashScore(true);
           setTimeout(() => setFlashScore(false), 2000);
@@ -2046,7 +2046,7 @@ export default function GameCanvas() {
     } else {
       setBannerState({ show: false, isLeaving: false, mode: null });
       bannerShowingRef.current = false;
-      
+
       setFlashScore(false);
     }
   }, [uiState.status, mpState.roomId]);
@@ -2424,7 +2424,7 @@ export default function GameCanvas() {
 
   const selectAndScrollToMap = (mapId: string) => {
     setUiState(prev => ({ ...prev, mapId }));
-    
+
     setTimeout(() => {
       if (mapListRef.current) {
         const container = mapListRef.current;
@@ -2432,12 +2432,12 @@ export default function GameCanvas() {
         if (button) {
           const containerRect = container.getBoundingClientRect();
           const buttonRect = button.getBoundingClientRect();
-          
+
           const isFullyVisible = (
             buttonRect.top >= containerRect.top - 1 &&
             buttonRect.bottom <= containerRect.bottom + 1
           );
-          
+
           if (!isFullyVisible) {
             button.scrollIntoView({ behavior: 'smooth', block: 'center' });
           }
@@ -2681,7 +2681,7 @@ export default function GameCanvas() {
 
     const isHardMode = selectedGameMode !== 'normal';
     const mapDef = MAPS[selectedMapId] || MAPS.classic_arena;
-    
+
     const myId = socketRef.current?.id || 'host';
     let startPos = { x: 500, y: 500 };
     let tutIdx: number | null = null;
@@ -2712,7 +2712,7 @@ export default function GameCanvas() {
     state.gameMode = selectedGameMode;
     state.hardMode = isHardMode;
     state.nextEntityId = 1;
-    
+
     state.tutorial = {
       active: !isMultiplayer,
       spawnerIndex: tutIdx,
@@ -2762,7 +2762,7 @@ export default function GameCanvas() {
     state.lastEnemySpawn = performance.now();
     state.enemySpawnRate = 3000;
     releaseAllInputs();
-    
+
     const uiHardMode = isMultiplayer ? (selectedGameMode !== 'normal') : isHardMode;
     const newUi = { status: 'PLAYING' as const, score: 0, deviceType: dType, activeTool: 'special' as const, blocks: 50, spawnersLeft: state.spawners.length, mapId: selectedMapId, hardMode: uiHardMode, gameMode: selectedGameMode, buttonCounters: { special: 0, build: 0 } };
     uiRef.current = newUi;
@@ -3007,7 +3007,7 @@ export default function GameCanvas() {
      try {
          const s = stateRef.current;
          let blockOccupied = false;
-         
+
          for (const enemy of s.enemies) {
             if (enemy.x > gridX - 20 - enemy.radius && enemy.x < gridX + 20 + enemy.radius &&
                 enemy.y > gridY - 20 - enemy.radius && enemy.y < gridY + 20 + enemy.radius) {
@@ -3063,7 +3063,7 @@ export default function GameCanvas() {
                }
             }
          }
-         
+
          s.blocks.push({ x: gridX, y: gridY, size: 40, createdAt: currentTime, colorIdx: cIdx, ownerId: mpRef.current.roomId ? (socketRef.current?.id || 'local') : 'local' });
          if (socketRef.current && mpRef.current.roomId && !mpRef.current.isHost) {
             socketRef.current.emit('client_action', mpRef.current.roomId, { type: 'build', x: gridX, y: gridY, colorIdx: cIdx });
@@ -3077,7 +3077,7 @@ export default function GameCanvas() {
      if (isOpeningProtectionActiveLocal()) return;
      const radius = 240;
      const s = stateRef.current;
-     
+
      s.zones.push({
          x: x,
          y: y,
@@ -3126,7 +3126,7 @@ export default function GameCanvas() {
 
     socket.on('player_joined', (id) => {
       stateRef.current.multiplayerPlayers[id] = { x: stateRef.current.player.x, y: stateRef.current.player.y, radius: PLAYER_RADIUS, isDash: false };
-      
+
       setLobbyPlayers(prev => ({
         ...prev,
         [id]: { name: 'CONNECTING...', colorIdx: 0, isHost: false }
@@ -3361,12 +3361,12 @@ export default function GameCanvas() {
         // Client-side smooth coordinates interpolation
         const receivedPlayers = { ...state.multiplayerPlayers, [state.hostId]: state.hostPlayer };
         delete receivedPlayers[socket.id];
-        
+
         const mergedPlayers: Record<string, any> = {};
         for (const pid in receivedPlayers) {
           const incoming = receivedPlayers[pid];
           if (!incoming) continue;
-          
+
           const prev = stateRef.current.multiplayerPlayers[pid];
           if (prev) {
             if (!prev.isDead && incoming.isDead) {
@@ -3410,7 +3410,7 @@ export default function GameCanvas() {
           const mappedSpawnTime = now - age;
 
           // Reconcile client's own local pre-spawns, or any already active/predicted bullet, to prevent snapping or micro-jitters
-          const matchedLocal = prevBullets.find((pb: any) => 
+          const matchedLocal = prevBullets.find((pb: any) =>
             pb.id && (
               (pb.id === ib.id && Math.sqrt((pb.x - ib.x) ** 2 + (pb.y - ib.y) ** 2) < 150) ||
               (ib.ownerId === myId && pb.id.toString().startsWith('local_') &&
@@ -3437,14 +3437,14 @@ export default function GameCanvas() {
         });
 
         // Retain fresh unmatched local-only bullets so they fly smoothly until acknowledged
-        const unmatchedLocals = prevBullets.filter((pb: any) => 
-          pb.id && pb.id.toString().startsWith('local_') && 
+        const unmatchedLocals = prevBullets.filter((pb: any) =>
+          pb.id && pb.id.toString().startsWith('local_') &&
           (now - pb.spawnTime < 500) &&
           !matchedLocalIds.has(pb.id)
         );
 
         stateRef.current.bullets = [...incomingBullets, ...unmatchedLocals];
-        
+
         if (uiRef.current.status === 'PLAYING') {
           const myId = socketRef.current?.id;
           const targetScore = (myId && state.multiplayerPlayers[myId] !== undefined)
@@ -3495,7 +3495,7 @@ export default function GameCanvas() {
       // E. One-way death
       const reportedDeath = input.isDead === true;
       const isProtected = isOpeningProtectionActiveForHost(currentTime);
-      
+
       let isDead = false;
       if (reportedDeath && !isProtected) {
         isDead = true;
@@ -3542,7 +3542,7 @@ export default function GameCanvas() {
           if (action.type === 'shoot') {
                if (action.dx === undefined || typeof action.dx !== 'number' || !Number.isFinite(action.dx) ||
                    action.dy === undefined || typeof action.dy !== 'number' || !Number.isFinite(action.dy)) return;
-               
+
                const len = Math.sqrt(action.dx * action.dx + action.dy * action.dy);
                if (len < 0.0001) return;
 
@@ -3614,7 +3614,7 @@ export default function GameCanvas() {
 
               if (action.x === undefined || typeof action.x !== 'number' || !Number.isFinite(action.x) ||
                   action.y === undefined || typeof action.y !== 'number' || !Number.isFinite(action.y)) return;
-              
+
               if (action.x % 40 !== 0 || action.y % 40 !== 0) return;
 
               const dx = action.x - clientPlayer.x;
@@ -3713,7 +3713,7 @@ export default function GameCanvas() {
 
               if (action.x === undefined || typeof action.x !== 'number' || !Number.isFinite(action.x) ||
                   action.y === undefined || typeof action.y !== 'number' || !Number.isFinite(action.y)) return;
-              
+
               if (action.x % 40 !== 0 || action.y % 40 !== 0) return;
 
               const dx = action.x - clientPlayer.x;
@@ -3743,14 +3743,14 @@ export default function GameCanvas() {
       const roomParam = params.get('room') || params.get('join');
       if (roomParam) {
         const cleanRoom = roomParam.trim().toUpperCase();
-        
+
         cancelPendingMatchSettingsUpdate();
         // Show status LOBBY immediately and set state to show join attempt
         setUiState(prev => ({ ...prev, status: 'LOBBY' }));
-        setMpState(prev => ({ 
-          ...prev, 
-          joinCode: cleanRoom, 
-          error: 'Autoconnecting to room...' 
+        setMpState(prev => ({
+          ...prev,
+          joinCode: cleanRoom,
+          error: 'Autoconnecting to room...'
         }));
 
         // Clean up URL query parameters so manual refresh doesn't force re-joining
@@ -3828,7 +3828,7 @@ export default function GameCanvas() {
 
     const handleKeyDown = (e: KeyboardEvent) => {
       const key = e.key.toLowerCase();
-      
+
       if (key === 'escape') {
         if (mpRef.current.roomId) {
           if (confirmResignRef.current) {
@@ -3852,7 +3852,7 @@ export default function GameCanvas() {
              let newStatus = prev.status;
              if (prev.status === 'PLAYING') newStatus = 'PAUSED';
              else if (prev.status === 'PAUSED') newStatus = 'PLAYING';
-             
+
              if (newStatus !== prev.status) {
                uiRef.current = { ...prev, status: newStatus };
                return uiRef.current;
@@ -3877,9 +3877,9 @@ export default function GameCanvas() {
       if (key === 'a') state.keys.a = true;
       if (key === 's') state.keys.s = true;
       if (key === 'd') state.keys.d = true;
-      
+
       const currentTime = performance.now();
-      
+
       if (key === '1') {
          if (uiRef.current.status === 'PLAYING') {
             if (isOpeningProtectionActiveLocal(currentTime)) return;
@@ -3889,11 +3889,11 @@ export default function GameCanvas() {
                dash.active = true;
                dash.endTime = currentTime + 6000;
                dash.lastTime = currentTime;
-               
+
                const isHostMode = !mpRef.current.roomId || mpRef.current.isHost;
                const finalX = stateRef.current.player.x;
                const finalY = stateRef.current.player.y;
-               
+
                if (isHostMode) {
                  const cIdx = playerProfileRef.current.colorIdx;
                  applySpecialAbility(finalX, finalY, cIdx, 'local');
@@ -3995,12 +3995,12 @@ export default function GameCanvas() {
       e.preventDefault();
       const rect = canvas.getBoundingClientRect();
       const isMobile = uiRef.current.deviceType === 'mobile';
-      
+
       for (let i = 0; i < e.changedTouches.length; i++) {
         const t = e.changedTouches[i];
         const x = t.clientX - rect.left;
         const y = t.clientY - rect.top;
-        
+
         if (isMobile) {
           const joyOffset = Math.min(160, Math.max(85, Math.floor(canvas.height * 0.22)));
           const leftJoyX = Math.min(80, Math.floor(canvas.width * 0.18));
@@ -4009,13 +4009,13 @@ export default function GameCanvas() {
           const rightJoyY = canvas.height - joyOffset;
           const joyRadius = 120; // Radius for activation
           const maxDist = 40;
-          
+
           if (!state.touches.left.active && (x - leftJoyX)**2 + (y - leftJoyY)**2 <= joyRadius**2) {
             state.touches.left.active = true;
             state.touches.left.id = t.identifier;
             state.touches.left.startX = leftJoyX;
             state.touches.left.startY = leftJoyY;
-            
+
             let dx = x - leftJoyX;
             let dy = y - leftJoyY;
             const dist = Math.sqrt(dx * dx + dy * dy);
@@ -4033,7 +4033,7 @@ export default function GameCanvas() {
             state.touches.right.startX = rightJoyX;
             state.touches.right.startY = rightJoyY;
             state.touches.right.startTime = performance.now();
-            
+
             let dx = x - rightJoyX;
             let dy = y - rightJoyY;
             const dist = Math.sqrt(dx * dx + dy * dy);
@@ -4093,7 +4093,7 @@ export default function GameCanvas() {
         const t = e.changedTouches[i];
         const x = t.clientX - rect.left;
         const y = t.clientY - rect.top;
-        
+
         if (state.touches.left.active && t.identifier === state.touches.left.id) {
           let dx = x - state.touches.left.startX;
           let dy = y - state.touches.left.startY;
@@ -4450,7 +4450,7 @@ export default function GameCanvas() {
             for (const b of state.bouncers) {
               b.x += b.dx * b.speed * dt;
               b.y += b.dy * b.speed * dt;
-              
+
               if (b.x < b.radius) { b.x = b.radius; b.dx *= -1; }
               if (b.x > MAP_WIDTH - b.radius) { b.x = MAP_WIDTH - b.radius; b.dx *= -1; }
               if (b.y < b.radius) { b.y = b.radius; b.dy *= -1; }
@@ -4484,7 +4484,7 @@ export default function GameCanvas() {
             }
           }
         }
-        
+
         // 1. Update Player Movement
         const pBeforeX = state.player.x;
         const pBeforeY = state.player.y;
@@ -4762,7 +4762,7 @@ export default function GameCanvas() {
               let vy = (Math.random() - 0.5) * 50;
               let maxLife = Math.random() * 1.5 + 0.5;
               let radius = Math.random() * 2 + 1;
-              
+
               if (spawner.specialType === 'shield') {
                 pColor = '#00f0ff';
                 const angle = Math.random() * Math.PI * 2;
@@ -4802,7 +4802,7 @@ export default function GameCanvas() {
               } else {
                 continue; // Do not emit for default or unknown spawner types
               }
-              
+
               state.particles.push({
                 x: spawner.x + (Math.random() - 0.5) * 50,
                 y: spawner.y + (Math.random() - 0.5) * 50,
@@ -4819,7 +4819,7 @@ export default function GameCanvas() {
 
           const mapDef = MAPS[uiRef.current.mapId] || MAPS.medium;
           const initialSpawners = mapDef.spawners.length;
-          
+
           // Tutorial opening enemy
           if (state.tutorial.active && !state.tutorial.enemySpawned && state.tutorial.spawnerIndex !== null && !mpRef.current.roomId) {
             state.tutorial.timer += dt * 1000;
@@ -4890,12 +4890,12 @@ export default function GameCanvas() {
                 }
 
                 if (foundSpawn) {
-                  state.enemies.push({ 
-                    id: 'e_' + state.nextEntityId++, 
-                    x: spawnX, y: spawnY, 
-                    radius: ENEMY_RADIUS, 
-                    lastShoot: currentTime, 
-                    speed: ENEMY_SPEED 
+                  state.enemies.push({
+                    id: 'e_' + state.nextEntityId++,
+                    x: spawnX, y: spawnY,
+                    radius: ENEMY_RADIUS,
+                    lastShoot: currentTime,
+                    speed: ENEMY_SPEED
                   });
                   spawnParticles(tutSpawner.x, tutSpawner.y, state.hardMode ? '#ff3300' : '#ff00ff', 10);
                   state.tutorial.enemySpawned = true;
@@ -4909,7 +4909,7 @@ export default function GameCanvas() {
               }
             }
           }
-          
+
           let effectiveRate = state.enemySpawnRate;
           if (state.hardMode) {
             // Hard Mode: Total spawn rate does not diminish when spawners are destroyed.
@@ -4920,7 +4920,7 @@ export default function GameCanvas() {
             const currentSpawnersCount = Math.max(1, state.spawners.length);
             effectiveRate = state.enemySpawnRate * (initialSpawners / currentSpawnersCount);
           }
-          
+
           if (currentTime - state.lastEnemySpawn > effectiveRate) {
             state.lastEnemySpawn = currentTime;
             state.enemySpawnRate = Math.max(800, state.enemySpawnRate * 0.95); // Speeds up slightly over time
@@ -4945,7 +4945,7 @@ export default function GameCanvas() {
         // 3. Update Enemies
         for (let i = state.enemies.length - 1; i >= 0; i--) {
           const enemy = state.enemies[i];
-          
+
           // Move towards closest alive player
           let targetX = state.player.x;
           let targetY = state.player.y;
@@ -4970,7 +4970,7 @@ export default function GameCanvas() {
           const dx = targetX - enemy.x;
           const dy = targetY - enemy.y;
           const dist = Math.sqrt(dx * dx + dy * dy);
-          
+
           // Apply zone shockwave knockback to enemy
           if (!enemy.processedZoneKbs) {
             enemy.processedZoneKbs = [];
@@ -5060,14 +5060,14 @@ export default function GameCanvas() {
         // Update Bouncers
         for (let i = state.bouncers.length - 1; i >= 0; i--) {
           const b = state.bouncers[i];
-          
+
           if (currentTime - b.lastDirChange > 3000) {
             if (Math.random() < 0.1) {
               b.lastDirChange = currentTime;
               let targetX = -1;
               let targetY = -1;
               let minDist = Infinity;
-              
+
               let activePlayerX = state.player.x;
               let activePlayerY = state.player.y;
               let distToPlayer = Infinity;
@@ -5093,7 +5093,7 @@ export default function GameCanvas() {
                 targetX = activePlayerX;
                 targetY = activePlayerY;
               }
-              
+
               for (const block of state.blocks) {
                 const dist = Math.sqrt((block.x - b.x)**2 + (block.y - b.y)**2);
                 if (dist < 600 && dist < minDist && Math.random() < 0.2) {
@@ -5102,7 +5102,7 @@ export default function GameCanvas() {
                   targetY = block.y;
                 }
               }
-              
+
               if (targetX !== -1) {
                 const angle = Math.atan2(targetY - b.y, targetX - b.x);
                 b.dx = Math.cos(angle);
@@ -5114,7 +5114,7 @@ export default function GameCanvas() {
               }
             }
           }
-          
+
           // Apply zone shockwave knockback to bouncer
           if (!b.processedZoneKbs) {
             b.processedZoneKbs = [];
@@ -5155,12 +5155,12 @@ export default function GameCanvas() {
           b.kbvy = kbvy * Math.exp(-8 * dt);
           if (Math.abs(b.kbvx) < 1) b.kbvx = 0;
           if (Math.abs(b.kbvy) < 1) b.kbvy = 0;
-          
+
           if (b.x < b.radius) { b.x = b.radius; b.dx *= -1; }
           if (b.x > MAP_WIDTH - b.radius) { b.x = MAP_WIDTH - b.radius; b.dx *= -1; }
           if (b.y < b.radius) { b.y = b.radius; b.dy *= -1; }
           if (b.y > MAP_HEIGHT - b.radius) { b.y = MAP_HEIGHT - b.radius; b.dy *= -1; }
-          
+
           // Collision with Walls
           const bResolved = resolveWallCollisions(b.x, b.y, b.radius, activeWalls, bBeforeX, bBeforeY);
           b.x = bResolved.x;
@@ -5178,7 +5178,7 @@ export default function GameCanvas() {
               b.kbvy -= dotKb * n.ny;
             }
           }
-          
+
           // Collision with Blocks
           for (let blk = state.blocks.length - 1; blk >= 0; blk--) {
             const block = state.blocks[blk];
@@ -5268,11 +5268,11 @@ export default function GameCanvas() {
               auth.lastShootAt = currentTime;
             }
           }
-          
+
           let bvx = 0;
           let bvy = 0;
           const shootLen = Math.sqrt(shootDirX * shootDirX + shootDirY * shootDirY);
-          
+
           if (shootLen > 0) {
             bvx = (shootDirX / shootLen) * BULLET_SPEED;
             bvy = (shootDirY / shootLen) * BULLET_SPEED;
@@ -5328,7 +5328,7 @@ export default function GameCanvas() {
             state.zones.splice(z, 1);
             continue;
           }
-          
+
           if (zone.type === 'repel') {
              // Zone follows owner
              let ownerTarget = null;
@@ -5349,7 +5349,7 @@ export default function GameCanvas() {
                  if (bullet.colorIdx === zone.colorIdx && bullet.isPlayer && !bullet.isNeutral) {
                      continue;
                  }
-                 
+
                  const dx = bullet.x - zone.x;
                  const dy = bullet.y - zone.y;
                  if (dx * dx + dy * dy <= zone.outerRadius * zone.outerRadius) {
@@ -5362,7 +5362,7 @@ export default function GameCanvas() {
                              const origDx = bullet.dx;
                              const origDy = bullet.dy;
                              const speed = Math.sqrt(origDx * origDx + origDy * origDy);
-                             
+
                              // 1. Mirrored bullet (modify existing)
                              bullet.dx -= 2 * dot * nx;
                              bullet.dy -= 2 * dot * ny;
@@ -5371,10 +5371,10 @@ export default function GameCanvas() {
                              bullet.isPlayer = true;
                              bullet.ownerId = zone.ownerId;
                              bullet.colorIdx = zone.colorIdx;
-                             
+
                              if (!bullet.repelMultiplied) {
                                  bullet.repelMultiplied = true;
-                                 
+
                                  // 2. Reversed bullet (directly back where it came from)
                                  newBullets.push({
                                      id: Math.random().toString(36).substring(2, 9),
@@ -5391,7 +5391,7 @@ export default function GameCanvas() {
                                      spawnTime: bullet.spawnTime || performance.now(),
                                      repelMultiplied: true
                                  });
-                                 
+
                                  // 3. Away bullet (shot directly away from player)
                                  newBullets.push({
                                      id: Math.random().toString(36).substring(2, 9),
@@ -5417,7 +5417,7 @@ export default function GameCanvas() {
                  state.bullets.push(...newBullets);
              }
           }
-          
+
           // Continuous pushes for enemies and bouncers have been replaced with smooth decaying knockback shockwaves in their updates.
         }
 
@@ -5438,19 +5438,19 @@ export default function GameCanvas() {
           // Dynamic tracking of connected area for the bullet
           // 1. If it's a freshly initialized bullet, automatically register connected area it is currently spawned in
           const isFreshBullet = bullet.allowedBlockKeys.length === 0 && bullet.leftBlockKeys.length === 0;
-          
+
           for (const block of state.blocks) {
             const halfSize = block.size / 2;
             const closestX = Math.max(block.x - halfSize, Math.min(bullet.x, block.x + halfSize));
             const closestY = Math.max(block.y - halfSize, Math.min(bullet.y, block.y + halfSize));
             const bdx = bullet.x - closestX;
             const bdy = bullet.y - closestY;
-            
+
             if (bdx * bdx + bdy * bdy < bullet.radius * bullet.radius && block.colorIdx === bullet.colorIdx) {
               const key = `${block.x}_${block.y}`;
               const isNewBlock = (currentTime - block.createdAt < 300);
               const isAlreadyAllowed = bullet.allowedBlockKeys.includes(key);
-              
+
               if (isFreshBullet || isNewBlock || isAlreadyAllowed) {
                 // If a new block was placed, clear it from leftBlockKeys just in case
                 if (isNewBlock) {
@@ -5463,7 +5463,7 @@ export default function GameCanvas() {
                 const comp = getConnectedComponent(block, state.blocks.filter(b => b.colorIdx === block.colorIdx));
                 for (const cb of comp) {
                   const cbKey = `${cb.x}_${cb.y}`;
-                  
+
                   // Make sure to remove any newly connected block keys from leftBlockKeys
                   if (isNewBlock) {
                     const cbLeftIdx = bullet.leftBlockKeys.indexOf(cbKey);
@@ -5509,7 +5509,7 @@ export default function GameCanvas() {
 
           let speedMultiplier = 1;
           const timeAlive = currentTime - bullet.spawnTime;
-          
+
           // Initial speed burst to avoid player running into their own bullets
           if (bullet.isPlayer && timeAlive < 250) {
             speedMultiplier = 3.5;
@@ -5567,14 +5567,14 @@ export default function GameCanvas() {
                   bullet.dx = bullet.dx - 2 * dot * nx;
                   bullet.dy = bullet.dy - 2 * dot * ny;
                   bullet.bounceCount++;
-                  
+
                   let pColor = '#aaaaaa';
                   if (spawner.specialType === 'shield') pColor = '#00f0ff';
                   else if (spawner.specialType === 'kinetic') pColor = '#ffcc00';
                   else if (spawner.specialType === 'singularity') pColor = '#b500ff';
                   else if (spawner.specialType === 'magma_gates') pColor = '#ff5500';
                   else if (spawner.specialType === 'crystal') pColor = '#00ffaa';
-                  
+
                   spawnParticles(bullet.x, bullet.y, pColor, 8);
                 }
               }
@@ -5592,7 +5592,7 @@ export default function GameCanvas() {
           if (!bulletDestroyed) {
              for (let b = state.blocks.length - 1; b >= 0; b--) {
                const block = state.blocks[b];
-               
+
                // Skip collision if this block is currently part of the allowed connected area
                const blockKey = `${block.x}_${block.y}`;
                if (bullet.allowedBlockKeys && bullet.allowedBlockKeys.includes(blockKey)) {
@@ -5604,17 +5604,17 @@ export default function GameCanvas() {
                const closestY = Math.max(block.y - halfSize, Math.min(bullet.y, block.y + halfSize));
                const bdx = bullet.x - closestX;
                const bdy = bullet.y - closestY;
-               
+
                if (bdx * bdx + bdy * bdy < bullet.radius * bullet.radius) {
                  // Block is unbreakable, bounce bullets
                  bullet.bounceCount++;
                  bullet.isNeutral = true;
                  const pDef = PLAYER_COLORS[block.colorIdx !== undefined ? block.colorIdx : 0] || PLAYER_COLORS[0];
                  spawnParticles(closestX, closestY, pDef.n, 5);
-                 
+
                  const currentDist = Math.sqrt(bdx * bdx + bdy * bdy);
                  const pushDist = (bullet.radius - currentDist) + 1;
-                 
+
                  if (Math.abs(bullet.x - block.x) >= Math.abs(bullet.y - block.y)) {
                    bullet.dx *= -1;
                    bullet.x += bdx === 0 ? (bullet.dx > 0 ? pushDist : -pushDist) : (bdx / Math.abs(bdx)) * pushDist;
@@ -5636,7 +5636,7 @@ export default function GameCanvas() {
                 spawnParticles(bouncer.x, bouncer.y, '#ff3333', 20);
                 bulletDestroyed = true;
                 state.bouncers.splice(b, 1);
-                
+
                 let nextSize = 0;
                 let nextRadius = 0;
                 let nextSpeed = 0;
@@ -5649,19 +5649,19 @@ export default function GameCanvas() {
                   nextRadius = 16;
                   nextSpeed = ENEMY_SPEED + Math.random() * 20;
                 }
-                
+
                 if (nextSize > 0) {
                   const baseAngle = Math.atan2(bouncer.dy, bouncer.dx);
                   state.bouncers.push({
                     id: 'b_' + state.nextEntityId++,
-                    x: bouncer.x, y: bouncer.y, 
+                    x: bouncer.x, y: bouncer.y,
                     dx: Math.cos(baseAngle + 0.5), dy: Math.sin(baseAngle + 0.5),
                     size: nextSize, radius: nextRadius, speed: nextSpeed,
                     lastDirChange: currentTime, lastMultiply: currentTime
                   });
                   state.bouncers.push({
                     id: 'b_' + state.nextEntityId++,
-                    x: bouncer.x, y: bouncer.y, 
+                    x: bouncer.x, y: bouncer.y,
                     dx: Math.cos(baseAngle - 0.5), dy: Math.sin(baseAngle - 0.5),
                     size: nextSize, radius: nextRadius, speed: nextSpeed,
                     lastDirChange: currentTime, lastMultiply: currentTime
@@ -5670,7 +5670,7 @@ export default function GameCanvas() {
                   state.shockwaves.push({ x: bouncer.x, y: bouncer.y, color: '#ff3333', maxRadius: 100, age: 0, maxAge: 0.3, thickness: 10 });
                   let pts = 0;
                   if (bullet.isPlayer && !bullet.isNeutral) pts = 250;
-                  
+
                   if (pts > 0) {
                     const bOwner = bullet.ownerId || 'local';
                     const hostId = socketRef.current?.id || 'local';
@@ -5716,7 +5716,7 @@ export default function GameCanvas() {
                 if (bullet.isPlayer && !bullet.isNeutral) {
                   pts = 100;
                 }
-                
+
                 if (pts > 0) {
                   const bOwner = bullet.ownerId || 'local';
                   const hostId = socketRef.current?.id || 'local';
@@ -5764,7 +5764,7 @@ export default function GameCanvas() {
                 }
                 spawnParticles(bullet.x, bullet.y, '#ffffff', 10);
                 bulletDestroyed = true;
-                
+
                 if (state.gameMode !== 'impossible' && spawner.hp <= 0) {
                   const destroyedSpawner = { x: spawner.x, y: spawner.y, radius: spawner.radius };
                   const spawnerColor = state.hardMode ? '#ff3300' : '#ff00ff';
@@ -5782,7 +5782,7 @@ export default function GameCanvas() {
 
                   let pts = 0;
                   if (bullet.isPlayer && !bullet.isNeutral) pts = 1000;
-                  
+
                   const bOwner = bullet.ownerId || 'local';
                   const hostId = socketRef.current?.id || 'local';
                   if (bOwner === hostId || bOwner === 'local') {
@@ -5957,7 +5957,7 @@ export default function GameCanvas() {
       }
 
       // --- RENDERING --- (Always render, even if GAME_OVER)
-      
+
       // Update Camera based on player (or keep it still if dead)
       state.shake = Math.max(0, state.shake - dt * 60);
       const shakeX = (Math.random() - 0.5) * state.shake;
@@ -5979,7 +5979,7 @@ export default function GameCanvas() {
       const GRID_SIZE = 100;
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.03)';
       ctx.lineWidth = 1;
-      
+
       const startX = Math.floor(state.camera.x / GRID_SIZE) * GRID_SIZE;
       const endX = startX + state.camera.width + GRID_SIZE;
       const startY = Math.floor(state.camera.y / GRID_SIZE) * GRID_SIZE;
@@ -6009,7 +6009,7 @@ export default function GameCanvas() {
         ) continue;
 
         ctx.fillRect(wall.x, wall.y, wall.w, wall.h);
-        
+
         ctx.save();
         ctx.shadowColor = '#00f0ff';
         ctx.shadowBlur = 8;
@@ -6171,7 +6171,7 @@ export default function GameCanvas() {
         const spawnerSpeedScale = state.hardMode ? (initialSpawners / state.spawners.length) : 1;
 
         ctx.save();
-        
+
         // Outer glow/pulse gets faster in Hard Mode as remaining spawners decrease
         const pulse = Math.sin(currentTime / (200 / spawnerSpeedScale)) * 5;
         const glowColor = state.hardMode ? '#ff3300' : '#ff00ff';
@@ -6182,7 +6182,7 @@ export default function GameCanvas() {
         ctx.beginPath();
         ctx.arc(spawner.x, spawner.y, spawner.radius * 1.8 + pulse, 0, Math.PI * 2);
         ctx.fill();
-        
+
         // Hexagon shape
         const isImpossibleMode = state.gameMode === 'impossible';
         ctx.shadowBlur = 10;
@@ -6222,7 +6222,7 @@ export default function GameCanvas() {
           // Background
           ctx.fillStyle = 'rgba(255, 0, 80, 0.2)';
           ctx.fillRect(barX, barY, barW, barH);
-          
+
           // Fill
           ctx.fillStyle = '#ff0050';
           ctx.save();
@@ -6341,7 +6341,7 @@ export default function GameCanvas() {
         ctx.beginPath();
         ctx.arc(enemy.x, enemy.y, enemy.radius, 0, Math.PI * 2);
         ctx.fill();
-        
+
         // Face outline
         ctx.strokeStyle = '#000';
         ctx.lineWidth = 2;
@@ -6356,11 +6356,11 @@ export default function GameCanvas() {
           t.y + t.radius < state.camera.y ||
           t.y - t.radius > state.camera.y + state.camera.height
         ) continue;
-        
+
         const maxAge = t.isSuperStrong ? 0.7 : 0.4;
         const progress = t.age / maxAge;
         if (progress >= 1) continue;
-        
+
         const alpha = 1 - progress;
         ctx.save();
         if (t.isSuperStrong) {
@@ -6369,11 +6369,11 @@ export default function GameCanvas() {
           ctx.shadowColor = t.color;
           ctx.shadowBlur = 15;
           ctx.globalAlpha = alpha * 0.85; // highly opaque
-          
+
           ctx.beginPath();
           ctx.arc(t.x, t.y, t.radius * (1 - progress * 0.5), 0, Math.PI * 2); // shrink slower
           ctx.fill();
-          
+
           // Outer white core ring for extra dynamic energy emphasis
           ctx.strokeStyle = '#ffffff';
           ctx.lineWidth = 1.5 * alpha;
@@ -6404,7 +6404,7 @@ export default function GameCanvas() {
         const age = performance.now() - zone.spawnTime;
         const progress = Math.min(1, age / 300);
         const pulse = 1 + Math.sin(age * 0.005) * 0.05;
-        
+
         // Let the inner ring be a scaling fraction of the outer ring so it is fully visible and beautiful
         const outerCurrent = zone.outerRadius * Math.sin(progress * Math.PI / 2) * pulse;
         const innerCurrent = outerCurrent * 0.25;
@@ -6415,9 +6415,9 @@ export default function GameCanvas() {
 
         ctx.save();
         ctx.globalAlpha = alpha;
-        
+
         ctx.translate(zone.x, zone.y);
-        
+
         const oR = Math.max(0.1, outerCurrent);
         const iR = Math.max(0.1, innerCurrent);
 
@@ -6559,7 +6559,7 @@ export default function GameCanvas() {
         }
 
         const currentSize = block.size * scale;
-        
+
         ctx.save();
         ctx.translate(block.x, block.y);
         if (ageMs < spawnDuration) {
@@ -6659,7 +6659,7 @@ export default function GameCanvas() {
          const pColor = pDef.n;
          const pGlow = pDef.g;
          const pName = pData.name || 'PLAYER';
-         
+
          if (pData.isDash) {
            ctx.fillStyle = pGlow;
            ctx.beginPath();
@@ -6679,7 +6679,7 @@ export default function GameCanvas() {
          ctx.beginPath();
          ctx.arc(pData.x, pData.y, pData.radius, 0, Math.PI * 2);
          ctx.fill();
-         
+
          ctx.strokeStyle = '#000';
          ctx.lineWidth = 2;
          ctx.stroke();
@@ -6712,14 +6712,14 @@ export default function GameCanvas() {
 
         const worldMouseX = state.mouse.x + state.camera.x;
         const worldMouseY = state.mouse.y + state.camera.y;
-        
+
         ctx.strokeStyle = pGlow;
         ctx.lineWidth = 2;
-        
+
         let aimX = worldMouseX;
         let aimY = worldMouseY;
         let shouldDrawAimLine = true;
-        
+
         if (uiRef.current.deviceType === 'mobile') {
           if (state.touches.right.aimLength > 0.01 && (state.touches.right.dirX !== 0 || state.touches.right.dirY !== 0)) {
             aimX = state.player.x + state.touches.right.dirX * 100 * state.touches.right.aimLength;
@@ -6775,7 +6775,7 @@ export default function GameCanvas() {
         ctx.beginPath();
         ctx.arc(state.player.x, state.player.y, state.player.radius, 0, Math.PI * 2);
         ctx.fill();
-        
+
         ctx.strokeStyle = '#000';
         ctx.lineWidth = 2;
         ctx.stroke();
@@ -6801,8 +6801,8 @@ export default function GameCanvas() {
           ) continue;
 
           const progress = ft.age / ft.maxAge;
-          const alpha = progress < 0.15 
-            ? progress / 0.15 
+          const alpha = progress < 0.15
+            ? progress / 0.15
             : Math.max(0, 1 - (progress - 0.15) / 0.85); // Elegant quick fade-in, slow fade-out
 
           ctx.save();
@@ -6857,25 +6857,25 @@ export default function GameCanvas() {
         const padX = 14;
         const h = 36;
         const w = textW + padX * 2;
-        
+
         const glowPulse = Math.sin(currentTime * Math.PI * 2 / 2200) * 0.5 + 0.5;
         const accentColor = state.hardMode ? '#ff3300' : '#D946EF';
-        
+
         let tagX = canvas.width / 2;
         let tagY = 100 + h / 2;
-        
+
         if (showPointer && worldTargetX !== null && worldTargetY !== null) {
             const screenX = worldTargetX - state.camera.x;
             const screenY = worldTargetY - state.camera.y;
-            
+
             const trScreen = targetRadius + 40; // extra padding for HP bar/relic
-            
+
             tagX = screenX;
             tagY = screenY - trScreen - h/2 - 10;
         }
-        
+
         ctx.translate(tagX, tagY);
-        
+
         ctx.beginPath();
         const chamfer = 6;
         ctx.moveTo(-w/2 + chamfer, -h/2);
@@ -6887,16 +6887,16 @@ export default function GameCanvas() {
         ctx.lineTo(-w/2, h/2 - chamfer);
         ctx.lineTo(-w/2, -h/2 + chamfer);
         ctx.closePath();
-        
+
         ctx.fillStyle = 'rgba(8, 10, 18, 0.88)';
         ctx.fill();
-        
+
         ctx.lineWidth = 2;
         ctx.strokeStyle = accentColor;
         ctx.shadowColor = accentColor;
         ctx.shadowBlur = 3.2 + glowPulse * 4.8;
         ctx.stroke();
-        
+
         if (showPointer && worldTargetX !== null && worldTargetY !== null) {
             ctx.beginPath();
             const ptrSize = 6;
@@ -6908,13 +6908,13 @@ export default function GameCanvas() {
             ctx.fill();
             ctx.stroke();
         }
-        
+
         ctx.shadowBlur = 0;
         ctx.fillStyle = '#F3E8FF';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(text, 0, 1);
-        
+
         ctx.restore();
       };
 
@@ -6922,24 +6922,24 @@ export default function GameCanvas() {
         const mapDef = MAPS[uiRef.current.mapId] || MAPS.medium;
         const tutDef = mapDef.spawners[state.tutorial.spawnerIndex];
         const spawner = state.spawners.find(s => s.x === tutDef.x && s.y === tutDef.y);
-        
+
         if (spawner) {
             drawObjectiveTag("DESTROY SPAWNER", spawner.x, spawner.y, spawner.radius, true, 1.0);
         }
       }
 
-      
+
 
       // Draw off-screen indicators for other players in multiplayer
       if (uiRef.current.status === 'PLAYING' && mpRef.current.roomId) {
         const localId = socketRef.current?.id || 'local';
         const isMobile = uiRef.current.deviceType === 'mobile';
-        
+
         // Invisible screen-area box: adjusted to be larger while avoiding overlapping UI elements
         const boxMarginLeft = isMobile ? 45 : 35;
         const boxMarginRight = isMobile ? 45 : 35;
-        const boxMarginTop = 85; 
-        const boxMarginBottom = isMobile ? 135 : 45; 
+        const boxMarginTop = 85;
+        const boxMarginBottom = isMobile ? 135 : 45;
 
         const boxX1 = boxMarginLeft;
         const boxY1 = boxMarginTop;
@@ -6960,10 +6960,10 @@ export default function GameCanvas() {
 
           // Check if player is off-screen (with a small margin to transition smoothly)
           const margin = 20;
-          const isOffScreen = 
-            screenOtherX < -margin || 
-            screenOtherX > canvas.width + margin || 
-            screenOtherY < -margin || 
+          const isOffScreen =
+            screenOtherX < -margin ||
+            screenOtherX > canvas.width + margin ||
+            screenOtherY < -margin ||
             screenOtherY > canvas.height + margin;
 
           if (isOffScreen) {
@@ -7102,10 +7102,10 @@ export default function GameCanvas() {
         const leftJoyY = canvas.height - joyOffset;
         const rightJoyX = canvas.width - leftJoyX;
         const rightJoyY = canvas.height - joyOffset;
-        
+
         const drawJoystick = (baseX: number, baseY: number, touchState: typeof state.touches.left, colorStr: string) => {
           ctx.save();
-          
+
           // Base circle
           ctx.strokeStyle = touchState.active ? colorStr : 'rgba(255, 255, 255, 0.1)';
           ctx.lineWidth = 2;
@@ -7145,7 +7145,7 @@ export default function GameCanvas() {
       } else {
          specialCooldown = Math.max(0, Math.ceil((DASH_COOLDOWN - (now - state.player.dash.lastTime)) / 1000));
       }
-      
+
       let buildCooldown = 0;
       if (state.player.build.active) {
          buildCooldown = Math.max(0, Math.ceil((state.player.build.endTime - now) / 1000));
@@ -7174,7 +7174,7 @@ export default function GameCanvas() {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('keyup', handleKeyUp);
       window.removeEventListener('mousemove', handleMouseMove);
-      
+
       if (canvas) {
         canvas.removeEventListener('contextmenu', handleContextMenu);
         canvas.removeEventListener('mousedown', handleMouseDown);
@@ -7200,13 +7200,13 @@ export default function GameCanvas() {
         backgroundImage: `repeating-linear-gradient(0deg, transparent, transparent 2px, #fff 2px, #fff 4px)`
       }} />
       <div className="absolute inset-0 pointer-events-none z-[60] shadow-[inset_0_0_150px_rgba(0,0,0,0.9)]" />
-      
+
       <canvas ref={canvasRef} className="w-full h-full block cursor-crosshair touch-none mix-blend-screen" />
-      
+
       {/* Absolute HUD Layers */}
       <AnimatePresence>
         {uiState.status === 'MENU' && (
-          <motion.div 
+          <motion.div
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -7215,7 +7215,7 @@ export default function GameCanvas() {
           >
             <AnimatePresence mode="wait">
               {!isMapSelectOpen ? (
-                <motion.div 
+                <motion.div
                   key="main-menu"
                   initial={{ opacity: 0, scale: 0.96, y: 15 }}
                   animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -7233,7 +7233,7 @@ export default function GameCanvas() {
                   </p>
 
                   <div className="flex gap-2 mb-3 items-stretch shrink-0">
-                    <button 
+                    <button
                       onClick={() => setIsMapSelectOpen(true)}
                       className="flex-1 py-2 sm:py-3 bg-transparent text-[#00f0ff] border-2 border-[#00f0ff]/50 hover:bg-[#00f0ff]/10 hover:border-[#00f0ff] font-bold tracking-[0.2em] transition-all duration-200 uppercase text-[10px] sm:text-xs"
                     >
@@ -7250,14 +7250,14 @@ export default function GameCanvas() {
                         };
                       })}
                       className={`flex items-center justify-center gap-1.5 py-2 sm:py-3 px-3 sm:px-4 border-2 font-bold tracking-[0.1em] transition-all duration-200 uppercase text-[10px] sm:text-xs cursor-pointer select-none
-                        ${uiState.hardMode 
-                          ? 'bg-[#ff3300]/10 text-[#ff3300] border-[#ff3300] shadow-[0_0_10px_rgba(255,51,0,0.2)]' 
+                        ${uiState.hardMode
+                          ? 'bg-[#ff3300]/10 text-[#ff3300] border-[#ff3300] shadow-[0_0_10px_rgba(255,51,0,0.2)]'
                           : 'bg-transparent text-[#00ffff]/60 border-[#00ffff]/20 hover:border-[#00ffff]/40 hover:text-[#00ffff]'
                         }`}
                     >
                       <div className={`w-3.5 h-3.5 border flex items-center justify-center text-[9px] font-black rounded-sm
-                        ${uiState.hardMode 
-                          ? 'border-[#ff3300] bg-[#ff3300] text-black' 
+                        ${uiState.hardMode
+                          ? 'border-[#ff3300] bg-[#ff3300] text-black'
                           : 'border-[#00ffff]/40 bg-transparent'
                         }`}
                       >
@@ -7267,7 +7267,7 @@ export default function GameCanvas() {
                     </button>
                   </div>
 
-                  <button 
+                  <button
                     onClick={() => {
                       const selectedMode: GameMode = uiState.hardMode ? 'hard' : 'normal';
                       resetGame(isMobileRef.current ? 'mobile' : 'desktop', uiState.mapId, selectedMode);
@@ -7278,13 +7278,13 @@ export default function GameCanvas() {
                   </button>
 
                   <div className="flex gap-2 mt-3 items-stretch shrink-0">
-                    <button 
+                    <button
                       onClick={() => setUiState(prev => ({ ...prev, status: 'LOBBY' }))}
                       className="flex-1 py-2.5 sm:py-3 bg-[#0d0f1b] text-[#ffcc00] border-2 border-[#ffcc00]/60 hover:bg-[#ffcc00]/10 hover:border-[#ffcc00] font-black tracking-[0.15em] transition-all duration-200 uppercase text-[10px] sm:text-xs flex items-center justify-center shadow-[3px_3px_0_rgba(255,204,0,0.3)] hover:shadow-[3px_3px_0_rgba(255,204,0,0.6)] active:translate-x-[3px] active:translate-y-[3px] active:shadow-none"
                     >
                       MULTIPLAYER
                     </button>
-                    <button 
+                    <button
                       onClick={() => fileInputRef.current?.click()}
                       className="flex-1 py-2.5 sm:py-3 bg-[#0d0f1b] text-[#b500ff] border-2 border-[#b500ff]/60 hover:bg-[#b500ff]/10 hover:border-[#b500ff] font-black tracking-[0.15em] transition-all duration-200 uppercase text-[10px] sm:text-xs flex items-center justify-center shadow-[3px_3px_0_rgba(181,0,255,0.3)] hover:shadow-[3px_3px_0_rgba(181,0,255,0.6)] active:translate-x-[3px] active:translate-y-[3px] active:shadow-none"
                     >
@@ -7293,7 +7293,7 @@ export default function GameCanvas() {
                   </div>
                 </motion.div>
               ) : (
-                <motion.div 
+                <motion.div
                   key="map-select"
                   initial={{ opacity: 0, scale: 0.96, y: 15 }}
                   animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -7306,7 +7306,7 @@ export default function GameCanvas() {
                     <h2 className="text-2xl md:text-4xl font-black text-white tracking-tighter leading-none" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>
                       SELECT <span className="text-[#00f0ff]">ARENA</span>
                     </h2>
-                    <button 
+                    <button
                       onClick={() => setIsMapSelectOpen(false)}
                       className="text-[#00f0ff]/80 hover:text-[#00f0ff] font-bold tracking-[0.2em] uppercase text-xs md:text-sm border border-[#00f0ff]/30 hover:border-[#00f0ff]/80 px-3 py-1.5 md:px-4 md:py-2 bg-[#00f0ff]/10 transition-colors"
                     >
@@ -7316,10 +7316,10 @@ export default function GameCanvas() {
 
                   {/* Content Body */}
                   <div className="flex-1 min-h-[0] flex flex-col md:flex-row p-3 md:p-5 gap-3 md:gap-5 overflow-hidden">
-                    
+
                     {/* Map List Area */}
                     <div className="flex-1 flex flex-col min-h-0 border border-[#00f0ff]/30 bg-black/40 overflow-hidden">
-                      <div 
+                      <div
                         ref={mapListRef}
                         className="flex-1 overflow-y-auto p-2 grid grid-cols-1 sm:grid-cols-2 gap-2 content-start [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
                       >
@@ -7344,15 +7344,15 @@ export default function GameCanvas() {
                             data-map-id={id}
                             onClick={() => setUiState(prev => ({...prev, mapId: id}))}
                             className={`flex flex-col items-center justify-center p-2 md:p-3 font-bold uppercase transition-all border-2
-                              ${uiState.mapId === id 
-                                 ? 'bg-[#00f0ff] text-black border-[#00f0ff] shadow-[0_0_15px_rgba(0,240,255,0.3)]' 
+                              ${uiState.mapId === id
+                                 ? 'bg-[#00f0ff] text-black border-[#00f0ff] shadow-[0_0_15px_rgba(0,240,255,0.3)]'
                                  : 'bg-[#0d0f1b] text-[#00f0ff]/60 border-[#00f0ff]/30 hover:border-[#00f0ff]/80 hover:text-[#00f0ff] hover:bg-[#00f0ff]/5'
                               }`}
                           >
                             <div className="text-[10px] sm:text-xs md:text-sm tracking-[0.1em] text-center leading-tight">{mapDef.name}</div>
                             <div className={`text-[8px] sm:text-[9px] md:text-[10px] mt-1 tracking-widest ${
-                              uiState.mapId === id 
-                                ? 'text-black/80' 
+                              uiState.mapId === id
+                                ? 'text-black/80'
                                 : mapDef.difficulty === 'EASY' ? 'text-green-400' :
                                   mapDef.difficulty === 'MEDIUM' ? 'text-yellow-400' :
                                   mapDef.difficulty === 'HARD' ? 'text-red-400' :
@@ -7381,11 +7381,11 @@ export default function GameCanvas() {
                                <p className="text-[#00f0ff]/80 font-mono text-[9px] md:text-[10px] leading-relaxed mb-3 shrink-0 text-left line-clamp-3 px-1">
                                  {selMap.description}
                                </p>
-                               
+
                                {/* Responsive map container */}
                                <div className="flex-1 w-full min-h-[120px] flex items-center justify-center p-1 md:p-2 relative overflow-hidden shrink mt-1 mb-1">
-                                 <svg 
-                                   viewBox="0 0 3000 3000" 
+                                 <svg
+                                   viewBox="0 0 3000 3000"
                                    className="w-full h-full aspect-square max-w-[130px] max-h-[130px] sm:max-w-[145px] sm:max-h-[145px] md:max-w-[220px] md:max-h-[220px]"
                                    preserveAspectRatio="xMidYMid meet"
                                  >
@@ -7402,7 +7402,7 @@ export default function GameCanvas() {
 
                                    {/* Render Walls */}
                                    {selMap.walls.map((w, i) => (
-                                     <rect 
+                                     <rect
                                        key={`wall-${i}`}
                                        x={w.x}
                                        y={w.y}
@@ -7416,7 +7416,7 @@ export default function GameCanvas() {
 
                                    {/* Render Spawners */}
                                    {selMap.spawners.map((s, i) => (
-                                     <circle 
+                                     <circle
                                        key={`spawner-${i}`}
                                        cx={s.x}
                                        cy={s.y}
@@ -7436,13 +7436,13 @@ export default function GameCanvas() {
                                        <line x1={0} y1={80} x2={0} y2={110} stroke="#FFCC00" strokeWidth={18} />
                                        <line x1={-110} y1={0} x2={-80} y2={0} stroke="#FFCC00" strokeWidth={18} />
                                        <line x1={80} y1={0} x2={110} y2={0} stroke="#FFCC00" strokeWidth={18} />
-                                       <text 
-                                         x={100} 
-                                         y={-80} 
-                                         fill="#FFCC00" 
-                                         fontSize={120} 
-                                         fontFamily="monospace" 
-                                         fontWeight="bold" 
+                                       <text
+                                         x={100}
+                                         y={-80}
+                                         fill="#FFCC00"
+                                         fontSize={120}
+                                         fontFamily="monospace"
+                                         fontWeight="bold"
                                          stroke="#080A12"
                                          strokeWidth={30}
                                          paintOrder="stroke"
@@ -7464,7 +7464,7 @@ export default function GameCanvas() {
 
                   {/* Footer / Action */}
                   <div className="shrink-0 p-3 md:p-4 border-t border-[#00f0ff]/30 bg-[#0d0f1b] backdrop-blur-sm flex gap-3">
-                    <button 
+                    <button
                       onClick={() => {
                         const selectedMode: GameMode = uiState.hardMode ? 'hard' : 'normal';
                         resetGame(isMobileRef.current ? 'mobile' : 'desktop', uiState.mapId, selectedMode);
@@ -7530,10 +7530,10 @@ export default function GameCanvas() {
 
                   {/* Content Body */}
                   <div className="flex-1 min-h-[0] flex flex-col md:flex-row p-3 md:p-5 gap-3 md:gap-5 overflow-hidden">
-                    
+
                     {/* Map List Area */}
                     <div className="flex-1 flex flex-col min-h-0 border border-[#ffcc00]/30 bg-black/40 overflow-hidden">
-                      <div 
+                      <div
                         ref={mpMapListRef}
                         className="flex-1 overflow-y-auto p-2 grid grid-cols-1 sm:grid-cols-2 gap-2 content-start [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
                       >
@@ -7567,15 +7567,15 @@ export default function GameCanvas() {
                                 className={`flex flex-col items-center justify-center p-2 md:p-3 font-bold uppercase transition-all border-2 select-none ${
                                   isDisabled ? 'cursor-not-allowed opacity-60' : 'cursor-pointer'
                                 } ${
-                                  isSelected 
-                                     ? 'bg-[#ffcc00] text-black border-[#ffcc00] shadow-[0_0_15px_rgba(255,204,0,0.35)] font-black' 
+                                  isSelected
+                                     ? 'bg-[#ffcc00] text-black border-[#ffcc00] shadow-[0_0_15px_rgba(255,204,0,0.35)] font-black'
                                      : 'bg-[#0d0f1b] text-[#ffcc00]/70 border-[#ffcc00]/30 hover:border-[#ffcc00]/80 hover:text-[#ffcc00] hover:bg-[#ffcc00]/10'
                                 }`}
                               >
                                 <div className="text-[10px] sm:text-xs md:text-sm tracking-[0.1em] text-center leading-tight">{mapDef.name}</div>
                                 <div className={`text-[8px] sm:text-[9px] md:text-[10px] mt-1 tracking-widest ${
-                                  isSelected 
-                                    ? 'text-black/80 font-bold' 
+                                  isSelected
+                                    ? 'text-black/80 font-bold'
                                     : mapDef.difficulty === 'EASY' ? 'text-green-400' :
                                       mapDef.difficulty === 'MEDIUM' ? 'text-yellow-400' :
                                       mapDef.difficulty === 'HARD' ? 'text-red-400' :
@@ -7605,11 +7605,11 @@ export default function GameCanvas() {
                                <p className="text-[#ffcc00]/80 font-mono text-[9px] md:text-[10px] leading-relaxed mb-3 shrink-0 text-left line-clamp-3 px-1">
                                  {selMap.description}
                                </p>
-                               
+
                                {/* Responsive map container */}
                                <div className="flex-1 w-full min-h-[120px] flex items-center justify-center p-1 md:p-2 relative overflow-hidden shrink mt-1 mb-1">
-                                 <svg 
-                                   viewBox="0 0 3000 3000" 
+                                 <svg
+                                   viewBox="0 0 3000 3000"
                                    className="w-full h-full aspect-square max-w-[130px] max-h-[130px] sm:max-w-[145px] sm:max-h-[145px] md:max-w-[220px] md:max-h-[220px]"
                                    preserveAspectRatio="xMidYMid meet"
                                  >
@@ -7626,7 +7626,7 @@ export default function GameCanvas() {
 
                                    {/* Render Walls */}
                                    {selMap.walls.map((w, i) => (
-                                     <rect 
+                                     <rect
                                        key={`wall-${i}`}
                                        x={w.x}
                                        y={w.y}
@@ -7640,7 +7640,7 @@ export default function GameCanvas() {
 
                                    {/* Render Spawners */}
                                    {selMap.spawners.map((s, i) => (
-                                     <circle 
+                                     <circle
                                        key={`spawner-${i}`}
                                        cx={s.x}
                                        cy={s.y}
@@ -7660,13 +7660,13 @@ export default function GameCanvas() {
                                        <line x1={0} y1={80} x2={0} y2={110} stroke="#FFCC00" strokeWidth={18} />
                                        <line x1={-110} y1={0} x2={-80} y2={0} stroke="#FFCC00" strokeWidth={18} />
                                        <line x1={80} y1={0} x2={110} y2={0} stroke="#FFCC00" strokeWidth={18} />
-                                       <text 
-                                         x={100} 
-                                         y={-80} 
-                                         fill="#FFCC00" 
-                                         fontSize={120} 
-                                         fontFamily="monospace" 
-                                         fontWeight="bold" 
+                                       <text
+                                         x={100}
+                                         y={-80}
+                                         fill="#FFCC00"
+                                         fontSize={120}
+                                         fontFamily="monospace"
+                                         fontWeight="bold"
                                          stroke="#080A12"
                                          strokeWidth={30}
                                          paintOrder="stroke"
@@ -7694,7 +7694,7 @@ export default function GameCanvas() {
 
                   {/* Footer / Action */}
                   <div className="shrink-0 p-3 md:p-4 border-t border-[#ffcc00]/30 bg-[#0d0f1b] backdrop-blur-sm flex gap-3">
-                    <button 
+                    <button
                       disabled={!mpState.isHost || isMatchSettingsUpdatePending}
                       onClick={handleConfirmMpMap}
                       className={`flex-1 py-3 md:py-4 border font-black tracking-[0.2em] transition-all duration-200 uppercase text-sm md:text-base lg:text-lg select-none ${
@@ -7729,7 +7729,7 @@ export default function GameCanvas() {
                   className="w-full max-w-md flex flex-col border-2 border-[#ffcc00] bg-[#0d0f1b]/95 p-3 sm:p-6 shadow-[10px_10px_0_#ffcc00] pointer-events-auto items-center relative z-10 origin-center max-h-[92vh] overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
                 >
               <h2 className="text-3xl font-black text-white tracking-widest" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>MULTIPLAYER</h2>
-              
+
               <div className="w-full border-t border-b border-[#ffcc00]/30 py-2.5 text-center my-4">
                 <p className="text-[#ffcc00]/80 font-mono text-[9px] uppercase tracking-widest leading-relaxed">
                   {mpState.roomId ? "CO-OP / VERSUS LOBBY" : "HOST OR JOIN AN ONLINE MATCH"}
@@ -7772,14 +7772,14 @@ export default function GameCanvas() {
                     </button>
                   </div>
 
-                  <div className="w-full min-h-[220px] sm:h-[345px] flex flex-col mb-3 sm:mb-5 shrink min-h-0">
+                  <div className="w-full min-h-[220px] sm:h-[345px] flex flex-col mb-3 sm:mb-5 shrink">
                     {activeLobbyTab === 'invite' ? (
                       <div className="w-full h-full flex flex-col justify-between">
                         <div>
                           <p className="text-[#ffcc00]/70 font-bold tracking-[0.2em] text-[10px] mb-1 uppercase w-full text-left">
                             {mpState.isHost ? "YOUR ROOM CODE" : "JOINED ROOM"}
                           </p>
-                          
+
                           {/* Code at the top with a copy button */}
                           <div className="flex w-full mb-3">
                             <div className="text-3xl text-white font-mono font-bold tracking-widest py-2 px-5 bg-black border border-r-0 border-white/10 text-center uppercase flex-1">
@@ -7814,13 +7814,13 @@ export default function GameCanvas() {
 
                         {/* Centered larger QR Code card with cleaner neutral border */}
                         <div className="w-full flex flex-col items-center p-3 bg-black/40 border border-white/10 shadow-[inset_0_0_12px_rgba(255,204,0,0.02)]">
-                          <img 
-                            src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`${window.location.protocol}//${window.location.host}${window.location.pathname}?room=${mpState.roomId}`)}`} 
+                          <img
+                            src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(`${window.location.protocol}//${window.location.host}${window.location.pathname}?room=${mpState.roomId}`)}`}
                             alt="Room QR Code"
                             className="w-28 h-28 p-1.5 bg-white mb-2 shadow-[0_0_15px_rgba(255,204,0,0.15)] shrink-0"
                             referrerPolicy="no-referrer"
                           />
-                          
+
                           <button
                             onClick={downloadQrCode}
                             className="w-full py-1.5 bg-[#ffcc00]/10 hover:bg-[#ffcc00]/25 text-[#ffcc00] border border-[#ffcc00]/30 hover:border-[#ffcc00] font-sans font-black text-[9px] tracking-widest uppercase transition-all flex items-center justify-center gap-1.5 cursor-pointer"
@@ -7840,8 +7840,8 @@ export default function GameCanvas() {
                         <p className="text-[#ffcc00]/70 font-bold tracking-[0.15em] text-[10px] uppercase w-full text-left mb-1 text-xs">
                           CALLSIGN
                         </p>
-                        <input 
-                          type="text" 
+                        <input
+                          type="text"
                           maxLength={12}
                           value={isEditingCallsign ? callsignDraft : playerProfile.name}
                           onFocus={startCallsignEditing}
@@ -7879,8 +7879,8 @@ export default function GameCanvas() {
                                 }}
                                 title={isTaken && playerProfile.colorIdx !== idx ? `${color.name} (TAKEN)` : color.name}
                                 className={`flex-1 h-5 rounded-none border transition-all relative overflow-hidden ${
-                                  playerProfile.colorIdx === idx 
-                                    ? 'scale-105 border-white shadow-[0_0_8px_rgba(0,255,136,0.4)] z-10 cursor-default' 
+                                  playerProfile.colorIdx === idx
+                                    ? 'scale-105 border-white shadow-[0_0_8px_rgba(0,255,136,0.4)] z-10 cursor-default'
                                     : isTaken
                                       ? 'border-white/5 opacity-15 cursor-not-allowed grayscale'
                                       : 'border-white/10 opacity-50 hover:opacity-100 cursor-pointer'
@@ -7967,8 +7967,8 @@ export default function GameCanvas() {
                               <div className="flex items-center gap-2.5">
                                 {/* Miniature SVG Preview */}
                                 <div className="w-20 h-20 shrink-0 border border-[#ffcc00]/30 bg-[#050508] relative overflow-hidden flex items-center justify-center shadow-[inset_0_0_8px_rgba(255,204,0,0.1)]">
-                                  <svg 
-                                    viewBox="0 0 3000 3000" 
+                                  <svg
+                                    viewBox="0 0 3000 3000"
                                     className="w-full h-full aspect-square"
                                     preserveAspectRatio="xMidYMid meet"
                                   >
@@ -7982,7 +7982,7 @@ export default function GameCanvas() {
 
                                     {/* Walls */}
                                     {currentMap.walls.map((w, i) => (
-                                      <rect 
+                                      <rect
                                         key={`wall-${i}`}
                                         x={w.x}
                                         y={w.y}
@@ -7996,7 +7996,7 @@ export default function GameCanvas() {
 
                                     {/* Spawners */}
                                     {currentMap.spawners.map((s, i) => (
-                                      <circle 
+                                      <circle
                                         key={`spawner-${i}`}
                                         cx={s.x}
                                         cy={s.y}
@@ -8122,8 +8122,8 @@ export default function GameCanvas() {
                         onClick={handleStartMultiplayerMatch}
                         disabled={!canStartMatch}
                         className={`w-full py-4 font-black tracking-widest transition-all duration-200 uppercase text-sm mb-2 ${
-                          canStartMatch 
-                            ? 'bg-[#ffcc00] hover:bg-white text-black cursor-pointer shadow-[3px_3px_0_rgba(255,204,0,0.15)] hover:shadow-[5px_5px_0_#fff] active:translate-x-1 active:translate-y-1 active:shadow-none' 
+                          canStartMatch
+                            ? 'bg-[#ffcc00] hover:bg-white text-black cursor-pointer shadow-[3px_3px_0_rgba(255,204,0,0.15)] hover:shadow-[5px_5px_0_#fff] active:translate-x-1 active:translate-y-1 active:shadow-none'
                             : 'bg-[#ffcc00]/40 text-black/40 cursor-not-allowed opacity-60'
                         }`}
                       >
@@ -8168,7 +8168,7 @@ export default function GameCanvas() {
                   </button>
                 </>
               )}
-              
+
               <button onClick={() => {
                 if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
                 cancelPendingMatchSettingsUpdate();
@@ -8188,8 +8188,8 @@ export default function GameCanvas() {
 
       {(uiState.status === 'PLAYING' || uiState.status === 'PAUSED') && (() => {
         const toolsData = {
-          special: { 
-            label: 'SPECIAL', 
+          special: {
+            label: 'SPECIAL',
             usableFill: 'linear-gradient(rgba(139, 92, 246, 0.52), rgba(139, 92, 246, 0.52)), rgba(6, 8, 14, 0.90)',
             usableBorder: '#C4B5FD',
             usableText: '#F5F7FF',
@@ -8197,11 +8197,11 @@ export default function GameCanvas() {
             unusableBorder: 'rgba(139, 92, 246, 0.42)',
             unusableText: 'rgba(139, 92, 246, 0.52)',
             usableGlow: '0 0 5px rgba(139, 92, 246, 0.24), 0 0 12px rgba(139, 92, 246, 0.08)',
-            mobile: 'TAP TO USE', 
-            desktop: 'KEY "1" TO USE' 
+            mobile: 'TAP TO USE',
+            desktop: 'KEY "1" TO USE'
           },
-          build: { 
-            label: 'BUILD', 
+          build: {
+            label: 'BUILD',
             usableFill: 'linear-gradient(rgba(14, 165, 233, 0.60), rgba(14, 165, 233, 0.60)), rgba(6, 8, 14, 0.90)',
             usableBorder: '#67E8F9',
             usableText: '#F5F7FF',
@@ -8209,8 +8209,8 @@ export default function GameCanvas() {
             unusableBorder: 'rgba(14, 165, 233, 0.42)',
             unusableText: 'rgba(14, 165, 233, 0.52)',
             usableGlow: '0 0 5px rgba(14, 165, 233, 0.24), 0 0 12px rgba(14, 165, 233, 0.08)',
-            mobile: 'TAP TO USE', 
-            desktop: 'KEY "2" TO USE' 
+            mobile: 'TAP TO USE',
+            desktop: 'KEY "2" TO USE'
           }
         } as const;
         const activeT = toolsData[uiState.activeTool];
@@ -8251,7 +8251,7 @@ export default function GameCanvas() {
                   </div>
                 )}
 
-                <div 
+                <div
                   className="absolute top-0 left-0 right-0 p-3 sm:p-6 flex flex-row justify-between items-start pointer-events-none z-10 w-full max-w-7xl mx-auto"
                   style={{
                     paddingTop: 'calc(0.75rem + env(safe-area-inset-top, 0px))',
@@ -8261,7 +8261,7 @@ export default function GameCanvas() {
                 >
                   {/* Left: Score & Spawners / Target Counters */}
                   <div className="flex items-stretch gap-2 sm:gap-6 ml-0 sm:ml-4">
-                    <motion.div 
+                    <motion.div
                       animate={flashScore ? {
                         filter: [
                           "brightness(1) drop-shadow(0 0 0px rgba(0, 240, 255, 0))",
@@ -8282,7 +8282,7 @@ export default function GameCanvas() {
                          {uiState.score.toString().padStart(6, '0')}
                        </div>
                     </motion.div>
-                    <motion.div 
+                    <motion.div
                       key={pulseSpawnerCounter ? `spawner-pulse-${pulseKey}` : 'spawner-idle'}
                       animate={pulseSpawnerCounter ? {
                         scale: [1, 1.12, 1],
@@ -8307,10 +8307,10 @@ export default function GameCanvas() {
                        <div className={`sm:hidden text-[9px] tracking-widest font-bold whitespace-nowrap ${uiState.hardMode ? 'text-[#ff3300]' : 'text-[#ff00ff]'}`}>
                          {mpState.roomId ? 'RANK' : (uiState.hardMode ? 'TARGET (HARD)' : 'TARGET')}
                        </div>
-                       <div className="text-white font-black text-2xl sm:text-[43px] tracking-tighter leading-none mt-1" 
-                            style={{ 
+                       <div className="text-white font-black text-2xl sm:text-[43px] tracking-tighter leading-none mt-1"
+                            style={{
                               fontFamily: 'var(--font-display, Anton, sans-serif)',
-                              textShadow: `0 0 15px ${uiState.hardMode ? '#ff3300' : '#ff00ff'}` 
+                              textShadow: `0 0 15px ${uiState.hardMode ? '#ff3300' : '#ff00ff'}`
                             }}>
                          {mpState.roomId ? `#${getPlayerRank()}` : uiState.spawnersLeft}
                        </div>
@@ -8348,7 +8348,7 @@ export default function GameCanvas() {
                         {mpState.roomId ? (mpMenuOpen ? '▶ RESUME' : '|| MENU') : (uiState.status === 'PAUSED' ? '▶ RESUME' : '|| PAUSE')}
                       </span>
                     </button>
-                    
+
                     <button
                       onPointerDown={(e) => {
                         e.stopPropagation();
@@ -8377,11 +8377,11 @@ export default function GameCanvas() {
                 </div>
 
             {uiState.status === 'PAUSED' && !confirmResign && (
-              <div 
+              <div
                 className="absolute inset-0 bg-black/[0.78] pointer-events-auto z-[70] flex flex-col items-center justify-center backdrop-blur-sm select-none p-4 overflow-y-auto"
               >
                 <div className="flex flex-col items-center">
-                  <h2 
+                  <h2
                     className="text-[36px] sm:text-[48px] md:text-[68px] font-black text-[#F5F7FF] uppercase drop-shadow-[0_0_10px_rgba(255,255,255,0.28)] leading-none"
                     style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}
                   >
@@ -8391,7 +8391,7 @@ export default function GameCanvas() {
                     SYSTEM PAUSED
                   </p>
                 </div>
-                
+
                 <div className="flex flex-col gap-3 mt-5 sm:mt-11 w-[calc(100vw-48px)] max-w-[280px]">
                   <button
                     onClick={(e) => {
@@ -8428,11 +8428,11 @@ export default function GameCanvas() {
             )}
 
             {mpState.roomId && mpMenuOpen && !confirmResign && (
-              <div 
+              <div
                 className="absolute inset-0 bg-black/[0.78] pointer-events-auto z-[70] flex flex-col items-center justify-center backdrop-blur-sm select-none p-4 overflow-y-auto"
               >
                 <div className="flex flex-col items-center">
-                  <h2 
+                  <h2
                     className="text-[36px] sm:text-[48px] md:text-[68px] font-black text-[#FBBF24] uppercase drop-shadow-[0_0_10px_rgba(251,191,36,0.28)] leading-none"
                     style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}
                   >
@@ -8442,7 +8442,7 @@ export default function GameCanvas() {
                     MATCH ACTIVE
                   </p>
                 </div>
-                
+
                 <div className="flex flex-col gap-3 mt-5 sm:mt-11 w-[calc(100vw-48px)] max-w-[280px]">
                   <button
                     onClick={(e) => {
@@ -8509,7 +8509,7 @@ export default function GameCanvas() {
                      {uiState.deviceType === 'mobile' ? 'JOYSTICK TO MOVE' : 'WASD TO MOVE'}
                    </div>
                 </div>
-                <div 
+                <div
                   className={`absolute left-1/2 -translate-x-1/2 pointer-events-none z-10 flex gap-[10px] sm:gap-[16px] bottom-3 sm:bottom-6 max-w-[calc(100vw-24px)]`}
                   style={{
                     bottom: 'calc(0.75rem + env(safe-area-inset-bottom, 0px))',
@@ -8542,7 +8542,7 @@ export default function GameCanvas() {
                                   stateRef.current.player.dash.endTime = currentTime + 6000;
                                   stateRef.current.player.dash.lastTime = currentTime;
                                   const isHostMode = !mpRef.current.roomId || mpRef.current.isHost;
-                                  
+
                                   const finalX = stateRef.current.player.x;
                                   const finalY = stateRef.current.player.y;
                                   if (isHostMode) {
@@ -8586,13 +8586,14 @@ export default function GameCanvas() {
                                }
                              }
                            }}
-                           className={`pointer-events-auto w-[136px] sm:w-[162px] h-[38px] sm:h-[44px] border-2 font-black tracking-widest uppercase text-[12px] sm:text-[14px] relative overflow-hidden flex justify-center items-center gap-1 sm:gap-2 focus:outline-none ${isReady ? 'hover:brightness-110 active:brightness-90 active:scale-95 cursor-pointer' : 'cursor-default'}`}
+                           className={`pointer-events-auto h-[44px] border-2 font-black tracking-widest uppercase text-[12px] sm:text-[14px] relative overflow-hidden flex justify-center items-center gap-1 sm:gap-2 focus:outline-none ${isReady ? 'hover:brightness-110 active:brightness-90 active:scale-95 cursor-pointer' : 'cursor-default'}`}
                            style={{
                              borderColor: isReady ? tool.usableBorder : tool.unusableBorder,
                              background: isReady ? tool.usableFill : tool.unusableFill,
                              color: isReady ? tool.usableText : tool.unusableText,
                              boxShadow: isReady ? tool.usableGlow : 'none',
-                             transition: isReady ? 'all 140ms ease-out' : 'all 100ms ease-in'
+                             transition: isReady ? 'all 140ms ease-out' : 'all 100ms ease-in',
+                             width: 'min(162px, calc((100vw - 34px) / 2))',
                            }}
                          >
                            {uiState.deviceType === 'desktop' && (
@@ -8604,7 +8605,7 @@ export default function GameCanvas() {
                      );
                    })}
                 </div>
-                
+
                 <div className="hidden sm:block absolute bottom-0 right-0 p-8 pointer-events-none z-10 text-right">
                    <div className="text-sm text-[#94A3B8] tracking-[0.2em] font-bold font-mono">
                      {uiState.deviceType === 'mobile' ? 'TAP TO SHOOT' : 'MOUSE TO SHOOT'}
@@ -8628,7 +8629,7 @@ export default function GameCanvas() {
               <div>SPAWNERS LEFT: <span className="text-white font-bold text-xl sm:text-2xl ml-2">{uiState.spawnersLeft}/{(MAPS[uiState.mapId] || MAPS.medium).spawners.length}</span></div>
             </div>
             <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center">
-              <button 
+              <button
                 onClick={() => {
                   resetGame(isMobileRef.current ? 'mobile' : 'desktop');
                 }}
@@ -8636,7 +8637,7 @@ export default function GameCanvas() {
               >
                 RE-ENTER ARENA
               </button>
-              <button 
+              <button
                 onClick={() => {
                   if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
                   setMpState(prev => ({ ...prev, roomId: null, isHost: false, error: '' }));
@@ -8660,7 +8661,7 @@ export default function GameCanvas() {
               <div>SPAWNERS LEFT: <span className="text-white font-bold text-xl sm:text-2xl ml-2">{uiState.spawnersLeft}/{(MAPS[uiState.mapId] || MAPS.medium).spawners.length}</span></div>
             </div>
             <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center">
-              <button 
+              <button
                 onClick={() => {
                   resetGame(isMobileRef.current ? 'mobile' : 'desktop');
                 }}
@@ -8668,7 +8669,7 @@ export default function GameCanvas() {
               >
                 RE-ENTER ARENA
               </button>
-              <button 
+              <button
                 onClick={() => {
                   if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
                   cancelPendingMatchSettingsUpdate();
@@ -8692,7 +8693,7 @@ export default function GameCanvas() {
         return (
           <div className="absolute inset-0 bg-[#0a0000]/95 flex flex-col items-center justify-center p-2 sm:p-6 text-center backdrop-blur-md z-[70] overflow-y-auto">
             <div className="max-w-xl w-full bg-[#0d0404] border-2 border-[#ff005c] p-5 sm:p-8 md:p-10 shadow-[10px_10px_0_#ff005c] my-auto">
-              
+
               {/* GOAL display */}
               <div className="text-[10px] font-mono text-[#ffcc00] tracking-[0.2em] uppercase mb-1 font-bold">
                 GOAL: GET THE HIGHEST SCORE BEFORE YOU DIE
@@ -8711,8 +8712,8 @@ export default function GameCanvas() {
 
               {/* Subtitle explanation */}
               <p className="text-[10px] sm:text-xs font-mono text-zinc-400 tracking-wider uppercase mb-6 sm:mb-8 border-b border-white/5 pb-4">
-                {isWholeGameEnded 
-                  ? "MATCH CONCLUDED // FINAL STANDINGS" 
+                {isWholeGameEnded
+                  ? "MATCH CONCLUDED // FINAL STANDINGS"
                   : "YOU WERE ELIMINATED // SPECTATING LIVE MATCH..."
                 }
               </p>
@@ -8733,13 +8734,13 @@ export default function GameCanvas() {
                 {standings.map((p, idx) => {
                   const isMe = p.id === myId;
                   const colorDef = PLAYER_COLORS[p.colorIdx] || PLAYER_COLORS[0];
-                  
+
                   return (
-                    <div 
-                      key={p.id} 
+                    <div
+                      key={p.id}
                       className={`flex items-center justify-between py-1.5 px-2.5 sm:py-3 sm:px-4 border transition-all ${
-                        isMe 
-                          ? 'bg-[#ffcc00]/10 border-[#ffcc00] shadow-[0_0_10px_rgba(255,204,0,0.15)]' 
+                        isMe
+                          ? 'bg-[#ffcc00]/10 border-[#ffcc00] shadow-[0_0_10px_rgba(255,204,0,0.15)]'
                           : 'bg-black/40 border-white/10'
                       }`}
                     >
@@ -8770,14 +8771,14 @@ export default function GameCanvas() {
                           </span>
                         ) : (
                           <span className={`text-[8px] sm:text-[10px] tracking-widest font-extrabold uppercase px-1.5 py-0.5 rounded-sm shrink-0 border ${
-                            p.isDead 
-                              ? 'text-[#ff005c]/70 border-[#ff005c]/10 bg-[#ff005c]/5' 
+                            p.isDead
+                              ? 'text-[#ff005c]/70 border-[#ff005c]/10 bg-[#ff005c]/5'
                               : 'text-[#00ff88] border-[#00ff88]/20 bg-[#00ff88]/5 animate-pulse'
                           }`}>
                             {p.isDead ? 'ELIMINATED' : 'ALIVE'}
                           </span>
                         )}
-                        
+
                         <span className="text-white font-bold text-xs sm:text-base tracking-tight">
                           {p.score}
                         </span>
@@ -8800,7 +8801,7 @@ export default function GameCanvas() {
                       QUIT TO MAIN MENU? YOU WILL ABANDON THIS ROOM.
                     </p>
                     <div className="flex gap-3 w-full">
-                      <button 
+                      <button
                         onClick={() => {
                           if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
                           cancelPendingMatchSettingsUpdate();
@@ -8812,7 +8813,7 @@ export default function GameCanvas() {
                       >
                         CONFIRM QUIT
                       </button>
-                      <button 
+                      <button
                         onClick={() => setConfirmLeaveMatches(false)}
                         className="flex-1 py-2 sm:py-3 bg-white/5 hover:bg-white/10 text-white font-black tracking-widest uppercase text-xs sm:text-sm border border-white/10 transition-all pointer-events-auto"
                       >
@@ -8824,7 +8825,7 @@ export default function GameCanvas() {
                   <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center">
                     {/* Only the Host can restart the match, and only when the whole game ended */}
                     {isWholeGameEnded && mpState.isHost && (
-                      <button 
+                      <button
                         onClick={handleMultiplayerRestart}
                         className="flex-1 py-3 sm:py-4 bg-[#ffcc00] hover:bg-white text-black border-2 border-[#ffcc00] font-black tracking-[0.2em] transition-all duration-200 uppercase text-xs sm:text-sm active:translate-x-1 active:translate-y-1 active:shadow-none hover:shadow-[5px_5px_0_#fff] pointer-events-auto"
                       >
@@ -8839,7 +8840,7 @@ export default function GameCanvas() {
                       </div>
                     )}
 
-                    <button 
+                    <button
                       onClick={() => setConfirmLeaveMatches(true)}
                       className="flex-1 py-3 sm:py-4 bg-transparent hover:bg-white/10 text-[#ff005c] hover:text-white border-2 border-[#ff005c] font-black tracking-[0.2em] transition-all duration-200 uppercase text-xs sm:text-sm active:translate-x-1 active:translate-y-1 active:shadow-none hover:shadow-[5px_5px_0_rgba(255,0,92,0.4)] pointer-events-auto"
                     >
@@ -8871,16 +8872,16 @@ export default function GameCanvas() {
               <div className="relative mb-4 flex items-center justify-center z-10 animate-pulse">
                 <svg width="64" height="64" viewBox="0 0 64 64" className="drop-shadow-[0_0_12px_var(--glow-color)]" style={{ '--glow-color': uiState.hardMode ? '#ff3300' : '#ff00ff' } as React.CSSProperties}>
                   {/* Outer pulsing ring */}
-                  <circle 
-                    cx="32" 
-                    cy="32" 
-                    r="24" 
-                    fill="none" 
-                    stroke={uiState.hardMode ? '#ff3300' : '#ff00ff'} 
-                    strokeWidth="1.5" 
-                    opacity="0.3" 
+                  <circle
+                    cx="32"
+                    cy="32"
+                    r="24"
+                    fill="none"
+                    stroke={uiState.hardMode ? '#ff3300' : '#ff00ff'}
+                    strokeWidth="1.5"
+                    opacity="0.3"
                   />
-                  
+
                   {/* Hexagon shape (matches live GameCanvas custom rot/shape) */}
                   <polygon
                     points="32,10 51,21 51,43 32,54 13,43 13,21"
@@ -8888,13 +8889,13 @@ export default function GameCanvas() {
                     stroke={uiState.hardMode ? '#ff3300' : '#ff00ff'}
                     strokeWidth="3.5"
                   />
-                  
+
                   {/* Connected Inner Core node */}
-                  <circle 
-                    cx="32" 
-                    cy="32" 
-                    r="8" 
-                    fill={uiState.hardMode ? '#ff3300' : '#ff00ff'} 
+                  <circle
+                    cx="32"
+                    cy="32"
+                    r="8"
+                    fill={uiState.hardMode ? '#ff3300' : '#ff00ff'}
                   />
                 </svg>
               </div>
