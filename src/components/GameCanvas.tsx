@@ -2300,6 +2300,8 @@ export default function GameCanvas() {
     state.touches.left.id = -1;
     state.touches.left.dirX = 0;
     state.touches.left.dirY = 0;
+    state.touches.left.currentX = state.touches.left.startX;
+    state.touches.left.currentY = state.touches.left.startY;
 
     state.touches.right.active = false;
     state.touches.right.id = -1;
@@ -2310,9 +2312,17 @@ export default function GameCanvas() {
     state.touches.right.releaseDy = 0;
     state.touches.right.aimLength = 0;
     state.touches.right.startTime = 0;
+    state.touches.right.currentX = state.touches.right.startX;
+    state.touches.right.currentY = state.touches.right.startY;
 
     state.touches.tap = { active: false, x: 0, y: 0 };
   }, []);
+
+  useEffect(() => {
+    if (uiState.status !== 'PLAYING' || mpMenuOpen || confirmResign) {
+      releaseAllInputs();
+    }
+  }, [uiState.status, mpMenuOpen, confirmResign, releaseAllInputs]);
 
   const handleCopyCode = () => {
     if (mpState.roomId) {
@@ -4641,8 +4651,12 @@ export default function GameCanvas() {
           if (uiRef.current.status === 'PAUSED' && confirmResignRef.current) return;
           setUiState(prev => {
              let newStatus = prev.status;
-             if (prev.status === 'PLAYING') newStatus = 'PAUSED';
-             else if (prev.status === 'PAUSED') newStatus = 'PLAYING';
+             if (prev.status === 'PLAYING') {
+               newStatus = 'PAUSED';
+               releaseAllInputs();
+             } else if (prev.status === 'PAUSED') {
+               newStatus = 'PLAYING';
+             }
 
              if (newStatus !== prev.status) {
                uiRef.current = { ...prev, status: newStatus };
@@ -4924,29 +4938,52 @@ export default function GameCanvas() {
     };
 
     const handleTouchEnd = (e: TouchEvent) => {
-      if (uiRef.current.status !== 'PLAYING') return;
-      e.preventDefault();
+      const isPlaying = uiRef.current.status === 'PLAYING';
+      if (isPlaying) {
+        e.preventDefault();
+      }
       const isMobile = uiRef.current.deviceType === 'mobile';
       for (let i = 0; i < e.changedTouches.length; i++) {
         const t = e.changedTouches[i];
         if (state.touches.left.active && t.identifier === state.touches.left.id) {
           state.touches.left.active = false;
+          state.touches.left.id = -1;
+          state.touches.left.dirX = 0;
+          state.touches.left.dirY = 0;
           if (isMobile) {
             state.touches.left.currentX = state.touches.left.startX;
             state.touches.left.currentY = state.touches.left.startY;
           }
         }
         if (state.touches.right.active && t.identifier === state.touches.right.id) {
-          state.touches.right.justReleased = true;
-          state.touches.right.releaseDx = state.touches.right.currentX - state.touches.right.startX;
-          state.touches.right.releaseDy = state.touches.right.currentY - state.touches.right.startY;
+          if (isPlaying) {
+            state.touches.right.justReleased = true;
+            state.touches.right.releaseDx = state.touches.right.currentX - state.touches.right.startX;
+            state.touches.right.releaseDy = state.touches.right.currentY - state.touches.right.startY;
+          } else {
+            state.touches.right.justReleased = false;
+            state.touches.right.releaseDx = 0;
+            state.touches.right.releaseDy = 0;
+            state.touches.right.aimLength = 0;
+            state.touches.right.startTime = 0;
+          }
           state.touches.right.active = false;
+          state.touches.right.id = -1;
+          state.touches.right.dirX = 0;
+          state.touches.right.dirY = 0;
           if (isMobile) {
             state.touches.right.currentX = state.touches.right.startX;
             state.touches.right.currentY = state.touches.right.startY;
           }
         }
       }
+    };
+
+    const handleTouchCancel = (e: TouchEvent) => {
+      if (uiRef.current.status === 'PLAYING') {
+        e.preventDefault();
+      }
+      releaseAllInputs();
     };
 
     const handleBlurOrHide = () => {
@@ -4990,8 +5027,9 @@ export default function GameCanvas() {
     canvas.addEventListener('mouseup', handleMouseUp);
     canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
     canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
-    canvas.addEventListener('touchend', handleTouchEnd, { passive: false });
-    canvas.addEventListener('touchcancel', handleTouchEnd, { passive: false });
+    window.addEventListener('touchend', handleTouchEnd, { passive: false });
+    window.addEventListener('touchcancel', handleTouchCancel, { passive: false });
+    window.addEventListener('pagehide', handleBlurOrHide);
     window.addEventListener('blur', handleWindowBlur);
     window.addEventListener('focus', handleWindowFocus);
     document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -5068,6 +5106,11 @@ export default function GameCanvas() {
       state.lastTime = currentTime;
 
       const STATUS = uiRef.current.status;
+      const isLocalMenuOpen = mpRef.current.roomId && (mpMenuOpenRef.current || confirmResignRef.current);
+      if (STATUS !== 'PLAYING' || isLocalMenuOpen) {
+        releaseAllInputs();
+      }
+
       if (lastStatus === 'PLAYING' && STATUS === 'GAME_OVER') {
         const myColorIdx = playerProfileRef.current.colorIdx;
         const myName = playerProfileRef.current.name || 'YOU';
@@ -7972,9 +8015,10 @@ export default function GameCanvas() {
         canvas.removeEventListener('mouseup', handleMouseUp);
         canvas.removeEventListener('touchstart', handleTouchStart);
         canvas.removeEventListener('touchmove', handleTouchMove);
-        canvas.removeEventListener('touchend', handleTouchEnd);
-        canvas.removeEventListener('touchcancel', handleTouchEnd);
       }
+      window.removeEventListener('touchend', handleTouchEnd);
+      window.removeEventListener('touchcancel', handleTouchCancel);
+      window.removeEventListener('pagehide', handleBlurOrHide);
       window.removeEventListener('blur', handleWindowBlur);
       window.removeEventListener('focus', handleWindowFocus);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
@@ -9135,6 +9179,9 @@ export default function GameCanvas() {
                         } else {
                           setUiState(prev => {
                             const newStatus = prev.status === 'PAUSED' ? 'PLAYING' : 'PAUSED';
+                            if (newStatus === 'PAUSED') {
+                              releaseAllInputs();
+                            }
                             uiRef.current = { ...prev, status: newStatus };
                             return uiRef.current;
                           });
@@ -9159,6 +9206,7 @@ export default function GameCanvas() {
                           setMpMenuOpen(false);
                           mpMenuOpenRef.current = false;
                         } else {
+                          releaseAllInputs();
                           setUiState(prev => {
                             uiRef.current = { ...prev, status: 'PAUSED' };
                             return uiRef.current;
