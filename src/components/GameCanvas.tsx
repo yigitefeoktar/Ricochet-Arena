@@ -3842,6 +3842,145 @@ export default function GameCanvas() {
     return true;
   };
 
+  const startFreshSinglePlayerRun = (mapId?: string, gameMode?: GameMode): boolean => {
+    if (mpRef.current.roomId) return false;
+
+    // Validate/fallback the requested map and game mode using existing definitions
+    const selectedMapId = mapId && MAPS[mapId] ? mapId : (uiRef.current.mapId && MAPS[uiRef.current.mapId] ? uiRef.current.mapId : 'classic_arena');
+    const selectedGameMode: GameMode = gameMode && isValidGameMode(gameMode) ? gameMode : (uiRef.current.gameMode && isValidGameMode(uiRef.current.gameMode) ? uiRef.current.gameMode : (uiRef.current.hardMode ? 'hard' : 'normal'));
+
+    // Clear any active pause-feedback timeout before clearing its state
+    if (feedbackTimerRef.current) {
+      clearTimeout(feedbackTimerRef.current);
+      feedbackTimerRef.current = null;
+    }
+    setPauseMenuFeedback(null);
+
+    // Close single-player overlays and stale confirmations
+    setConfirmResign(false);
+    confirmResignRef.current = false;
+    setConfirmLeaveMatches(false);
+    setIsMapSelectOpen(false);
+    setLoadError(null);
+
+    // Neutralize all input
+    releaseAllInputs();
+
+    // Call existing resetGame logic with explicit device type, map ID, and game mode
+    const dType = isMobileRef.current ? 'mobile' : 'desktop';
+    const ok = resetGame(dType, selectedMapId, selectedGameMode);
+
+    if (ok) {
+      const state = stateRef.current;
+
+      // Complete per-run cleanup
+      state.player.vx = 0;
+      state.player.vy = 0;
+      state.player.kbvx = 0;
+      state.player.kbvy = 0;
+      state.player.processedZoneKbs = [];
+      state.player.recentBlocks = [];
+      state.player.lastShoot = performance.now();
+      state.player.dash = {
+        active: false,
+        endTime: 0,
+        targetX: 0,
+        targetY: 0,
+        shieldRadius: 60,
+        lastTime: performance.now() - DASH_COOLDOWN,
+        wasReady: true
+      };
+      state.player.build = {
+        active: false,
+        endTime: 0,
+        lastBlockX: 0,
+        lastBlockY: 0,
+        lastTime: performance.now() - BUILD_COOLDOWN
+      };
+
+      state.blocks = [];
+      state.nextBlockScore = 100;
+      state.bullets = [];
+      state.enemies = [];
+      state.bouncers = [];
+      state.zones = [];
+      
+      const mapDef = MAPS[selectedMapId] || MAPS.classic_arena;
+      state.spawners = mapDef.spawners.map((s: any) => ({
+        ...s,
+        hp: selectedGameMode === 'impossible' ? (s.maxHp ?? s.hp ?? 100) : s.hp
+      }));
+      state.nextEntityId = 1;
+      state.bouncerCapacity = 2;
+
+      // Re-create bouncers starting from 0 to ensure clean run
+      const startPos = { x: state.player.x, y: state.player.y };
+      for (let i = 0; i < 2; i++) {
+        const spawn = getSafeSpawn(mapDef.walls, 60, [startPos], 200);
+        if (spawn) {
+          const angle = Math.random() * Math.PI * 2;
+          state.bouncers.push({
+            id: 'b_' + state.nextEntityId++,
+            x: spawn.x,
+            y: spawn.y,
+            dx: Math.cos(angle),
+            dy: Math.sin(angle),
+            size: 1,
+            radius: 24,
+            speed: ENEMY_SPEED + Math.random() * 20,
+            lastDirChange: performance.now(),
+            lastMultiply: performance.now()
+          });
+        }
+      }
+
+      state.particles = [];
+      state.trails = [];
+      state.shockwaves = [];
+      state.floatingTexts = [];
+      state.shake = 0;
+      state.lastTime = performance.now();
+      state.lastEnemySpawn = performance.now();
+      state.enemySpawnRate = 3000;
+
+      // Single-player leftovers cleanup
+      state.multiplayerPlayers = {};
+      state.matchPhase = 'PLAYING';
+      state.finalRunnerId = null;
+      state.finalRunDeadline = null;
+      state.openingProtectionDeadline = null;
+      state.winnerId = null;
+      state.matchPlayers = {};
+      state.playerActionAuthority = {};
+      state.forceBroadcast = false;
+      state.lastBroadcastTime = 0;
+
+      mappedClientDeadlineRef.current = null;
+      mappedProtectionDeadlineRef.current = null;
+      awaitingOpeningProtectionAuthorityRef.current = false;
+      setCurrentMatchPhase('PLAYING');
+
+      // Update UI state
+      const isHardMode = selectedGameMode !== 'normal';
+      const finalUi = {
+        status: 'PLAYING' as const,
+        score: 0,
+        deviceType: dType,
+        activeTool: 'special' as const,
+        blocks: 50,
+        spawnersLeft: state.spawners.length,
+        mapId: selectedMapId,
+        hardMode: isHardMode,
+        gameMode: selectedGameMode,
+        buttonCounters: { special: 0, build: 0 }
+      };
+      uiRef.current = finalUi;
+      setUiState(finalUi);
+    }
+
+    return ok;
+  };
+
   const evaluateMatchState = (currentTime: number) => {
     if (!mpRef.current.isConnected || !mpRef.current.roomId || !mpRef.current.isHost) {
       return;
@@ -8275,7 +8414,7 @@ export default function GameCanvas() {
                   <button
                     onClick={() => {
                       const selectedMode: GameMode = uiState.hardMode ? 'hard' : 'normal';
-                      resetGame(isMobileRef.current ? 'mobile' : 'desktop', uiState.mapId, selectedMode);
+                      startFreshSinglePlayerRun(uiState.mapId, selectedMode);
                     }}
                     className="w-full py-3 sm:py-4 bg-[#00f0ff] hover:bg-white text-black border-2 border-[#00f0ff] font-black tracking-[0.2em] transition-all duration-200 uppercase text-base sm:text-lg active:translate-x-1 active:translate-y-1 active:shadow-none hover:shadow-[5px_5px_0_#fff] shrink-0"
                   >
@@ -8480,8 +8619,7 @@ export default function GameCanvas() {
                     <button
                       onClick={() => {
                         const selectedMode: GameMode = uiState.hardMode ? 'hard' : 'normal';
-                        resetGame(isMobileRef.current ? 'mobile' : 'desktop', uiState.mapId, selectedMode);
-                        setIsMapSelectOpen(false);
+                        startFreshSinglePlayerRun(uiState.mapId, selectedMode);
                       }}
                       className="flex-1 py-3 md:py-4 bg-[#00f0ff]/20 hover:bg-[#00f0ff]/40 text-[#00f0ff] border border-[#00f0ff]/50 font-black tracking-[0.2em] transition-all duration-200 uppercase text-sm md:text-base lg:text-lg cursor-pointer"
                     >
@@ -9675,11 +9813,11 @@ export default function GameCanvas() {
             <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center">
               <button
                 onClick={() => {
-                  resetGame(isMobileRef.current ? 'mobile' : 'desktop');
+                  startFreshSinglePlayerRun(uiState.mapId, uiState.gameMode);
                 }}
                 className="flex-1 py-3 sm:py-4 bg-[#00f0ff] hover:bg-white text-black border-2 border-[#00f0ff] font-black tracking-[0.2em] transition-all duration-200 uppercase text-sm sm:text-base md:text-lg active:translate-x-1 active:translate-y-1 active:shadow-none hover:shadow-[5px_5px_0_#fff] pointer-events-auto"
               >
-                RE-ENTER ARENA
+                RETRY ARENA
               </button>
               <button
                 onClick={() => {
@@ -9707,11 +9845,11 @@ export default function GameCanvas() {
             <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center">
               <button
                 onClick={() => {
-                  resetGame(isMobileRef.current ? 'mobile' : 'desktop');
+                  startFreshSinglePlayerRun(uiState.mapId, uiState.gameMode);
                 }}
                 className="flex-1 py-3 sm:py-4 bg-[#ff003c] hover:bg-white text-black border-2 border-[#ff003c] font-black tracking-[0.2em] transition-all duration-200 uppercase text-sm sm:text-base md:text-lg active:translate-x-1 active:translate-y-1 active:shadow-none hover:shadow-[5px_5px_0_#fff] pointer-events-auto"
               >
-                RE-ENTER ARENA
+                RETRY ARENA
               </button>
               <button
                 onClick={() => {
