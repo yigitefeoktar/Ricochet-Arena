@@ -2588,54 +2588,68 @@ export default function GameCanvas() {
   const handleQuickSave = () => {
     if (mpRef.current.roomId) return;
 
+    let previousReadSuccessful = false;
     let previousValue: string | null = null;
+    let writeAttempted = false;
+
     try {
-      // a. Construct the shared save envelope
+      // a. Construct, serialize, size-check, and dry-validate the new save.
       const envelope = constructSaveEnvelope();
-
-      // b. Serialize it
       const serialized = serializeSaveEnvelope(envelope);
-
-      // c. Check its UTF-8 byte size against MAX_SAVE_FILE_BYTES
       const bytes = getByteSize(serialized);
       if (bytes > MAX_SAVE_FILE_BYTES) {
         throw new Error("FILE TOO LARGE");
       }
-
-      // d. Call parseAndReconstructSave(serialized) as a dry validation check
       parseAndReconstructSave(serialized);
 
-      // e. Do not apply the returned state (already done because parseAndReconstructSave doesn't mutate)
+      // b. Read the previous slot. Do not ignore an exception while reading.
+      previousValue = localStorage.getItem(QUICK_SAVE_STORAGE_KEY);
+      previousReadSuccessful = true;
 
-      // To avoid overwriting a valid slot with a bad save, preserve the old localStorage value until the new string has passed strict dry validation
-      try {
-        previousValue = localStorage.getItem(QUICK_SAVE_STORAGE_KEY);
-      } catch (e) {
-        // Ignore read errors
-      }
+      // d. Mark that replacement writing is being attempted.
+      writeAttempted = true;
 
-      // f. Only after that validation succeeds, write the serialized string to localStorage using QUICK_SAVE_STORAGE_KEY
+      // e. Write the new value.
       localStorage.setItem(QUICK_SAVE_STORAGE_KEY, serialized);
 
-      // g. Read the value back from localStorage and verify it exactly equals the string that was written
+      // f. Read it back and compare it exactly.
       const readBack = localStorage.getItem(QUICK_SAVE_STORAGE_KEY);
       if (readBack !== serialized) {
         throw new Error("VERIFICATION FAILED");
       }
 
-      // h. Only then set quickSaveExists to true and show "QUICK SAVE STORED"
+      // g. Report success only after exact verification.
       setQuickSaveExists(true);
       showPauseFeedback("QUICK SAVE STORED", "success");
     } catch (err) {
       console.error("Quick save failed:", err);
-      // If writing or read-back verification fails after attempting replacement, restore the previous value when possible
-      if (previousValue !== null) {
+
+      // If an error occurs after writing was attempted:
+      if (writeAttempted) {
         try {
-          localStorage.setItem(QUICK_SAVE_STORAGE_KEY, previousValue);
+          if (previousReadSuccessful && previousValue !== null) {
+            localStorage.setItem(QUICK_SAVE_STORAGE_KEY, previousValue);
+            // verify the restoration when possible
+            const check = localStorage.getItem(QUICK_SAVE_STORAGE_KEY);
+            setQuickSaveExists(check === previousValue);
+          } else {
+            localStorage.removeItem(QUICK_SAVE_STORAGE_KEY);
+            // verify the restoration when possible
+            const check = localStorage.getItem(QUICK_SAVE_STORAGE_KEY);
+            setQuickSaveExists(check !== null);
+          }
         } catch (restoreErr) {
           console.error("Failed to restore previous quicksave value:", restoreErr);
+          // update quickSaveExists to reflect the restored state (best-effort)
+          try {
+            const check = localStorage.getItem(QUICK_SAVE_STORAGE_KEY);
+            setQuickSaveExists(check !== null);
+          } catch {
+            // ignore
+          }
         }
       }
+
       showPauseFeedback("QUICK SAVE FAILED", "error");
     }
   };
@@ -3274,11 +3288,7 @@ export default function GameCanvas() {
     };
   };
 
-  const applyReconstructedSave = (reconstructed: {
-    cleanUi: any;
-    cleanState: any;
-    walls: any[];
-  }) => {
+  const applyReconstructedSave = (reconstructed: ReturnType<typeof parseAndReconstructSave>) => {
     activeWalls = reconstructed.walls;
     stateRef.current = reconstructed.cleanState;
 
@@ -3294,11 +3304,6 @@ export default function GameCanvas() {
 
     uiRef.current = reconstructed.cleanUi;
     setUiState(reconstructed.cleanUi);
-  };
-
-  const parseAndApplySave = (text: string) => {
-    const reconstructed = parseAndReconstructSave(text);
-    applyReconstructedSave(reconstructed);
   };
 
   const handleQuickLoad = () => {
