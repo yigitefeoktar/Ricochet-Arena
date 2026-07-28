@@ -1714,7 +1714,7 @@ export default function GameCanvas() {
   const [quickSaveExists, setQuickSaveExists] = useState<boolean>(false);
   const [pauseMenuFeedback, setPauseMenuFeedback] = useState<{
     text: string;
-    type: 'success_purple' | 'success_cyan' | 'error';
+    type: 'success' | 'error';
   } | null>(null);
   const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -2550,7 +2550,7 @@ export default function GameCanvas() {
     }
   };
 
-  const showPauseFeedback = (text: string, type: 'success_purple' | 'success_cyan' | 'error') => {
+  const showPauseFeedback = (text: string, type: 'success' | 'error') => {
     if (feedbackTimerRef.current) {
       clearTimeout(feedbackTimerRef.current);
     }
@@ -2601,7 +2601,7 @@ export default function GameCanvas() {
 
       localStorage.setItem(QUICK_SAVE_STORAGE_KEY, serialized);
       setQuickSaveExists(true);
-      showPauseFeedback("QUICK SAVE STORED", "success_purple");
+      showPauseFeedback("QUICK SAVE STORED", "success");
     } catch (err) {
       console.error("Quick save failed:", err);
       showPauseFeedback("QUICK SAVE FAILED", "error");
@@ -3274,7 +3274,7 @@ export default function GameCanvas() {
       // Close unrelated confirmations if active
       setConfirmResign(false);
 
-      showPauseFeedback("QUICK SAVE LOADED", "success_cyan");
+      showPauseFeedback("QUICK SAVE LOADED", "success");
     } catch (err: any) {
       console.error("Quick load failed:", err);
       showPauseFeedback("INVALID QUICK SAVE", "error");
@@ -9352,11 +9352,9 @@ export default function GameCanvas() {
                     {pauseMenuFeedback && (
                       <p
                         className={`font-mono text-[11px] md:text-[12px] font-bold tracking-widest uppercase transition-opacity duration-300 ${
-                          pauseMenuFeedback.type === 'success_purple'
-                            ? 'text-[#C4B5FD] drop-shadow-[0_0_4px_rgba(139,92,246,0.4)]'
-                            : pauseMenuFeedback.type === 'success_cyan'
-                            ? 'text-[#A5F3FC] drop-shadow-[0_0_4px_rgba(6,182,212,0.4)]'
-                            : 'text-[#FF003C] drop-shadow-[0_0_4px_rgba(255,0,60,0.4)]'
+                          pauseMenuFeedback.type === 'success'
+                            ? 'text-[#A5F3FC] drop-shadow-[0_0_4px_rgba(6,182,212,0.25)]'
+                            : 'text-[#FF003C] drop-shadow-[0_0_4px_rgba(255,0,60,0.30)]'
                         }`}
                       >
                         {pauseMenuFeedback.text}
@@ -9383,7 +9381,7 @@ export default function GameCanvas() {
                       e.stopPropagation();
                       handleQuickSave();
                     }}
-                    className="h-12 w-full bg-[#8B5CF6]/[0.12] border-2 border-[#8B5CF6] text-[#C4B5FD] hover:bg-[#8B5CF6]/20 font-mono font-black tracking-widest uppercase text-xs sm:text-sm shadow-[0_0_8px_rgba(139,92,246,0.15)] active:scale-[0.98] transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#8B5CF6] focus-visible:ring-offset-black"
+                    className="h-12 w-full bg-[rgba(245,247,255,0.035)] border-2 border-[rgba(245,247,255,0.32)] text-[#D5DAE6] hover:bg-[rgba(251,191,36,0.08)] hover:border-[#FBBF24] hover:text-[#FBBF24] shadow-[0_0_6px_rgba(245,247,255,0.06)] hover:shadow-[0_0_8px_rgba(251,191,36,0.16)] active:scale-[0.98] transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#FBBF24] focus-visible:ring-offset-black"
                   >
                     QUICK SAVE
                   </button>
@@ -9393,7 +9391,7 @@ export default function GameCanvas() {
                       handleQuickLoad();
                     }}
                     disabled={!quickSaveExists}
-                    className="h-12 w-full bg-[#06B6D4]/[0.12] border-2 border-[#06B6D4] text-[#A5F3FC] hover:bg-[#06B6D4]/20 disabled:opacity-40 disabled:pointer-events-none disabled:active:scale-100 font-mono font-black tracking-widest uppercase text-xs sm:text-sm shadow-[0_0_8px_rgba(6,182,212,0.15)] active:scale-[0.98] transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#06B6D4] focus-visible:ring-offset-black"
+                    className="h-12 w-full bg-[rgba(245,247,255,0.035)] border-2 border-[rgba(245,247,255,0.32)] text-[#D5DAE6] hover:bg-[rgba(251,191,36,0.08)] hover:border-[#FBBF24] hover:text-[#FBBF24] shadow-[0_0_6px_rgba(245,247,255,0.06)] hover:shadow-[0_0_8px_rgba(251,191,36,0.16)] active:scale-[0.98] transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#FBBF24] focus-visible:ring-offset-black disabled:bg-[rgba(245,247,255,0.02)] disabled:border-[rgba(245,247,255,0.14)] disabled:text-[rgba(245,247,255,0.25)] disabled:shadow-none disabled:cursor-default disabled:pointer-events-none disabled:active:scale-100"
                   >
                     QUICK LOAD
                   </button>
@@ -9402,7 +9400,7 @@ export default function GameCanvas() {
                       e.stopPropagation();
                       handleSaveMatch();
                     }}
-                    className="h-12 w-full bg-[#8B5CF6]/[0.12] border-2 border-[#8B5CF6] text-[#C4B5FD] hover:bg-[#8B5CF6]/20 font-mono font-black tracking-widest uppercase text-xs sm:text-sm shadow-[0_0_8px_rgba(139,92,246,0.15)] active:scale-[0.98] transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#8B5CF6] focus-visible:ring-offset-black"
+                    className="h-12 w-full bg-[rgba(245,247,255,0.035)] border-2 border-[rgba(245,247,255,0.32)] text-[#D5DAE6] hover:bg-[rgba(251,191,36,0.08)] hover:border-[#FBBF24] hover:text-[#FBBF24] shadow-[0_0_6px_rgba(245,247,255,0.06)] hover:shadow-[0_0_8px_rgba(251,191,36,0.16)] active:scale-[0.98] transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#FBBF24] focus-visible:ring-offset-black"
                   >
                     DOWNLOAD SAVE FILE
                   </button>
