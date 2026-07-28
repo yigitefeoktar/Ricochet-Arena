@@ -3289,9 +3289,14 @@ export default function GameCanvas() {
   };
 
   const applyReconstructedSave = (reconstructed: ReturnType<typeof parseAndReconstructSave>) => {
+    // Set activeWalls from the reconstructed map
     activeWalls = reconstructed.walls;
-    stateRef.current = reconstructed.cleanState;
 
+    // Copy the reconstructed state into the existing live state object
+    const liveState = stateRef.current;
+    Object.assign(liveState, reconstructed.cleanState);
+
+    // Clear pulse and spawner-pointer effects
     if (pulseTimeoutRef.current) {
       clearTimeout(pulseTimeoutRef.current);
       pulseTimeoutRef.current = null;
@@ -3300,8 +3305,10 @@ export default function GameCanvas() {
     setPulseKey(0);
     spawnerPointerAnimRef.current = null;
 
+    // Release all inputs using the newly copied live state
     releaseAllInputs();
 
+    // Apply reconstructed.cleanUi to uiRef.current and setUiState
     uiRef.current = reconstructed.cleanUi;
     setUiState(reconstructed.cleanUi);
   };
