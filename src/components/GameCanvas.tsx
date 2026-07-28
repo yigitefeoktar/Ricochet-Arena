@@ -2588,27 +2588,59 @@ export default function GameCanvas() {
   const handleQuickSave = () => {
     if (mpRef.current.roomId) return;
 
+    let previousValue: string | null = null;
     try {
+      // a. Construct the shared save envelope
       const envelope = constructSaveEnvelope();
+
+      // b. Serialize it
       const serialized = serializeSaveEnvelope(envelope);
 
-      // Measure byte size
+      // c. Check its UTF-8 byte size against MAX_SAVE_FILE_BYTES
       const bytes = getByteSize(serialized);
       if (bytes > MAX_SAVE_FILE_BYTES) {
-        showPauseFeedback("QUICK SAVE FAILED", "error");
-        return;
+        throw new Error("FILE TOO LARGE");
       }
 
+      // d. Call parseAndReconstructSave(serialized) as a dry validation check
+      parseAndReconstructSave(serialized);
+
+      // e. Do not apply the returned state (already done because parseAndReconstructSave doesn't mutate)
+
+      // To avoid overwriting a valid slot with a bad save, preserve the old localStorage value until the new string has passed strict dry validation
+      try {
+        previousValue = localStorage.getItem(QUICK_SAVE_STORAGE_KEY);
+      } catch (e) {
+        // Ignore read errors
+      }
+
+      // f. Only after that validation succeeds, write the serialized string to localStorage using QUICK_SAVE_STORAGE_KEY
       localStorage.setItem(QUICK_SAVE_STORAGE_KEY, serialized);
+
+      // g. Read the value back from localStorage and verify it exactly equals the string that was written
+      const readBack = localStorage.getItem(QUICK_SAVE_STORAGE_KEY);
+      if (readBack !== serialized) {
+        throw new Error("VERIFICATION FAILED");
+      }
+
+      // h. Only then set quickSaveExists to true and show "QUICK SAVE STORED"
       setQuickSaveExists(true);
       showPauseFeedback("QUICK SAVE STORED", "success");
     } catch (err) {
       console.error("Quick save failed:", err);
+      // If writing or read-back verification fails after attempting replacement, restore the previous value when possible
+      if (previousValue !== null) {
+        try {
+          localStorage.setItem(QUICK_SAVE_STORAGE_KEY, previousValue);
+        } catch (restoreErr) {
+          console.error("Failed to restore previous quicksave value:", restoreErr);
+        }
+      }
       showPauseFeedback("QUICK SAVE FAILED", "error");
     }
   };
 
-  const parseAndApplySave = (text: string) => {
+  const parseAndReconstructSave = (text: string) => {
     if (!text || typeof text !== 'string') {
       throw new Error("INVALID SAVE FILE");
     }
@@ -3235,8 +3267,20 @@ export default function GameCanvas() {
       tutorial: { active: false, spawnerIndex: null, enemySpawned: false, timer: 0 },
     };
 
-    activeWalls = mapDef.walls;
-    stateRef.current = cleanState;
+    return {
+      cleanUi,
+      cleanState,
+      walls: mapDef.walls,
+    };
+  };
+
+  const applyReconstructedSave = (reconstructed: {
+    cleanUi: any;
+    cleanState: any;
+    walls: any[];
+  }) => {
+    activeWalls = reconstructed.walls;
+    stateRef.current = reconstructed.cleanState;
 
     if (pulseTimeoutRef.current) {
       clearTimeout(pulseTimeoutRef.current);
@@ -3248,8 +3292,13 @@ export default function GameCanvas() {
 
     releaseAllInputs();
 
-    uiRef.current = cleanUi;
-    setUiState(cleanUi);
+    uiRef.current = reconstructed.cleanUi;
+    setUiState(reconstructed.cleanUi);
+  };
+
+  const parseAndApplySave = (text: string) => {
+    const reconstructed = parseAndReconstructSave(text);
+    applyReconstructedSave(reconstructed);
   };
 
   const handleQuickLoad = () => {
@@ -3269,7 +3318,11 @@ export default function GameCanvas() {
         return;
       }
 
-      parseAndApplySave(serialized);
+      // Dry parse first, if it fails, it will throw and the live game won't change
+      const reconstructed = parseAndReconstructSave(serialized);
+
+      // Now apply successfully
+      applyReconstructedSave(reconstructed);
 
       // Close unrelated confirmations if active
       setConfirmResign(false);
@@ -3313,7 +3366,8 @@ export default function GameCanvas() {
     reader.onload = (event) => {
       try {
         const text = event.target?.result as string;
-        parseAndApplySave(text);
+        const reconstructed = parseAndReconstructSave(text);
+        applyReconstructedSave(reconstructed);
         setLoadError(null);
       } catch (err: any) {
         const allowedMessages = ["INVALID SAVE FILE", "FILE TOO LARGE", "UNSUPPORTED SAVE VERSION", "UNKNOWN MAP"];
@@ -9348,7 +9402,7 @@ export default function GameCanvas() {
                   <p className="text-[#F5F7FF]/55 font-mono text-[12px] md:text-[14px] tracking-[0.25em] uppercase mt-2 sm:mt-3">
                     SYSTEM PAUSED
                   </p>
-                  <div className="h-6 flex items-center justify-center mt-2">
+                  <div className="h-6 flex items-center justify-center mt-2" role="status" aria-live="polite" aria-atomic="true">
                     {pauseMenuFeedback && (
                       <p
                         className={`font-mono text-[11px] md:text-[12px] font-bold tracking-widest uppercase transition-opacity duration-300 ${
@@ -9365,6 +9419,7 @@ export default function GameCanvas() {
 
                 <div className="flex flex-col gap-3 mt-5 sm:mt-11 w-[calc(100vw-48px)] max-w-[280px]">
                   <button
+                    type="button"
                     onClick={(e) => {
                       e.stopPropagation();
                       setUiState(prev => {
@@ -9377,30 +9432,33 @@ export default function GameCanvas() {
                     RESUME
                   </button>
                   <button
+                    type="button"
                     onClick={(e) => {
                       e.stopPropagation();
                       handleQuickSave();
                     }}
-                    className="h-12 w-full bg-[rgba(245,247,255,0.035)] border-2 border-[rgba(245,247,255,0.32)] text-[#D5DAE6] hover:bg-[rgba(251,191,36,0.08)] hover:border-[#FBBF24] hover:text-[#FBBF24] shadow-[0_0_6px_rgba(245,247,255,0.06)] hover:shadow-[0_0_8px_rgba(251,191,36,0.16)] active:scale-[0.98] transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#FBBF24] focus-visible:ring-offset-black"
+                    className="h-12 w-full bg-[rgba(245,247,255,0.035)] border-2 border-[rgba(245,247,255,0.32)] text-[#D5DAE6] font-mono font-black tracking-widest uppercase text-xs sm:text-sm hover:bg-[rgba(251,191,36,0.08)] hover:border-[#FBBF24] hover:text-[#FBBF24] shadow-[0_0_6px_rgba(245,247,255,0.06)] hover:shadow-[0_0_8px_rgba(251,191,36,0.16)] active:scale-[0.98] transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#FBBF24] focus-visible:ring-offset-black"
                   >
                     QUICK SAVE
                   </button>
                   <button
+                    type="button"
                     onClick={(e) => {
                       e.stopPropagation();
                       handleQuickLoad();
                     }}
                     disabled={!quickSaveExists}
-                    className="h-12 w-full bg-[rgba(245,247,255,0.035)] border-2 border-[rgba(245,247,255,0.32)] text-[#D5DAE6] hover:bg-[rgba(251,191,36,0.08)] hover:border-[#FBBF24] hover:text-[#FBBF24] shadow-[0_0_6px_rgba(245,247,255,0.06)] hover:shadow-[0_0_8px_rgba(251,191,36,0.16)] active:scale-[0.98] transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#FBBF24] focus-visible:ring-offset-black disabled:bg-[rgba(245,247,255,0.02)] disabled:border-[rgba(245,247,255,0.14)] disabled:text-[rgba(245,247,255,0.25)] disabled:shadow-none disabled:cursor-default disabled:pointer-events-none disabled:active:scale-100"
+                    className="h-12 w-full bg-[rgba(245,247,255,0.035)] border-2 border-[rgba(245,247,255,0.32)] text-[#D5DAE6] font-mono font-black tracking-widest uppercase text-xs sm:text-sm hover:bg-[rgba(251,191,36,0.08)] hover:border-[#FBBF24] hover:text-[#FBBF24] shadow-[0_0_6px_rgba(245,247,255,0.06)] hover:shadow-[0_0_8px_rgba(251,191,36,0.16)] active:scale-[0.98] transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#FBBF24] focus-visible:ring-offset-black disabled:bg-[rgba(245,247,255,0.02)] disabled:border-[rgba(245,247,255,0.14)] disabled:text-[rgba(245,247,255,0.25)] disabled:shadow-none disabled:cursor-default disabled:pointer-events-none disabled:active:scale-100"
                   >
                     QUICK LOAD
                   </button>
                   <button
+                    type="button"
                     onClick={(e) => {
                       e.stopPropagation();
                       handleSaveMatch();
                     }}
-                    className="h-12 w-full bg-[rgba(245,247,255,0.035)] border-2 border-[rgba(245,247,255,0.32)] text-[#D5DAE6] hover:bg-[rgba(251,191,36,0.08)] hover:border-[#FBBF24] hover:text-[#FBBF24] shadow-[0_0_6px_rgba(245,247,255,0.06)] hover:shadow-[0_0_8px_rgba(251,191,36,0.16)] active:scale-[0.98] transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#FBBF24] focus-visible:ring-offset-black"
+                    className="h-12 w-full bg-[rgba(245,247,255,0.035)] border-2 border-[rgba(245,247,255,0.32)] text-[#D5DAE6] font-mono font-black tracking-widest uppercase text-xs sm:text-sm hover:bg-[rgba(251,191,36,0.08)] hover:border-[#FBBF24] hover:text-[#FBBF24] shadow-[0_0_6px_rgba(245,247,255,0.06)] hover:shadow-[0_0_8px_rgba(251,191,36,0.16)] active:scale-[0.98] transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#FBBF24] focus-visible:ring-offset-black"
                   >
                     DOWNLOAD SAVE FILE
                   </button>
