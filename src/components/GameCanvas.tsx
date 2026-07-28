@@ -34,6 +34,7 @@ const BUILD_COOLDOWN = 25000;
 const SAVE_FORMAT = "ricochet-arena-save";
 const SAVE_VERSION = 1;
 const MAX_SAVE_FILE_BYTES = 5 * 1024 * 1024;
+const QUICK_SAVE_STORAGE_KEY = "ricochet-arena-quicksave-v1";
 
 const WALLS = [
   // Outer boundaries
@@ -1719,12 +1720,19 @@ export default function GameCanvas() {
 
   useEffect(() => {
     try {
-      const qs = localStorage.getItem('ricochet-arena-quicksave-v1');
+      const qs = localStorage.getItem(QUICK_SAVE_STORAGE_KEY);
       setQuickSaveExists(!!qs);
     } catch (e) {
       console.error("Failed to read quicksave from localStorage on startup:", e);
       setQuickSaveExists(false);
     }
+
+    return () => {
+      if (feedbackTimerRef.current) {
+        clearTimeout(feedbackTimerRef.current);
+        feedbackTimerRef.current = null;
+      }
+    };
   }, []);
   const [copyFeedback, setCopyFeedback] = useState(false);
   const [copyLinkFeedback, setCopyLinkFeedback] = useState(false);
@@ -2591,7 +2599,7 @@ export default function GameCanvas() {
         return;
       }
 
-      localStorage.setItem('ricochet-arena-quicksave-v1', serialized);
+      localStorage.setItem(QUICK_SAVE_STORAGE_KEY, serialized);
       setQuickSaveExists(true);
       showPauseFeedback("QUICK SAVE STORED", "success_purple");
     } catch (err) {
@@ -3248,7 +3256,7 @@ export default function GameCanvas() {
     if (mpRef.current.roomId) return;
 
     try {
-      const serialized = localStorage.getItem('ricochet-arena-quicksave-v1');
+      const serialized = localStorage.getItem(QUICK_SAVE_STORAGE_KEY);
       if (!serialized) {
         showPauseFeedback("INVALID QUICK SAVE", "error");
         return;
@@ -9340,8 +9348,8 @@ export default function GameCanvas() {
                   <p className="text-[#F5F7FF]/55 font-mono text-[12px] md:text-[14px] tracking-[0.25em] uppercase mt-2 sm:mt-3">
                     SYSTEM PAUSED
                   </p>
-                  {pauseMenuFeedback && (
-                    <div className="h-6 flex items-center justify-center mt-2">
+                  <div className="h-6 flex items-center justify-center mt-2">
+                    {pauseMenuFeedback && (
                       <p
                         className={`font-mono text-[11px] md:text-[12px] font-bold tracking-widest uppercase transition-opacity duration-300 ${
                           pauseMenuFeedback.type === 'success_purple'
@@ -9353,8 +9361,8 @@ export default function GameCanvas() {
                       >
                         {pauseMenuFeedback.text}
                       </p>
-                    </div>
-                  )}
+                    )}
+                  </div>
                 </div>
 
                 <div className="flex flex-col gap-3 mt-5 sm:mt-11 w-[calc(100vw-48px)] max-w-[280px]">
