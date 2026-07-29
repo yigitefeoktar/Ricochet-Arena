@@ -1712,6 +1712,14 @@ export default function GameCanvas() {
   const [containerSize, setContainerSize] = useState({ width: 1200, height: 800 });
   const [loadError, setLoadError] = useState<string | null>(null);
   const [quickSaveExists, setQuickSaveExists] = useState<boolean>(false);
+  const quickSaveRef = useRef<{ runId: number; serialized: string } | null>(null);
+  const activeSinglePlayerRunIdRef = useRef<number>(1);
+
+  const invalidateQuickSave = useCallback(() => {
+    quickSaveRef.current = null;
+    setQuickSaveExists(false);
+  }, []);
+
   const [pauseMenuFeedback, setPauseMenuFeedback] = useState<{
     text: string;
     type: 'success' | 'error';
@@ -1719,13 +1727,13 @@ export default function GameCanvas() {
   const feedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
+    // Migration cleanup: On component mount, delete the legacy key once
     try {
-      const qs = localStorage.getItem(QUICK_SAVE_STORAGE_KEY);
-      setQuickSaveExists(!!qs);
+      localStorage.removeItem(QUICK_SAVE_STORAGE_KEY);
     } catch (e) {
-      console.error("Failed to read quicksave from localStorage on startup:", e);
-      setQuickSaveExists(false);
+      console.error("Failed to remove legacy quicksave key from localStorage on startup:", e);
     }
+    setQuickSaveExists(false);
 
     return () => {
       if (feedbackTimerRef.current) {
@@ -1734,6 +1742,8 @@ export default function GameCanvas() {
       }
     };
   }, []);
+
+
   const [copyFeedback, setCopyFeedback] = useState(false);
   const [copyLinkFeedback, setCopyLinkFeedback] = useState(false);
   const [showQrCode, setShowQrCode] = useState(false);
@@ -1806,6 +1816,24 @@ export default function GameCanvas() {
   const [mpError, setMpError] = useState<string | null>(null);
   const mpRef = useRef(mpState);
   mpRef.current = mpState;
+
+  const prevStatusRef = useRef<'MENU' | 'PLAYING' | 'PAUSED' | 'GAME_OVER' | 'VICTORY' | 'LOBBY'>('MENU');
+
+  useEffect(() => {
+    const prev = prevStatusRef.current;
+    const current = uiState.status;
+    prevStatusRef.current = current;
+
+    if (!mpRef.current.roomId) { // only for single-player
+      if ((prev === 'PLAYING' || prev === 'PAUSED') && (current === 'GAME_OVER' || current === 'VICTORY')) {
+        activeSinglePlayerRunIdRef.current += 1;
+        invalidateQuickSave();
+      } else if ((prev === 'PLAYING' || prev === 'PAUSED') && current === 'MENU') {
+        activeSinglePlayerRunIdRef.current += 1;
+        invalidateQuickSave();
+      }
+    }
+  }, [uiState.status, invalidateQuickSave]);
   const socketRef = useRef<Socket | null>(null);
   const lastReceivedGameStateTimeRef = useRef<number>(0);
   const triggerEliminationRef = useRef<((x: number, y: number, colorIdx: number, label: string) => void) | null>(null);
@@ -2695,69 +2723,35 @@ export default function GameCanvas() {
 
   const handleQuickSave = () => {
     if (mpRef.current.roomId) return;
+    if (uiRef.current.status !== 'PAUSED') {
+      console.warn("[Save Lifecycle] Quick save attempted when not paused");
+      return;
+    }
 
-    let previousReadSuccessful = false;
-    let previousValue: string | null = null;
-    let writeAttempted = false;
-
+    let stage = "snapshot construction";
     try {
-      // a. Construct, serialize, size-check, and dry-validate the new save.
       const envelope = constructSaveEnvelope();
+
+      stage = "serialization/size";
       const serialized = serializeSaveEnvelope(envelope);
       const bytes = getByteSize(serialized);
       if (bytes > MAX_SAVE_FILE_BYTES) {
         throw new Error("FILE TOO LARGE");
       }
+
+      stage = "dry validation";
       parseAndReconstructSave(serialized);
 
-      // b. Read the previous slot. Do not ignore an exception while reading.
-      previousValue = localStorage.getItem(QUICK_SAVE_STORAGE_KEY);
-      previousReadSuccessful = true;
+      // Store in memory
+      quickSaveRef.current = {
+        runId: activeSinglePlayerRunIdRef.current,
+        serialized
+      };
 
-      // d. Mark that replacement writing is being attempted.
-      writeAttempted = true;
-
-      // e. Write the new value.
-      localStorage.setItem(QUICK_SAVE_STORAGE_KEY, serialized);
-
-      // f. Read it back and compare it exactly.
-      const readBack = localStorage.getItem(QUICK_SAVE_STORAGE_KEY);
-      if (readBack !== serialized) {
-        throw new Error("VERIFICATION FAILED");
-      }
-
-      // g. Report success only after exact verification.
       setQuickSaveExists(true);
       showPauseFeedback("QUICK SAVE STORED", "success");
-    } catch (err) {
-      console.error("Quick save failed:", err);
-
-      // If an error occurs after writing was attempted:
-      if (writeAttempted) {
-        try {
-          if (previousReadSuccessful && previousValue !== null) {
-            localStorage.setItem(QUICK_SAVE_STORAGE_KEY, previousValue);
-            // verify the restoration when possible
-            const check = localStorage.getItem(QUICK_SAVE_STORAGE_KEY);
-            setQuickSaveExists(check === previousValue);
-          } else {
-            localStorage.removeItem(QUICK_SAVE_STORAGE_KEY);
-            // verify the restoration when possible
-            const check = localStorage.getItem(QUICK_SAVE_STORAGE_KEY);
-            setQuickSaveExists(check !== null);
-          }
-        } catch (restoreErr) {
-          console.error("Failed to restore previous quicksave value:", restoreErr);
-          // update quickSaveExists to reflect the restored state (best-effort)
-          try {
-            const check = localStorage.getItem(QUICK_SAVE_STORAGE_KEY);
-            setQuickSaveExists(check !== null);
-          } catch {
-            // ignore
-          }
-        }
-      }
-
+    } catch (err: any) {
+      console.error(`[Save Lifecycle] Failure during stage "${stage}":`, err);
       showPauseFeedback("QUICK SAVE FAILED", "error");
     }
   };
@@ -3051,30 +3045,76 @@ export default function GameCanvas() {
       recentBlocks,
     };
 
+    let reconstructedSpawners: any[] = [];
     if (version >= 1) {
-      if (!Array.isArray(rawState.spawners) || rawState.spawners.length !== mapDef.spawners.length) {
+      if (!Array.isArray(rawState.spawners) || rawState.spawners.length < 0 || rawState.spawners.length > mapDef.spawners.length) {
         throw new Error("INVALID SAVE FILE");
       }
-    }
 
-    const reconstructedSpawners = mapDef.spawners.map((canonicalSpawner, idx) => {
-      const savedSpawner = Array.isArray(rawState.spawners) ? rawState.spawners[idx] : null;
-      const maxHp = canonicalSpawner.maxHp ?? canonicalSpawner.hp ?? 100;
-      let hp = canonicalSpawner.hp;
-      if (savedSpawner) {
-        if (!isObject(savedSpawner) || !isBoundedNum(savedSpawner.hp, 0, maxHp)) {
+      const matchedCanonicalIndices = new Set<number>();
+      const tempSpawners: any[] = [];
+
+      for (const savedSpawner of rawState.spawners) {
+        if (!isObject(savedSpawner)) {
           throw new Error("INVALID SAVE FILE");
         }
-        hp = Math.floor(savedSpawner.hp);
-      } else if (version >= 1) {
-        throw new Error("INVALID SAVE FILE");
+        if (!isFiniteNum(savedSpawner.x) || !isFiniteNum(savedSpawner.y)) {
+          throw new Error("INVALID SAVE FILE");
+        }
+
+        let matchedIdx = -1;
+        for (let i = 0; i < mapDef.spawners.length; i++) {
+          const canonical = mapDef.spawners[i];
+          if (Math.abs(canonical.x - savedSpawner.x) < 0.1 && Math.abs(canonical.y - savedSpawner.y) < 0.1) {
+            matchedIdx = i;
+            break;
+          }
+        }
+
+        if (matchedIdx === -1) {
+          throw new Error("INVALID SAVE FILE");
+        }
+        if (matchedCanonicalIndices.has(matchedIdx)) {
+          throw new Error("INVALID SAVE FILE");
+        }
+        matchedCanonicalIndices.add(matchedIdx);
+
+        const canonical = mapDef.spawners[matchedIdx];
+        const maxHp = canonical.maxHp ?? canonical.hp ?? 100;
+
+        if (!isFiniteNum(savedSpawner.hp) || savedSpawner.hp > maxHp) {
+          throw new Error("INVALID SAVE FILE");
+        }
+
+        const hp = Math.floor(savedSpawner.hp);
+        if (hp > 0) {
+          tempSpawners.push({
+            ...canonical,
+            hp,
+            maxHp,
+          });
+        }
       }
-      return {
-        ...canonicalSpawner,
-        hp,
-        maxHp,
-      };
-    });
+
+      reconstructedSpawners = tempSpawners;
+    } else {
+      reconstructedSpawners = mapDef.spawners.map((canonicalSpawner, idx) => {
+        const savedSpawner = Array.isArray(rawState.spawners) ? rawState.spawners[idx] : null;
+        const maxHp = canonicalSpawner.maxHp ?? canonicalSpawner.hp ?? 100;
+        let hp = canonicalSpawner.hp;
+        if (savedSpawner) {
+          if (!isObject(savedSpawner) || !isBoundedNum(savedSpawner.hp, 0, maxHp)) {
+            throw new Error("INVALID SAVE FILE");
+          }
+          hp = Math.floor(savedSpawner.hp);
+        }
+        return {
+          ...canonicalSpawner,
+          hp,
+          maxHp,
+        };
+      }).filter(s => (s.hp ?? 0) > 0);
+    }
 
     const reconstructedBlocks = rawBlocks.map((b: any) => {
       if (!isObject(b)) throw new Error("INVALID SAVE FILE");
@@ -3427,13 +3467,26 @@ export default function GameCanvas() {
 
   const handleQuickLoad = () => {
     if (mpRef.current.roomId) return;
+    if (uiRef.current.status !== 'PAUSED') {
+      console.warn("[Save Lifecycle] Quick load attempted when not paused");
+      return;
+    }
 
+    if (!quickSaveRef.current) {
+      showPauseFeedback("INVALID QUICK SAVE", "error");
+      return;
+    }
+
+    if (quickSaveRef.current.runId !== activeSinglePlayerRunIdRef.current) {
+      console.error(`[Save Lifecycle] Quick Load failed: Run ID mismatch. Expected ${activeSinglePlayerRunIdRef.current}, got ${quickSaveRef.current.runId}`);
+      invalidateQuickSave();
+      showPauseFeedback("INVALID QUICK SAVE", "error");
+      return;
+    }
+
+    let stage = "dry validation";
     try {
-      const serialized = localStorage.getItem(QUICK_SAVE_STORAGE_KEY);
-      if (!serialized) {
-        showPauseFeedback("INVALID QUICK SAVE", "error");
-        return;
-      }
+      const serialized = quickSaveRef.current.serialized;
 
       // Enforce MAX_SAVE_FILE_BYTES on the stored string
       const bytes = getByteSize(serialized);
@@ -3446,6 +3499,7 @@ export default function GameCanvas() {
       const reconstructed = parseAndReconstructSave(serialized);
 
       // Now apply successfully
+      stage = "applying a save";
       applyReconstructedSave(reconstructed);
 
       // Close unrelated confirmations if active
@@ -3453,7 +3507,7 @@ export default function GameCanvas() {
 
       showPauseFeedback("QUICK SAVE LOADED", "success");
     } catch (err: any) {
-      console.error("Quick load failed:", err);
+      console.error(`[Save Lifecycle] Failure during stage "${stage}":`, err);
       showPauseFeedback("INVALID QUICK SAVE", "error");
     }
   };
@@ -3470,6 +3524,7 @@ export default function GameCanvas() {
     }
 
     if (file.size > MAX_SAVE_FILE_BYTES) {
+      console.error(`[Save Lifecycle] Failure during stage "serialization/size": file size ${file.size} exceeds maximum`);
       setLoadError("FILE TOO LARGE");
       if (fileInputRef.current) fileInputRef.current.value = "";
       return;
@@ -3478,22 +3533,32 @@ export default function GameCanvas() {
     const reader = new FileReader();
 
     reader.onerror = () => {
+      console.error(`[Save Lifecycle] Failure during stage "serialization/size": FileReader error`);
       setLoadError("INVALID SAVE FILE");
       if (fileInputRef.current) fileInputRef.current.value = "";
     };
 
     reader.onabort = () => {
+      console.error(`[Save Lifecycle] Failure during stage "serialization/size": FileReader aborted`);
       setLoadError("INVALID SAVE FILE");
       if (fileInputRef.current) fileInputRef.current.value = "";
     };
 
     reader.onload = (event) => {
+      let stage = "dry validation";
       try {
         const text = event.target?.result as string;
         const reconstructed = parseAndReconstructSave(text);
+
+        stage = "applying a save";
         applyReconstructedSave(reconstructed);
         setLoadError(null);
+
+        // A downloaded save file is successfully validated and applied, because that loaded file becomes a new run.
+        activeSinglePlayerRunIdRef.current += 1;
+        invalidateQuickSave();
       } catch (err: any) {
+        console.error(`[Save Lifecycle] Failure during stage "${stage}":`, err);
         const allowedMessages = ["INVALID SAVE FILE", "FILE TOO LARGE", "UNSUPPORTED SAVE VERSION", "UNKNOWN MAP"];
         const msg = (err && typeof err.message === 'string' && allowedMessages.includes(err.message))
           ? err.message
@@ -3506,7 +3571,8 @@ export default function GameCanvas() {
 
     try {
       reader.readAsText(file);
-    } catch {
+    } catch (err: any) {
+      console.error(`[Save Lifecycle] Failure during stage "serialization/size": readAsText failed`, err);
       setLoadError("INVALID SAVE FILE");
       if (fileInputRef.current) fileInputRef.current.value = "";
     }
@@ -4099,6 +4165,9 @@ export default function GameCanvas() {
       };
       uiRef.current = finalUi;
       setUiState(finalUi);
+
+      activeSinglePlayerRunIdRef.current += 1;
+      invalidateQuickSave();
     }
 
     return ok;
