@@ -5519,15 +5519,24 @@ export default function GameCanvas() {
     let lastStatus = uiRef.current.status;
 
     const gameLoop = (rawCurrentTime: number) => {
-      let currentTime = rawCurrentTime;
       const STATUS = uiRef.current.status;
-      if (STATUS === 'PAUSED' && pauseStartRef.current !== null) {
-        currentTime = pauseStartRef.current - accumulatedPauseOffsetRef.current;
-      } else {
-        currentTime = rawCurrentTime - accumulatedPauseOffsetRef.current;
-      }
 
-      const dt = STATUS === 'PAUSED' ? 0 : Math.min((currentTime - state.lastTime) / 1000, 0.1); // cap dt at 100ms to prevent glitches
+      const currentTime =
+        STATUS === 'PAUSED' && pauseStartRef.current !== null
+          ? pauseStartRef.current
+          : rawCurrentTime;
+
+      const worldPhaseTime =
+        currentTime - accumulatedPauseOffsetRef.current;
+
+      const dt =
+        STATUS === 'PAUSED'
+          ? 0
+          : Math.max(
+              0,
+              Math.min((currentTime - state.lastTime) / 1000, 0.1)
+            );
+
       state.lastTime = currentTime;
 
       const isLocalMenuOpen = mpRef.current.roomId && (mpMenuOpenRef.current || confirmResignRef.current);
@@ -5918,7 +5927,7 @@ export default function GameCanvas() {
           if (uiRef.current.status === 'PLAYING' && !state.player.dash.active && !isOpeningProtectionActiveLocal(currentTime)) {
             for (const spawner of state.spawners) {
               if (spawner.specialType) {
-                const collision = getBulletRelicCollision(state.player.x, state.player.y, state.player.radius, spawner, currentTime);
+                const collision = getBulletRelicCollision(state.player.x, state.player.y, state.player.radius, spawner, worldPhaseTime);
                 if (collision) {
                   spawnParticles(state.player.x, state.player.y, localColor, 50);
                   state.shake = 20;
@@ -6254,8 +6263,7 @@ export default function GameCanvas() {
             }
           }
           if (enemy.processedZoneKbs.length > 20) {
-            const nowTime = performance.now();
-            enemy.processedZoneKbs = enemy.processedZoneKbs.filter((t: number) => nowTime - t < 10000);
+            enemy.processedZoneKbs = enemy.processedZoneKbs.filter((t: number) => currentTime - t < 10000);
           }
 
           let moveX = 0;
@@ -6398,8 +6406,7 @@ export default function GameCanvas() {
             }
           }
           if (b.processedZoneKbs.length > 20) {
-            const nowTime = performance.now();
-            b.processedZoneKbs = b.processedZoneKbs.filter((t: number) => nowTime - t < 10000);
+            b.processedZoneKbs = b.processedZoneKbs.filter((t: number) => currentTime - t < 10000);
           }
 
           const kbvx = b.kbvx || 0;
@@ -6814,7 +6821,7 @@ export default function GameCanvas() {
           // Special Relic Collisions
           for (const spawner of state.spawners) {
             if (spawner.specialType) {
-              const collision = getBulletRelicCollision(bullet.x, bullet.y, bullet.radius, spawner, currentTime);
+              const collision = getBulletRelicCollision(bullet.x, bullet.y, bullet.radius, spawner, worldPhaseTime);
               if (collision) {
                 const { nx, ny, overlap } = collision;
                 bullet.x += nx * overlap;
@@ -7221,14 +7228,14 @@ export default function GameCanvas() {
       // Update Camera based on player (or keep it still if dead)
       if (STATUS !== 'PAUSED') {
         state.shake = Math.max(0, state.shake - dt * 60);
-      }
-      const shakeX = (Math.random() - 0.5) * state.shake;
-      const shakeY = (Math.random() - 0.5) * state.shake;
+        const shakeX = (Math.random() - 0.5) * state.shake;
+        const shakeY = (Math.random() - 0.5) * state.shake;
 
-      state.camera.x = state.player.x - state.camera.width / 2 + shakeX;
-      state.camera.y = state.player.y - state.camera.height / 2 + shakeY;
-      state.camera.x = clamp(state.camera.x, 0, Math.max(0, MAP_WIDTH - state.camera.width));
-      state.camera.y = clamp(state.camera.y, 0, Math.max(0, MAP_HEIGHT - state.camera.height));
+        state.camera.x = state.player.x - state.camera.width / 2 + shakeX;
+        state.camera.y = state.player.y - state.camera.height / 2 + shakeY;
+        state.camera.x = clamp(state.camera.x, 0, Math.max(0, MAP_WIDTH - state.camera.width));
+        state.camera.y = clamp(state.camera.y, 0, Math.max(0, MAP_HEIGHT - state.camera.height));
+      }
 
       // Clear background
       ctx.fillStyle = '#0a0a0f';
@@ -7292,7 +7299,7 @@ export default function GameCanvas() {
         if (spawner.specialType === 'shield') {
           ctx.save();
           ctx.translate(spawner.x, spawner.y);
-          ctx.rotate(-currentTime * 0.001);
+          ctx.rotate(-worldPhaseTime * 0.001);
           ctx.strokeStyle = '#00f0ff';
           ctx.shadowColor = '#00f0ff';
           ctx.shadowBlur = 15;
@@ -7315,7 +7322,7 @@ export default function GameCanvas() {
         } else if (spawner.specialType === 'kinetic') {
           ctx.save();
           ctx.translate(spawner.x, spawner.y);
-          ctx.rotate(currentTime * 0.0015);
+          ctx.rotate(worldPhaseTime * 0.0015);
           ctx.strokeStyle = '#ffcc00';
           ctx.shadowColor = '#ffcc00';
           ctx.shadowBlur = 15;
@@ -7336,7 +7343,7 @@ export default function GameCanvas() {
         } else if (spawner.specialType === 'singularity') {
           ctx.save();
           ctx.translate(spawner.x, spawner.y);
-          ctx.rotate(currentTime * 0.002);
+          ctx.rotate(worldPhaseTime * 0.002);
           for (let arm = 0; arm < 3; arm++) {
             const startA = (arm * Math.PI * 2) / 3;
             ctx.beginPath();
@@ -7359,7 +7366,7 @@ export default function GameCanvas() {
           ctx.shadowColor = '#e100ff';
           ctx.shadowBlur = 15;
           ctx.beginPath();
-          ctx.arc(0, 0, 20 + Math.sin(currentTime * 0.01) * 3, 0, Math.PI * 2);
+          ctx.arc(0, 0, 20 + Math.sin(worldPhaseTime * 0.01) * 3, 0, Math.PI * 2);
           ctx.fill();
           ctx.stroke();
           ctx.restore();
@@ -7367,7 +7374,7 @@ export default function GameCanvas() {
           ctx.save();
           ctx.translate(spawner.x, spawner.y);
 
-          const orbitAngle = currentTime * 0.0008;
+          const orbitAngle = worldPhaseTime * 0.0008;
           ctx.rotate(orbitAngle);
 
           const rects = [
@@ -7402,7 +7409,7 @@ export default function GameCanvas() {
         } else if (spawner.specialType === 'crystal') {
           ctx.save();
           ctx.translate(spawner.x, spawner.y);
-          ctx.rotate(currentTime * 0.0006);
+          ctx.rotate(worldPhaseTime * 0.0006);
           ctx.strokeStyle = '#00ffaa';
           ctx.shadowColor = '#00ffaa';
           ctx.shadowBlur = 15;
@@ -7435,7 +7442,7 @@ export default function GameCanvas() {
         ctx.save();
 
         // Outer glow/pulse gets faster in Hard Mode as remaining spawners decrease
-        const pulse = Math.sin(currentTime / (200 / spawnerSpeedScale)) * 5;
+        const pulse = Math.sin(worldPhaseTime / (200 / spawnerSpeedScale)) * 5;
         const glowColor = state.hardMode ? '#ff3300' : '#ff00ff';
         const fillGlow = state.hardMode ? 'rgba(255, 51, 0, 0.15)' : 'rgba(255, 0, 255, 0.15)';
         ctx.fillStyle = fillGlow;
@@ -7452,7 +7459,7 @@ export default function GameCanvas() {
         ctx.strokeStyle = isImpossibleMode ? '#E5E7EB' : glowColor;
         ctx.lineWidth = 3;
         ctx.beginPath();
-        const hexRot = currentTime / (1500 / spawnerSpeedScale);
+        const hexRot = worldPhaseTime / (1500 / spawnerSpeedScale);
         for (let i = 0; i < 6; i++) {
           const hexAngle = (i * Math.PI) / 3 + hexRot;
           const px = spawner.x + Math.cos(hexAngle) * spawner.radius;
@@ -7465,7 +7472,7 @@ export default function GameCanvas() {
         ctx.stroke();
 
         // Inner core
-        const corePulse = Math.sin(currentTime / (150 / spawnerSpeedScale)) * 3;
+        const corePulse = Math.sin(worldPhaseTime / (150 / spawnerSpeedScale)) * 3;
         ctx.fillStyle = glowColor;
         ctx.beginPath();
         ctx.arc(spawner.x, spawner.y, spawner.radius * 0.4 + corePulse, 0, Math.PI * 2);
@@ -7663,7 +7670,7 @@ export default function GameCanvas() {
         ) continue;
 
         const pDef = PLAYER_COLORS[zone.colorIdx !== undefined ? zone.colorIdx : 0] || PLAYER_COLORS[0];
-        const age = performance.now() - zone.spawnTime;
+        const age = currentTime - zone.spawnTime;
         const progress = Math.min(1, age / 300);
         const pulse = 1 + Math.sin(age * 0.005) * 0.05;
 
@@ -7811,7 +7818,7 @@ export default function GameCanvas() {
           block.y - block.size / 2 > state.camera.y + state.camera.height
         ) continue;
 
-        const ageMs = performance.now() - (block.createdAt || performance.now());
+        const ageMs = currentTime - (block.createdAt || currentTime);
         const spawnDuration = 300;
         let scale = 1;
 
@@ -8120,7 +8127,7 @@ export default function GameCanvas() {
         const h = 36;
         const w = textW + padX * 2;
 
-        const glowPulse = Math.sin(currentTime * Math.PI * 2 / 2200) * 0.5 + 0.5;
+        const glowPulse = Math.sin(worldPhaseTime * Math.PI * 2 / 2200) * 0.5 + 0.5;
         const accentColor = state.hardMode ? '#ff3300' : '#D946EF';
 
         let tagX = canvas.width / 2;
@@ -8279,7 +8286,7 @@ export default function GameCanvas() {
           } else {
             const spawnerColor = state.hardMode ? '#ff3300' : '#ff00ff';
             const anim = spawnerPointerAnimRef.current;
-            const now = performance.now();
+            const now = currentTime;
 
             let drawX: number | null = null;
             let drawY: number | null = null;
@@ -8398,28 +8405,30 @@ export default function GameCanvas() {
       }
 
       // Update cooldown UI
-      let specialCooldown = 0;
-      const now = performance.now();
-      if (state.player.dash.active) {
-         specialCooldown = Math.max(0, Math.ceil((state.player.dash.endTime - now) / 1000));
-      } else if (state.player.dash.endTime > 0) {
-         specialCooldown = Math.max(0, Math.ceil((DASH_COOLDOWN - (now - state.player.dash.endTime)) / 1000));
-      } else {
-         specialCooldown = Math.max(0, Math.ceil((DASH_COOLDOWN - (now - state.player.dash.lastTime)) / 1000));
-      }
+      if (STATUS !== 'PAUSED') {
+        let specialCooldown = 0;
+        const now = currentTime;
+        if (state.player.dash.active) {
+           specialCooldown = Math.max(0, Math.ceil((state.player.dash.endTime - now) / 1000));
+        } else if (state.player.dash.endTime > 0) {
+           specialCooldown = Math.max(0, Math.ceil((DASH_COOLDOWN - (now - state.player.dash.endTime)) / 1000));
+        } else {
+           specialCooldown = Math.max(0, Math.ceil((DASH_COOLDOWN - (now - state.player.dash.lastTime)) / 1000));
+        }
 
-      let buildCooldown = 0;
-      if (state.player.build.active) {
-         buildCooldown = Math.max(0, Math.ceil((state.player.build.endTime - now) / 1000));
-      } else if (state.player.build.endTime > 0) {
-         buildCooldown = Math.max(0, Math.ceil((BUILD_COOLDOWN - (now - state.player.build.endTime)) / 1000));
-      }
+        let buildCooldown = 0;
+        if (state.player.build.active) {
+           buildCooldown = Math.max(0, Math.ceil((state.player.build.endTime - now) / 1000));
+        } else if (state.player.build.endTime > 0) {
+           buildCooldown = Math.max(0, Math.ceil((BUILD_COOLDOWN - (now - state.player.build.endTime)) / 1000));
+        }
 
-      if (uiRef.current.buttonCounters.special !== specialCooldown || uiRef.current.buttonCounters.build !== buildCooldown) {
-         setUiState(prev => {
-           uiRef.current = { ...prev, buttonCounters: { special: specialCooldown, build: buildCooldown } };
-           return uiRef.current;
-         });
+        if (uiRef.current.buttonCounters.special !== specialCooldown || uiRef.current.buttonCounters.build !== buildCooldown) {
+           setUiState(prev => {
+             uiRef.current = { ...prev, buttonCounters: { special: specialCooldown, build: buildCooldown } };
+             return uiRef.current;
+           });
+        }
       }
 
       animationFrameId = requestAnimationFrame(gameLoop);
