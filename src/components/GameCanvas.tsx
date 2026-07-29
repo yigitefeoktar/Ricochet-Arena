@@ -3047,7 +3047,11 @@ export default function GameCanvas() {
 
     let reconstructedSpawners: any[] = [];
     if (version >= 1) {
-      if (!Array.isArray(rawState.spawners) || rawState.spawners.length < 0 || rawState.spawners.length > mapDef.spawners.length) {
+      if (!Array.isArray(rawState.spawners) || !isBoundedNum(rawState.spawners.length, 0, mapDef.spawners.length)) {
+        throw new Error("INVALID SAVE FILE");
+      }
+
+      if (cleanGameMode === 'impossible' && rawState.spawners.length !== mapDef.spawners.length) {
         throw new Error("INVALID SAVE FILE");
       }
 
@@ -3082,7 +3086,11 @@ export default function GameCanvas() {
         const canonical = mapDef.spawners[matchedIdx];
         const maxHp = canonical.maxHp ?? canonical.hp ?? 100;
 
-        if (!isFiniteNum(savedSpawner.hp) || savedSpawner.hp > maxHp) {
+        if (!isBoundedNum(savedSpawner.hp, 0, maxHp)) {
+          throw new Error("INVALID SAVE FILE");
+        }
+
+        if (cleanGameMode === 'impossible' && savedSpawner.hp !== maxHp) {
           throw new Error("INVALID SAVE FILE");
         }
 
