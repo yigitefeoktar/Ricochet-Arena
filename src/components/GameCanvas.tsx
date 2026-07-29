@@ -1948,6 +1948,9 @@ export default function GameCanvas() {
     targetWorldY: number;
   } | null>(null);
 
+  const pauseStartRef = useRef<number | null>(null);
+  const accumulatedPauseOffsetRef = useRef<number>(0);
+
   const handleSpawnerDestroyed = useCallback((destroyedSpawner: { x: number; y: number; radius?: number }) => {
     const state = stateRef.current;
     const canvas = canvasRef.current;
@@ -2430,9 +2433,114 @@ export default function GameCanvas() {
     }
   };
 
+  const shiftSinglePlayerTimestamps = (pauseDuration: number) => {
+    const state = stateRef.current;
+
+    state.player.lastShoot += pauseDuration;
+    state.player.dash.lastTime += pauseDuration;
+    if (state.player.dash.endTime !== 0) {
+      state.player.dash.endTime += pauseDuration;
+    }
+    state.player.build.lastTime += pauseDuration;
+    if (state.player.build.endTime !== 0) {
+      state.player.build.endTime += pauseDuration;
+    }
+
+    if (state.player.recentBlocks) {
+      for (const block of state.player.recentBlocks) {
+        block.timestamp += pauseDuration;
+      }
+    }
+
+    if (state.player.processedZoneKbs) {
+      for (let i = 0; i < state.player.processedZoneKbs.length; i++) {
+        state.player.processedZoneKbs[i] += pauseDuration;
+      }
+    }
+
+    state.lastEnemySpawn += pauseDuration;
+
+    if (state.enemies) {
+      for (const enemy of state.enemies) {
+        enemy.lastShoot += pauseDuration;
+        if (enemy.processedZoneKbs) {
+          for (let i = 0; i < enemy.processedZoneKbs.length; i++) {
+            enemy.processedZoneKbs[i] += pauseDuration;
+          }
+        }
+      }
+    }
+
+    if (state.bullets) {
+      for (const bullet of state.bullets) {
+        bullet.spawnTime += pauseDuration;
+      }
+    }
+
+    if (state.bouncers) {
+      for (const bouncer of state.bouncers) {
+        bouncer.lastDirChange += pauseDuration;
+        bouncer.lastMultiply += pauseDuration;
+        if (bouncer.processedZoneKbs) {
+          for (let i = 0; i < bouncer.processedZoneKbs.length; i++) {
+            bouncer.processedZoneKbs[i] += pauseDuration;
+          }
+        }
+      }
+    }
+
+    if (state.zones) {
+      for (const zone of state.zones) {
+        zone.spawnTime += pauseDuration;
+      }
+    }
+
+    if (state.blocks) {
+      for (const block of state.blocks) {
+        if (block.createdAt !== undefined) {
+          block.createdAt += pauseDuration;
+        }
+      }
+    }
+
+    if (spawnerPointerAnimRef.current) {
+      spawnerPointerAnimRef.current.startTime += pauseDuration;
+    }
+  };
+
+  const beginSinglePlayerPause = () => {
+    if (mpRef.current.roomId) return;
+    if (uiRef.current.status !== 'PLAYING') return;
+
+    pauseStartRef.current = performance.now();
+    releaseAllInputs();
+
+    const newUi = { ...uiRef.current, status: 'PAUSED' as const };
+    uiRef.current = newUi;
+    setUiState(newUi);
+  };
+
+  const resumeSinglePlayerFromPause = () => {
+    if (mpRef.current.roomId) return;
+    if (uiRef.current.status !== 'PAUSED') return;
+
+    if (pauseStartRef.current === null) return;
+    const pauseDuration = performance.now() - pauseStartRef.current;
+
+    shiftSinglePlayerTimestamps(pauseDuration);
+    accumulatedPauseOffsetRef.current += pauseDuration;
+    pauseStartRef.current = null;
+    stateRef.current.lastTime = performance.now();
+    releaseAllInputs();
+
+    const newUi = { ...uiRef.current, status: 'PLAYING' as const };
+    uiRef.current = newUi;
+    setUiState(newUi);
+  };
+
   const constructSaveEnvelope = () => {
     const now = Date.now();
-    const perfNow = performance.now();
+    const perfNow = pauseStartRef.current !== null ? pauseStartRef.current : performance.now();
 
     const state = stateRef.current;
     const ui = uiRef.current;
@@ -3296,6 +3404,10 @@ export default function GameCanvas() {
     const liveState = stateRef.current;
     Object.assign(liveState, reconstructed.cleanState);
 
+    // Treat the newly loaded PAUSED state as beginning a new pause at the load time
+    accumulatedPauseOffsetRef.current = 0;
+    pauseStartRef.current = performance.now();
+
     // Clear pulse and spawner-pointer effects
     if (pulseTimeoutRef.current) {
       clearTimeout(pulseTimeoutRef.current);
@@ -3739,6 +3851,8 @@ export default function GameCanvas() {
     state.lastTime = performance.now();
     state.lastEnemySpawn = performance.now();
     state.enemySpawnRate = 3000;
+    pauseStartRef.current = null;
+    accumulatedPauseOffsetRef.current = 0;
     releaseAllInputs();
 
     const uiHardMode = isMultiplayer ? (selectedGameMode !== 'normal') : isHardMode;
@@ -3949,6 +4063,8 @@ export default function GameCanvas() {
       state.lastTime = performance.now();
       state.lastEnemySpawn = performance.now();
       state.enemySpawnRate = 3000;
+      pauseStartRef.current = null;
+      accumulatedPauseOffsetRef.current = 0;
 
       // Single-player leftovers cleanup
       state.multiplayerPlayers = {};
@@ -4965,21 +5081,11 @@ export default function GameCanvas() {
           }
         } else {
           if (uiRef.current.status === 'PAUSED' && confirmResignRef.current) return;
-          setUiState(prev => {
-             let newStatus = prev.status;
-             if (prev.status === 'PLAYING') {
-               newStatus = 'PAUSED';
-               releaseAllInputs();
-             } else if (prev.status === 'PAUSED') {
-               newStatus = 'PLAYING';
-             }
-
-             if (newStatus !== prev.status) {
-               uiRef.current = { ...prev, status: newStatus };
-               return uiRef.current;
-             }
-             return prev;
-          });
+          if (uiRef.current.status === 'PLAYING') {
+            beginSinglePlayerPause();
+          } else if (uiRef.current.status === 'PAUSED') {
+            resumeSinglePlayerFromPause();
+          }
         }
         return;
       }
@@ -5304,13 +5410,8 @@ export default function GameCanvas() {
 
     const handleBlurOrHide = () => {
       releaseAllInputs();
-      stateRef.current.lastTime = performance.now();
-
-      const isMultiplayer = !!mpRef.current.roomId;
-      if (!isMultiplayer && uiRef.current.status === 'PLAYING') {
-        const newStatus = 'PAUSED';
-        uiRef.current = { ...uiRef.current, status: newStatus };
-        setUiState(prev => (prev.status === 'PLAYING' ? { ...prev, status: newStatus } : prev));
+      if (!mpRef.current.roomId && uiRef.current.status === 'PLAYING') {
+        beginSinglePlayerPause();
       }
     };
 
@@ -5417,11 +5518,18 @@ export default function GameCanvas() {
     let animationFrameId: number;
     let lastStatus = uiRef.current.status;
 
-    const gameLoop = (currentTime: number) => {
-      const dt = Math.min((currentTime - state.lastTime) / 1000, 0.1); // cap dt at 100ms to prevent glitches
+    const gameLoop = (rawCurrentTime: number) => {
+      let currentTime = rawCurrentTime;
+      const STATUS = uiRef.current.status;
+      if (STATUS === 'PAUSED' && pauseStartRef.current !== null) {
+        currentTime = pauseStartRef.current - accumulatedPauseOffsetRef.current;
+      } else {
+        currentTime = rawCurrentTime - accumulatedPauseOffsetRef.current;
+      }
+
+      const dt = STATUS === 'PAUSED' ? 0 : Math.min((currentTime - state.lastTime) / 1000, 0.1); // cap dt at 100ms to prevent glitches
       state.lastTime = currentTime;
 
-      const STATUS = uiRef.current.status;
       const isLocalMenuOpen = mpRef.current.roomId && (mpMenuOpenRef.current || confirmResignRef.current);
       if (STATUS !== 'PLAYING' || isLocalMenuOpen) {
         releaseAllInputs();
@@ -7017,7 +7125,8 @@ export default function GameCanvas() {
         } // End of Host ONLY logic
       } // End of shouldRunUpdates (particles, trails, shockwaves, floating text always update)
 
-      // Update Particles
+      if (STATUS !== 'PAUSED') {
+        // Update Particles
         for (let i = state.particles.length - 1; i >= 0; i--) {
           const p = state.particles[i];
           p.life += dt;
@@ -7061,6 +7170,7 @@ export default function GameCanvas() {
             }
           }
         }
+      }
 
       // Host evaluates match state
       if (mpRef.current.isConnected && mpRef.current.roomId && mpRef.current.isHost) {
@@ -7109,7 +7219,9 @@ export default function GameCanvas() {
       // --- RENDERING --- (Always render, even if GAME_OVER)
 
       // Update Camera based on player (or keep it still if dead)
-      state.shake = Math.max(0, state.shake - dt * 60);
+      if (STATUS !== 'PAUSED') {
+        state.shake = Math.max(0, state.shake - dt * 60);
+      }
       const shakeX = (Math.random() - 0.5) * state.shake;
       const shakeY = (Math.random() - 0.5) * state.shake;
 
@@ -9492,14 +9604,11 @@ export default function GameCanvas() {
                           setConfirmResign(false);
                           confirmResignRef.current = false;
                         } else {
-                          setUiState(prev => {
-                            const newStatus = prev.status === 'PAUSED' ? 'PLAYING' : 'PAUSED';
-                            if (newStatus === 'PAUSED') {
-                              releaseAllInputs();
-                            }
-                            uiRef.current = { ...prev, status: newStatus };
-                            return uiRef.current;
-                          });
+                          if (uiRef.current.status === 'PLAYING') {
+                            beginSinglePlayerPause();
+                          } else if (uiRef.current.status === 'PAUSED') {
+                            resumeSinglePlayerFromPause();
+                          }
                           setConfirmResign(false);
                         }
                       }}
@@ -9522,10 +9631,7 @@ export default function GameCanvas() {
                           mpMenuOpenRef.current = false;
                         } else {
                           releaseAllInputs();
-                          setUiState(prev => {
-                            uiRef.current = { ...prev, status: 'PAUSED' };
-                            return uiRef.current;
-                          });
+                          beginSinglePlayerPause();
                           setConfirmResign(true);
                         }
                       }}
@@ -9572,10 +9678,7 @@ export default function GameCanvas() {
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
-                      setUiState(prev => {
-                        uiRef.current = { ...prev, status: 'PLAYING' };
-                        return uiRef.current;
-                      });
+                      resumeSinglePlayerFromPause();
                     }}
                     className="h-12 w-full bg-[#FBBF24] border-2 border-[#FBBF24] text-[#080A0F] font-mono font-black tracking-widest uppercase text-xs sm:text-sm shadow-[0_0_6px_rgba(251,191,36,0.30),0_0_14px_rgba(251,191,36,0.12)] hover:bg-[#FBBF24]/90 hover:border-[#FBBF24]/90 active:scale-[0.98] transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#FBBF24] focus-visible:ring-offset-black"
                   >
