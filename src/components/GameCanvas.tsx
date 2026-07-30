@@ -8560,7 +8560,7 @@ export default function GameCanvas() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="absolute inset-0 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm z-[70] pointer-events-auto"
+            className="absolute inset-0 bg-black/80 flex items-center justify-center p-4 backdrop-blur-sm z-[50] pointer-events-auto"
           >
             <AnimatePresence mode="wait">
               {!isMapSelectOpen ? (
@@ -8678,7 +8678,7 @@ export default function GameCanvas() {
                     <div className="flex-1 flex flex-col min-h-0 border border-[#00f0ff]/30 bg-black/40 overflow-hidden">
                       <div
                         ref={mapListRef}
-                        className="flex-1 overflow-y-auto p-2 grid grid-cols-1 sm:grid-cols-2 gap-2 content-start [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
+                        className="flex-1 overflow-y-auto p-2 grid grid-cols-2 gap-2 content-start [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
                       >
                         {Object.entries(MAPS)
                           .sort((a, b) => {
@@ -8858,7 +8858,7 @@ export default function GameCanvas() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="absolute inset-0 z-[70] flex flex-col items-center justify-center p-4 sm:p-8 bg-[#050508]/80 backdrop-blur-md pointer-events-auto"
+            className={`absolute inset-0 ${isMpMapSelectOpen ? 'z-[50]' : 'z-[70]'} flex flex-col items-center justify-center p-4 sm:p-8 bg-[#050508]/80 backdrop-blur-md pointer-events-auto`}
           >
             <AnimatePresence mode="wait">
               {isMpMapSelectOpen ? (
@@ -8891,7 +8891,7 @@ export default function GameCanvas() {
                     <div className="flex-1 flex flex-col min-h-0 border border-[#ffcc00]/30 bg-black/40 overflow-hidden">
                       <div
                         ref={mpMapListRef}
-                        className="flex-1 overflow-y-auto p-2 grid grid-cols-1 sm:grid-cols-2 gap-2 content-start [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
+                        className="flex-1 overflow-y-auto p-2 grid grid-cols-2 gap-2 content-start [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
                       >
                         {Object.entries(MAPS)
                           .sort((a, b) => {
