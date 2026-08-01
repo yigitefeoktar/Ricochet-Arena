@@ -9322,7 +9322,7 @@ export default function GameCanvas() {
                             <div className="w-full h-full min-h-0 bg-black/40 border border-white/10 p-3 grid grid-cols-[128px_minmax(0,1fr)] sm:grid-cols-[144px_minmax(0,1fr)] grid-rows-[minmax(0,1fr)_auto] gap-x-3 gap-y-2 overflow-hidden">
                               <div className="contents">
                                 {/* Miniature SVG Preview */}
-                                <div className="w-full aspect-square self-center row-span-2 border border-[#ffcc00]/30 bg-[#050508] relative overflow-hidden flex items-center justify-center shadow-[inset_0_0_8px_rgba(255,204,0,0.1)]">
+                                <div className="w-full aspect-square self-center border border-[#ffcc00]/30 bg-[#050508] relative overflow-hidden flex items-center justify-center shadow-[inset_0_0_8px_rgba(255,204,0,0.1)]">
                                   <svg
                                     viewBox="0 0 3000 3000"
                                     className="w-full h-full aspect-square"
@@ -9398,7 +9398,7 @@ export default function GameCanvas() {
                               <button
                                 disabled={!mpState.isHost || isMatchSettingsUpdatePending}
                                 onClick={handleOpenMpMapSelector}
-                                className={`col-start-2 row-start-2 w-full py-1.5 border font-mono font-bold text-[9px] sm:text-[10px] tracking-widest uppercase text-center select-none transition-all ${
+                                className={`col-span-2 row-start-2 justify-self-center w-[240px] sm:w-[260px] max-w-full py-1.5 border font-mono font-bold text-[9px] sm:text-[10px] tracking-widest uppercase text-center select-none transition-all ${
                                   mpState.isHost && !isMatchSettingsUpdatePending
                                     ? 'bg-[#ffcc00]/20 border-[#ffcc00] text-[#ffcc00] hover:bg-[#ffcc00]/30 hover:shadow-[0_0_10px_rgba(255,204,0,0.3)] cursor-pointer font-black'
                                     : 'bg-[#ffcc00]/10 border-[#ffcc00]/20 text-[#ffcc00]/40 cursor-not-allowed opacity-60 font-bold'
