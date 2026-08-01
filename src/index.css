@@ -18,6 +18,8 @@ html, body, #root {
   overscroll-behavior: none;
   -webkit-user-select: none;
   user-select: none;
+  background-color: #050508;
+  color-scheme: dark;
 }
 
 input, textarea {
