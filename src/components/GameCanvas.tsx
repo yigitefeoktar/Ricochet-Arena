@@ -9298,7 +9298,7 @@ export default function GameCanvas() {
                         ];
 
                         return (
-                          <div className="w-full h-full flex flex-col justify-between overflow-y-auto pr-0.5 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+                          <div className="w-full h-full grid grid-rows-[auto_minmax(0,1fr)_auto] gap-3 overflow-y-auto pr-0.5 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
                             {/* Top Header Row inside MATCH tab */}
                             <div className="flex items-center justify-between w-full mb-1.5 shrink-0">
                               <span className="text-[#ffcc00]/80 font-mono font-bold tracking-[0.15em] text-[10px] uppercase">
@@ -9319,10 +9319,10 @@ export default function GameCanvas() {
                             </div>
 
                             {/* Map Preview Card */}
-                            <div className="w-full bg-black/40 border border-white/10 p-2 flex flex-col gap-2 shrink-0">
+                            <div className="w-full h-full min-h-0 bg-black/40 border border-white/10 p-2 sm:p-3 flex flex-col justify-center gap-2 overflow-hidden">
                               <div className="flex items-center gap-2.5">
                                 {/* Miniature SVG Preview */}
-                                <div className="w-20 h-20 shrink-0 border border-[#ffcc00]/30 bg-[#050508] relative overflow-hidden flex items-center justify-center shadow-[inset_0_0_8px_rgba(255,204,0,0.1)]">
+                                <div className="w-24 h-24 sm:w-28 sm:h-28 shrink-0 border border-[#ffcc00]/30 bg-[#050508] relative overflow-hidden flex items-center justify-center shadow-[inset_0_0_8px_rgba(255,204,0,0.1)]">
                                   <svg
                                     viewBox="0 0 3000 3000"
                                     className="w-full h-full aspect-square"
