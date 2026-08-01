@@ -9846,37 +9846,66 @@ export default function GameCanvas() {
             )}
 
             {confirmResign && (
-              <div className="absolute inset-0 bg-black/80 pointer-events-auto z-[70] flex flex-col items-center justify-center backdrop-blur-md p-4 overflow-y-auto">
-                 <h2 className="text-3xl sm:text-6xl md:text-7xl font-black text-[#ff003c] tracking-tighter drop-shadow-[0_0_15px_rgba(255,0,60,0.8)] mb-4 sm:mb-8 text-center px-4" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>
-                   CONFIRM RESIGNATION?
-                 </h2>
-                 <div className="flex gap-4 sm:gap-8 flex-col sm:flex-row">
-                   <button
-                     onPointerDown={(e) => {
-                       e.stopPropagation();
-                       setConfirmResign(false);
-                       setMpMenuOpen(false);
-                       mpMenuOpenRef.current = false;
-                       stateRef.current.shake = 20;
-                       if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
-                       cancelPendingMatchSettingsUpdate();
-                       setMpState(prev => ({ ...prev, roomId: null, isHost: false, error: '' }));
-                       setUiState(prev => ({ ...prev, status: 'MENU' }));
-                     }}
-                     className="px-8 py-4 bg-[#0a0000] border-2 border-[#ff003c] text-[#ff003c] font-black tracking-[0.2em] text-xl sm:text-2xl uppercase transition-all duration-200 hover:bg-[#ff003c] hover:text-white hover:shadow-[0_0_30px_rgba(255,0,60,0.8)] active:scale-95"
-                   >
-                     ACTUALIZE
-                   </button>
-                   <button
-                     onPointerDown={(e) => {
+              <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="quit-confirmation-title"
+                className="absolute inset-0 bg-black/80 pointer-events-auto z-[70] flex flex-col items-center justify-center backdrop-blur-md p-4 overflow-y-auto"
+              >
+                <h2
+                  id="quit-confirmation-title"
+                  className="text-[36px] sm:text-[48px] md:text-[68px] font-black text-[#F5F7FF] uppercase drop-shadow-[0_0_10px_rgba(255,255,255,0.28)] leading-none text-center"
+                  style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}
+                >
+                  QUIT TO MENU?
+                </h2>
+                <p className="text-[#FF003C]/75 font-mono text-[11px] md:text-[13px] tracking-[0.2em] uppercase mt-2 sm:mt-3 text-center">
+                  {mpState.roomId ? 'YOU WILL LEAVE THE ACTIVE MATCH' : 'CURRENT RUN WILL BE LOST'}
+                </p>
+                <div className="flex flex-col gap-3 mt-5 sm:mt-11 w-[calc(100vw-48px)] max-w-[280px]">
+                  <button
+                    type="button"
+                    onPointerDown={(e) => {
                       e.stopPropagation();
                       setConfirmResign(false);
                     }}
-                     className="px-8 py-4 bg-[#0a0000] border-2 border-[#00f0ff] text-[#00f0ff] font-black tracking-[0.2em] text-xl sm:text-2xl uppercase transition-all duration-200 hover:bg-[#00f0ff] hover:text-black hover:shadow-[0_0_30px_rgba(0,240,255,0.8)] active:scale-95"
-                   >
-                     DECLINE
-                   </button>
-                 </div>
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setConfirmResign(false);
+                    }}
+                    className="h-12 w-full bg-[#FBBF24] border-2 border-[#FBBF24] text-[#080A0F] font-mono font-black tracking-widest uppercase text-xs sm:text-sm shadow-[0_0_6px_rgba(251,191,36,0.30),0_0_14px_rgba(251,191,36,0.12)] hover:bg-[#FBBF24]/90 hover:border-[#FBBF24]/90 active:scale-[0.98] transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#FBBF24] focus-visible:ring-offset-black"
+                  >
+                    KEEP PLAYING
+                  </button>
+                  <button
+                    type="button"
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      setConfirmResign(false);
+                      setMpMenuOpen(false);
+                      mpMenuOpenRef.current = false;
+                      stateRef.current.shake = 20;
+                      if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
+                      cancelPendingMatchSettingsUpdate();
+                      setMpState(prev => ({ ...prev, roomId: null, isHost: false, error: '' }));
+                      setUiState(prev => ({ ...prev, status: 'MENU' }));
+                    }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setConfirmResign(false);
+                      setMpMenuOpen(false);
+                      mpMenuOpenRef.current = false;
+                      stateRef.current.shake = 20;
+                      if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
+                      cancelPendingMatchSettingsUpdate();
+                      setMpState(prev => ({ ...prev, roomId: null, isHost: false, error: '' }));
+                      setUiState(prev => ({ ...prev, status: 'MENU' }));
+                    }}
+                    className="h-12 w-full bg-transparent border-2 border-[#FF003C] text-[#FF003C] hover:bg-[#FF003C]/10 font-mono font-black tracking-widest uppercase text-xs sm:text-sm active:scale-[0.98] transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#FF003C] focus-visible:ring-offset-black"
+                  >
+                    QUIT TO MENU
+                  </button>
+                </div>
               </div>
             )}
 
