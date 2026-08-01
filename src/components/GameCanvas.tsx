@@ -8656,7 +8656,7 @@ export default function GameCanvas() {
                   animate={{ opacity: 1, scale: 1, y: 0 }}
                   exit={{ opacity: 0, scale: 0.96, y: -15 }}
                   transition={{ duration: 0.2, ease: "easeOut" }}
-                  className="relative w-full max-w-4xl max-h-[90vh] flex flex-col bg-[#0d0f1b]/95 border-2 border-[#00f0ff] shadow-[0_0_30px_rgba(0,240,255,0.15)] ring-1 ring-black pointer-events-auto overflow-hidden"
+                  className="relative w-full max-w-4xl max-h-[90dvh] flex flex-col bg-[#0d0f1b]/95 border-2 border-[#00f0ff] shadow-[0_0_30px_rgba(0,240,255,0.15)] ring-1 ring-black pointer-events-auto overflow-hidden"
                 >
                   {/* Header */}
                   <div className="shrink-0 p-3 md:p-5 flex justify-between items-center border-b border-[#00f0ff]/30 bg-gradient-to-b from-[#00f0ff]/10 to-transparent">
@@ -8868,7 +8868,7 @@ export default function GameCanvas() {
                   animate={{ opacity: 1, scale: 1, y: 0 }}
                   exit={{ opacity: 0, scale: 0.96, y: -15 }}
                   transition={{ duration: 0.2, ease: "easeOut" }}
-                  className="relative w-full max-w-4xl max-h-[90vh] flex flex-col bg-[#0d0f1b]/95 border-2 border-[#ffcc00] shadow-[0_0_30px_rgba(255,204,0,0.2)] ring-1 ring-black pointer-events-auto overflow-hidden z-[80]"
+                  className="relative w-full max-w-4xl max-h-[90dvh] flex flex-col bg-[#0d0f1b]/95 border-2 border-[#ffcc00] shadow-[0_0_30px_rgba(255,204,0,0.2)] ring-1 ring-black pointer-events-auto overflow-hidden z-[80]"
                 >
                   {/* Header */}
                   <div className="shrink-0 p-3 md:p-5 flex justify-between items-center border-b border-[#ffcc00]/30 bg-gradient-to-b from-[#ffcc00]/10 to-transparent">
