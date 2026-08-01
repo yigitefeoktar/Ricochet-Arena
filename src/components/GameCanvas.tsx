@@ -9867,11 +9867,19 @@ export default function GameCanvas() {
                     type="button"
                     onPointerDown={(e) => {
                       e.stopPropagation();
-                      setConfirmResign(false);
                     }}
                     onClick={(e) => {
                       e.stopPropagation();
                       setConfirmResign(false);
+                      confirmResignRef.current = false;
+
+                      if (mpState.roomId) {
+                        setMpMenuOpen(false);
+                        mpMenuOpenRef.current = false;
+                        releaseAllInputs();
+                      } else {
+                        resumeSinglePlayerFromPause();
+                      }
                     }}
                     className="h-12 w-full bg-[#FBBF24] border-2 border-[#FBBF24] text-[#080A0F] font-mono font-black tracking-widest uppercase text-xs sm:text-sm shadow-[0_0_6px_rgba(251,191,36,0.30),0_0_14px_rgba(251,191,36,0.12)] hover:bg-[#FBBF24]/90 hover:border-[#FBBF24]/90 active:scale-[0.98] transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#FBBF24] focus-visible:ring-offset-black"
                   >
@@ -9881,18 +9889,11 @@ export default function GameCanvas() {
                     type="button"
                     onPointerDown={(e) => {
                       e.stopPropagation();
-                      setConfirmResign(false);
-                      setMpMenuOpen(false);
-                      mpMenuOpenRef.current = false;
-                      stateRef.current.shake = 20;
-                      if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
-                      cancelPendingMatchSettingsUpdate();
-                      setMpState(prev => ({ ...prev, roomId: null, isHost: false, error: '' }));
-                      setUiState(prev => ({ ...prev, status: 'MENU' }));
                     }}
                     onClick={(e) => {
                       e.stopPropagation();
                       setConfirmResign(false);
+                      confirmResignRef.current = false;
                       setMpMenuOpen(false);
                       mpMenuOpenRef.current = false;
                       stateRef.current.shake = 20;
