@@ -9128,7 +9128,7 @@ export default function GameCanvas() {
                     </button>
                   </div>
 
-                  <div className="w-full min-h-[220px] sm:h-[345px] flex flex-col mb-3 sm:mb-5 shrink">
+                  <div className="w-full h-[345px] min-h-[345px] flex flex-col mb-3 sm:mb-5 shrink-0 overflow-hidden">
                     {activeLobbyTab === 'invite' ? (
                       <div className="w-full h-full flex flex-col justify-between">
                         <div>
