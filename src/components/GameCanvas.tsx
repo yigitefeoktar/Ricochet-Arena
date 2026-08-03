@@ -10403,15 +10403,6 @@ export default function GameCanvas() {
             <motion.div
               initial={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, y: 6 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: shouldReduceMotion ? 0 : 0.2, delay: shouldReduceMotion ? 0 : 0.1 }}
-              className="text-xs sm:text-sm font-mono text-[#00f0ff] font-bold tracking-widest uppercase mb-3 bg-[#00f0ff]/10 py-1.5 px-3 border border-[#00f0ff]/30 inline-block rounded-sm"
-            >
-              OBJECTIVE // ALL SPAWNERS DESTROYED
-            </motion.div>
-
-            <motion.div
-              initial={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
               transition={{ duration: shouldReduceMotion ? 0 : 0.2, delay: shouldReduceMotion ? 0 : 0.15 }}
               className="flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-8 text-xs sm:text-sm font-mono text-[#00f0ff]/80 mb-4 sm:mb-6 md:mb-10 uppercase tracking-widest border-t border-b border-[#00f0ff]/30 py-3 sm:py-6"
             >
@@ -10471,15 +10462,6 @@ export default function GameCanvas() {
             >
               ANNIHILATED
             </motion.h2>
-
-            <motion.div
-              initial={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, y: 6 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: shouldReduceMotion ? 0 : 0.2, delay: shouldReduceMotion ? 0 : 0.1 }}
-              className="text-xs sm:text-sm font-mono text-[#ff003c] font-bold tracking-widest uppercase mb-3 bg-[#ff003c]/10 py-1.5 px-3 border border-[#ff003c]/30 inline-block rounded-sm"
-            >
-              CAUSE // {endReason?.label || 'ARENA ELIMINATION'}
-            </motion.div>
 
             <motion.div
               initial={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, y: 6 }}
@@ -10597,11 +10579,8 @@ export default function GameCanvas() {
                   >
                     ANNIHILATED
                   </motion.h2>
-                  <div className="text-xs sm:text-sm font-mono text-[#ff005c] font-bold tracking-widest uppercase mb-2 bg-[#ff005c]/10 py-1.5 px-3 border border-[#ff005c]/30 inline-block rounded-sm">
-                    CAUSE // {endReason?.label || 'ARENA ELIMINATION'}
-                  </div>
                   <p className="text-[10px] sm:text-xs font-mono text-zinc-400 tracking-wider uppercase mb-6 sm:mb-8 border-b border-white/5 pb-4">
-                    SPECTATING LIVE MATCH...
+                    YOU WERE ELIMINATED // SPECTATING LIVE MATCH...
                   </p>
                 </>
               )}
