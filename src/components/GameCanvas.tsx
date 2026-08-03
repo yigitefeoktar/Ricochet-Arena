@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
-import { motion, AnimatePresence } from 'motion/react';
+import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import { io, Socket } from 'socket.io-client';
 import { Copy, Check, Shuffle } from 'lucide-react';
 import {
@@ -1691,6 +1691,15 @@ function calculateEdgePointerPosition(
   return { x: ix, y: iy, angle };
 }
 
+export interface EndReasonData {
+  outcome: 'defeat' | 'victory';
+  causeCode: string;
+  label: string;
+  impactPos: { x: number; y: number } | null;
+  markerColor: string;
+  startTimestamp: number;
+}
+
 export default function GameCanvas() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
@@ -1808,6 +1817,108 @@ export default function GameCanvas() {
   const [uiState, setUiState] = useState<{ status: 'MENU' | 'PLAYING' | 'PAUSED' | 'GAME_OVER' | 'VICTORY' | 'LOBBY'; score: number; deviceType: 'desktop' | 'mobile'; activeTool: 'weapon' | 'special' | 'build'; blocks: number; spawnersLeft: number; mapId: string; hardMode: boolean; gameMode: GameMode; buttonCounters: { special: number; build: number } }>({ status: 'MENU', score: 0, deviceType: 'desktop', activeTool: 'special', blocks: 50, spawnersLeft: 5, mapId: 'medium', hardMode: false, gameMode: 'normal', buttonCounters: { special: 0, build: 0 } });
   const uiRef = useRef(uiState);
   uiRef.current = uiState;
+
+  const shouldReduceMotion = useReducedMotion();
+
+  const [presentationStage, setPresentationStage] = useState<'idle' | 'impact' | 'results'>('idle');
+  const presentationStageRef = useRef<'idle' | 'impact' | 'results'>('idle');
+  presentationStageRef.current = presentationStage;
+
+  const [endReason, setEndReason] = useState<EndReasonData | null>(null);
+  const endReasonRef = useRef<EndReasonData | null>(null);
+  endReasonRef.current = endReason;
+
+  const presentationTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const resetEndPresentation = useCallback(() => {
+    if (presentationTimerRef.current) {
+      clearTimeout(presentationTimerRef.current);
+      presentationTimerRef.current = null;
+    }
+    setPresentationStage('idle');
+    presentationStageRef.current = 'idle';
+    setEndReason(null);
+    endReasonRef.current = null;
+  }, []);
+
+  const triggerEndPresentation = useCallback((reason: EndReasonData) => {
+    if (presentationStageRef.current !== 'idle' || endReasonRef.current !== null) {
+      return;
+    }
+
+    setEndReason(reason);
+    endReasonRef.current = reason;
+
+    if (shouldReduceMotion) {
+      setPresentationStage('results');
+      presentationStageRef.current = 'results';
+    } else {
+      setPresentationStage('impact');
+      presentationStageRef.current = 'impact';
+
+      if (presentationTimerRef.current) {
+        clearTimeout(presentationTimerRef.current);
+      }
+      presentationTimerRef.current = setTimeout(() => {
+        setPresentationStage('results');
+        presentationStageRef.current = 'results';
+        presentationTimerRef.current = null;
+      }, 650);
+    }
+  }, [shouldReduceMotion]);
+
+  useEffect(() => {
+    return () => {
+      if (presentationTimerRef.current) {
+        clearTimeout(presentationTimerRef.current);
+        presentationTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const currentStatus = uiState.status;
+    if ((currentStatus === 'GAME_OVER' || currentStatus === 'VICTORY') && presentationStage === 'idle' && !endReason) {
+      if (currentStatus === 'VICTORY') {
+        triggerEndPresentation({
+          outcome: 'victory',
+          causeCode: 'spawner_destroyed',
+          label: 'ALL SPAWNERS DESTROYED',
+          impactPos: null,
+          markerColor: '#00f0ff',
+          startTimestamp: performance.now(),
+        });
+      } else {
+        triggerEndPresentation({
+          outcome: 'defeat',
+          causeCode: 'arena_elimination',
+          label: 'ARENA ELIMINATION',
+          impactPos: null,
+          markerColor: '#ff003c',
+          startTimestamp: performance.now(),
+        });
+      }
+    }
+  }, [uiState.status, presentationStage, endReason, triggerEndPresentation]);
+
+  const resolvePlayerName = useCallback((ownerId?: string): string | null => {
+    if (!ownerId || ownerId === 'local') return null;
+    const myId = socketRef.current?.id;
+    if (myId && ownerId === myId) return null;
+
+    let name: string | undefined = undefined;
+    if (stateRef.current.multiplayerPlayers && stateRef.current.multiplayerPlayers[ownerId]) {
+      name = stateRef.current.multiplayerPlayers[ownerId].name;
+    }
+    if (!name && mpRef.current && mpRef.current.roomId && stateRef.current.matchPlayers && stateRef.current.matchPlayers[ownerId]) {
+      name = stateRef.current.matchPlayers[ownerId].name;
+    }
+
+    if (!name) return null;
+    const trimmed = name.trim();
+    if (trimmed === ownerId || trimmed.length === 0) return null;
+    return trimmed;
+  }, []);
 
   const playerProfileRef = useRef(playerProfile);
   playerProfileRef.current = playerProfile;
@@ -3445,6 +3556,7 @@ export default function GameCanvas() {
   };
 
   const applyReconstructedSave = (reconstructed: ReturnType<typeof parseAndReconstructSave>) => {
+    resetEndPresentation();
     // Set activeWalls from the reconstructed map
     activeWalls = reconstructed.walls;
 
@@ -3830,6 +3942,7 @@ export default function GameCanvas() {
     gameModeOrHardMode?: GameMode | boolean,
     spawnAssignments?: Record<string, { x: number; y: number }>
   ): boolean => {
+    resetEndPresentation();
     const dType = deviceType || uiRef.current.deviceType;
     const selectedMapId = mapId || uiRef.current.mapId;
     const isMultiplayer = !!mpRef.current.roomId;
@@ -5972,6 +6085,14 @@ export default function GameCanvas() {
               const dx = state.player.x - enemy.x;
               const dy = state.player.y - enemy.y;
               if (dx * dx + dy * dy < (state.player.radius + enemy.radius) ** 2) {
+                triggerEndPresentation({
+                  outcome: 'defeat',
+                  causeCode: 'enemy_contact',
+                  label: 'ENEMY CONTACT',
+                  impactPos: { x: enemy.x, y: enemy.y },
+                  markerColor: '#ff003c',
+                  startTimestamp: performance.now(),
+                });
                 spawnParticles(state.player.x, state.player.y, localColor, 50);
                 state.shake = 20;
                 setUiState(prev => {
@@ -5989,6 +6110,14 @@ export default function GameCanvas() {
               const pdx = state.player.x - b.x;
               const pdy = state.player.y - b.y;
               if (pdx * pdx + pdy * pdy < (state.player.radius + b.radius) ** 2) {
+                triggerEndPresentation({
+                  outcome: 'defeat',
+                  causeCode: 'bouncer_collision',
+                  label: 'BOUNCER COLLISION',
+                  impactPos: { x: b.x, y: b.y },
+                  markerColor: '#ff003c',
+                  startTimestamp: performance.now(),
+                });
                 spawnParticles(state.player.x, state.player.y, localColor, 50);
                 state.shake = 20;
                 setUiState(prev => {
@@ -6006,6 +6135,16 @@ export default function GameCanvas() {
               if (spawner.specialType) {
                 const collision = getBulletRelicCollision(state.player.x, state.player.y, state.player.radius, spawner, worldPhaseTime);
                 if (collision) {
+                  const impactX = state.player.x - collision.nx * state.player.radius;
+                  const impactY = state.player.y - collision.ny * state.player.radius;
+                  triggerEndPresentation({
+                    outcome: 'defeat',
+                    causeCode: 'relic_collision',
+                    label: 'RELIC COLLISION',
+                    impactPos: { x: impactX, y: impactY },
+                    markerColor: '#ff003c',
+                    startTimestamp: performance.now(),
+                  });
                   spawnParticles(state.player.x, state.player.y, localColor, 50);
                   state.shake = 20;
                   setUiState(prev => {
@@ -6033,6 +6172,26 @@ export default function GameCanvas() {
                 const dx = state.player.x - bullet.x;
                 const dy = state.player.y - bullet.y;
                 if (!state.player.dash.active && dx * dx + dy * dy < (state.player.radius + bullet.radius * 0.5) ** 2) {
+                  let label = 'HOSTILE FIRE';
+                  let causeCode = 'hostile_fire';
+                  if (bullet.isNeutral) {
+                    label = 'NEUTRAL RICOCHET';
+                    causeCode = 'neutral_ricochet';
+                  } else if (bullet.isPlayer) {
+                    causeCode = 'player_shot';
+                    const attackerName = resolvePlayerName(bullet.ownerId);
+                    label = attackerName ? `SHOT BY ${attackerName}` : 'SHOT BY RIVAL PLAYER';
+                  }
+
+                  triggerEndPresentation({
+                    outcome: 'defeat',
+                    causeCode,
+                    label,
+                    impactPos: { x: bullet.x, y: bullet.y },
+                    markerColor: '#ff003c',
+                    startTimestamp: performance.now(),
+                  });
+
                   spawnParticles(state.player.x, state.player.y, localColor, 50);
                   state.shake = 20;
                   setUiState(prev => {
@@ -6550,6 +6709,14 @@ export default function GameCanvas() {
               } else if (!isOpeningProtectionActiveForHost(currentTime)) {
                 const localColorIdx = playerProfileRef.current.colorIdx;
                 const localColor = PLAYER_COLORS[localColorIdx]?.n || '#00f0ff';
+                triggerEndPresentation({
+                  outcome: 'defeat',
+                  causeCode: 'bouncer_collision',
+                  label: 'BOUNCER COLLISION',
+                  impactPos: { x: b.x, y: b.y },
+                  markerColor: '#ff003c',
+                  startTimestamp: performance.now(),
+                });
                 spawnParticles(state.player.x, state.player.y, localColor, 50);
                 state.shake = 20;
                 setUiState(prev => {
@@ -7134,7 +7301,15 @@ export default function GameCanvas() {
                       uiRef.current = { ...prev, score: newScore, blocks: newBlocks, spawnersLeft: state.spawners.length };
                       // Check win condition
                       if (state.spawners.length === 0 && !mpRef.current.roomId) {
-                         uiRef.current.status = 'VICTORY';
+                        triggerEndPresentation({
+                          outcome: 'victory',
+                          causeCode: 'spawner_destroyed',
+                          label: 'ALL SPAWNERS DESTROYED',
+                          impactPos: { x: spawner.x, y: spawner.y },
+                          markerColor: '#00f0ff',
+                          startTimestamp: performance.now(),
+                        });
+                        uiRef.current.status = 'VICTORY';
                       }
                       return uiRef.current;
                     });
@@ -7145,7 +7320,15 @@ export default function GameCanvas() {
                     setUiState(prev => {
                       uiRef.current = { ...prev, spawnersLeft: state.spawners.length };
                       if (state.spawners.length === 0 && !mpRef.current.roomId) {
-                         uiRef.current.status = 'VICTORY';
+                        triggerEndPresentation({
+                          outcome: 'victory',
+                          causeCode: 'spawner_destroyed',
+                          label: 'ALL SPAWNERS DESTROYED',
+                          impactPos: { x: spawner.x, y: spawner.y },
+                          markerColor: '#00f0ff',
+                          startTimestamp: performance.now(),
+                        });
+                        uiRef.current.status = 'VICTORY';
                       }
                       return uiRef.current;
                     });
@@ -7166,7 +7349,26 @@ export default function GameCanvas() {
               const dy = state.player.y - bullet.y;
               const isProtected = state.player.dash.active || isOpeningProtectionActiveForHost(currentTime);
               if (!isProtected && dx * dx + dy * dy < (state.player.radius + bullet.radius * 0.5) ** 2) {
-                // Game Over!
+                let label = 'HOSTILE FIRE';
+                let causeCode = 'hostile_fire';
+                if (bullet.isNeutral) {
+                  label = 'NEUTRAL RICOCHET';
+                  causeCode = 'neutral_ricochet';
+                } else if (bullet.isPlayer) {
+                  causeCode = 'player_shot';
+                  const attackerName = resolvePlayerName(bullet.ownerId);
+                  label = attackerName ? `SHOT BY ${attackerName}` : 'SHOT BY RIVAL PLAYER';
+                }
+
+                triggerEndPresentation({
+                  outcome: 'defeat',
+                  causeCode,
+                  label,
+                  impactPos: { x: bullet.x, y: bullet.y },
+                  markerColor: '#ff003c',
+                  startTimestamp: performance.now(),
+                });
+
                 spawnParticles(state.player.x, state.player.y, hostColor, 50);
                 state.shake = 20;
                 setUiState(prev => {
@@ -8184,6 +8386,62 @@ export default function GameCanvas() {
           ctx.restore();
         }
         ctx.globalAlpha = 1.0;
+      }
+
+      if (presentationStageRef.current === 'impact' && endReasonRef.current && endReasonRef.current.impactPos) {
+        const reason = endReasonRef.current;
+        const pos = reason.impactPos;
+        const now = performance.now();
+        const elapsed = (now - reason.startTimestamp) / 1000;
+        const progress = Math.min(1, Math.max(0, elapsed / 0.65));
+        const alpha = Math.max(0, 1 - progress);
+
+        if (alpha > 0) {
+          ctx.save();
+          ctx.globalAlpha = alpha;
+          ctx.strokeStyle = reason.markerColor || '#ff003c';
+          ctx.fillStyle = reason.markerColor || '#ff003c';
+          ctx.lineWidth = 2;
+
+          const playerX = state.player.x;
+          const playerY = state.player.y;
+          if (Math.hypot(pos.x - playerX, pos.y - playerY) > 5) {
+            ctx.beginPath();
+            ctx.setLineDash([6, 4]);
+            ctx.moveTo(playerX, playerY);
+            ctx.lineTo(pos.x, pos.y);
+            ctx.stroke();
+            ctx.setLineDash([]);
+          }
+
+          const r1 = 12 + progress * 48;
+          const r2 = 6 + progress * 24;
+          ctx.beginPath();
+          ctx.arc(pos.x, pos.y, r1, 0, Math.PI * 2);
+          ctx.stroke();
+
+          ctx.beginPath();
+          ctx.arc(pos.x, pos.y, r2, 0, Math.PI * 2);
+          ctx.stroke();
+
+          const d = 6;
+          ctx.beginPath();
+          ctx.moveTo(pos.x, pos.y - d);
+          ctx.lineTo(pos.x + d, pos.y);
+          ctx.lineTo(pos.x, pos.y + d);
+          ctx.lineTo(pos.x - d, pos.y);
+          ctx.closePath();
+          ctx.fill();
+
+          ctx.beginPath();
+          ctx.moveTo(pos.x - 12, pos.y);
+          ctx.lineTo(pos.x + 12, pos.y);
+          ctx.moveTo(pos.x, pos.y - 12);
+          ctx.lineTo(pos.x, pos.y + 12);
+          ctx.stroke();
+
+          ctx.restore();
+        }
       }
 
       ctx.restore(); // Reset transform to draw fixed UI
@@ -10027,16 +10285,100 @@ export default function GameCanvas() {
         );
       })()}
 
-      {uiState.status === 'VICTORY' && !mpState.roomId && (
-        <div className="absolute inset-0 bg-[#00f0ff]/90 flex flex-col items-center justify-center p-3 sm:p-6 text-center backdrop-blur-md z-[70] overflow-y-auto">
-          <div className="max-w-xl w-full bg-[#0a0000] border-2 border-[#00f0ff] p-4 sm:p-8 md:p-12 shadow-[10px_10px_0_#00f0ff] max-h-[92vh] overflow-y-auto">
-            <h2 className="text-4xl sm:text-6xl md:text-7xl font-black text-[#00f0ff] mb-2 sm:mb-4 tracking-tighter" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>VICTORY</h2>
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-8 text-xs sm:text-sm font-mono text-[#00f0ff]/80 mb-4 sm:mb-6 md:mb-10 uppercase tracking-widest border-t border-b border-[#00f0ff]/30 py-3 sm:py-6">
+      {presentationStage === 'impact' && endReason && (
+        <div className="absolute inset-0 pointer-events-none z-[65] flex flex-col items-center justify-center overflow-hidden">
+          <motion.div
+            initial={shouldReduceMotion ? { opacity: 0 } : { opacity: 0.8 }}
+            animate={{ opacity: 0 }}
+            transition={{ duration: shouldReduceMotion ? 0 : 0.45, ease: 'easeOut' }}
+            className={`absolute inset-0 ${
+              endReason.outcome === 'victory' ? 'bg-[#00f0ff]/20' : 'bg-[#ff003c]/25'
+            }`}
+          />
+
+          <div
+            className="absolute inset-0"
+            style={{
+              background: 'radial-gradient(circle, rgba(0,0,0,0) 35%, rgba(0,0,0,0.85) 100%)',
+            }}
+          />
+
+          {endReason.outcome === 'victory' && !shouldReduceMotion && (
+            <motion.div
+              initial={{ scale: 0.8, opacity: 0.6 }}
+              animate={{ scale: 1.5, opacity: 0 }}
+              transition={{ duration: 0.6, ease: 'easeOut' }}
+              className="absolute w-96 h-96 rounded-full border-2 border-[#00f0ff]/50 shadow-[0_0_50px_#00f0ff]"
+            />
+          )}
+
+          <motion.div
+            initial={shouldReduceMotion ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 0.9, y: 10 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            transition={{ duration: shouldReduceMotion ? 0 : 0.2 }}
+            className="relative z-10 flex flex-col items-center text-center px-6 py-4 rounded-xl backdrop-blur-md bg-black/75 border border-white/10 shadow-2xl"
+          >
+            <div className={`text-xs sm:text-sm font-extrabold tracking-widest uppercase mb-1 ${
+              endReason.outcome === 'victory' ? 'text-[#00f0ff]' : 'text-[#ff003c]'
+            }`}>
+              {endReason.outcome === 'victory' ? 'OBJECTIVE COMPLETE' : 'ELIMINATION CAUSE'}
+            </div>
+            <div className="text-xl sm:text-3xl font-black tracking-wider text-white uppercase drop-shadow-md" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>
+              {endReason.label}
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {uiState.status === 'VICTORY' && !mpState.roomId && presentationStage === 'results' && (
+        <motion.div
+          initial={shouldReduceMotion ? { opacity: 1 } : { opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: shouldReduceMotion ? 0 : 0.18 }}
+          className="absolute inset-0 bg-[#00f0ff]/90 flex flex-col items-center justify-center p-3 sm:p-6 text-center backdrop-blur-md z-[70] overflow-y-auto"
+        >
+          <motion.div
+            initial={shouldReduceMotion ? { opacity: 1, scale: 1, y: 0 } : { opacity: 0, scale: 0.94, y: 16 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            transition={{ duration: shouldReduceMotion ? 0 : 0.25, ease: 'easeOut' }}
+            className="max-w-xl w-full bg-[#0a0000] border-2 border-[#00f0ff] p-4 sm:p-8 md:p-12 shadow-[10px_10px_0_#00f0ff] max-h-[92vh] overflow-y-auto"
+          >
+            <motion.h2
+              initial={shouldReduceMotion ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 1.15, y: -4 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              transition={{ duration: shouldReduceMotion ? 0 : 0.15, delay: shouldReduceMotion ? 0 : 0.05 }}
+              className="text-4xl sm:text-6xl md:text-7xl font-black text-[#00f0ff] mb-2 sm:mb-4 tracking-tighter uppercase"
+              style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}
+            >
+              VICTORY
+            </motion.h2>
+
+            <motion.div
+              initial={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: shouldReduceMotion ? 0 : 0.2, delay: shouldReduceMotion ? 0 : 0.1 }}
+              className="text-xs sm:text-sm font-mono text-[#00f0ff] font-bold tracking-widest uppercase mb-3 bg-[#00f0ff]/10 py-1.5 px-3 border border-[#00f0ff]/30 inline-block rounded-sm"
+            >
+              OBJECTIVE // ALL SPAWNERS DESTROYED
+            </motion.div>
+
+            <motion.div
+              initial={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: shouldReduceMotion ? 0 : 0.2, delay: shouldReduceMotion ? 0 : 0.15 }}
+              className="flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-8 text-xs sm:text-sm font-mono text-[#00f0ff]/80 mb-4 sm:mb-6 md:mb-10 uppercase tracking-widest border-t border-b border-[#00f0ff]/30 py-3 sm:py-6"
+            >
               <div>FINAL SCORE: <span className="text-white font-bold text-xl sm:text-2xl ml-2">{uiState.score}</span></div>
               <div className="hidden sm:block w-px h-6 bg-[#00f0ff]/30"></div>
               <div>SPAWNERS LEFT: <span className="text-white font-bold text-xl sm:text-2xl ml-2">{uiState.spawnersLeft}/{(MAPS[uiState.mapId] || MAPS.medium).spawners.length}</span></div>
-            </div>
-            <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center">
+            </motion.div>
+
+            <motion.div
+              initial={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: shouldReduceMotion ? 0 : 0.2, delay: shouldReduceMotion ? 0 : 0.22 }}
+              className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center"
+            >
               <button
                 onClick={() => {
                   startFreshSinglePlayerRun(uiState.mapId, uiState.gameMode);
@@ -10055,20 +10397,59 @@ export default function GameCanvas() {
               >
                 MAIN MENU
               </button>
-            </div>
-          </div>
-        </div>
+            </motion.div>
+          </motion.div>
+        </motion.div>
       )}
 
-      {uiState.status === 'GAME_OVER' && !mpState.roomId && (
-        <div className="absolute inset-0 bg-red-950/90 flex flex-col items-center justify-center p-3 sm:p-6 text-center backdrop-blur-md z-[70] overflow-y-auto">
-          <div className="max-w-xl w-full bg-[#0a0000] border-2 border-[#ff003c] p-4 sm:p-8 md:p-12 shadow-[10px_10px_0_#ff003c] max-h-[92vh] overflow-y-auto">
-            <h2 className="text-4xl sm:text-6xl md:text-7xl font-black text-[#ff003c] mb-2 sm:mb-4 tracking-tighter" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>ANNIHILATED</h2>
-            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-8 text-xs sm:text-sm font-mono text-red-200/80 mb-4 sm:mb-6 md:mb-10 uppercase tracking-widest border-t border-b border-red-500/30 py-3 sm:py-6">
+      {uiState.status === 'GAME_OVER' && !mpState.roomId && presentationStage === 'results' && (
+        <motion.div
+          initial={shouldReduceMotion ? { opacity: 1 } : { opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: shouldReduceMotion ? 0 : 0.18 }}
+          className="absolute inset-0 bg-red-950/90 flex flex-col items-center justify-center p-3 sm:p-6 text-center backdrop-blur-md z-[70] overflow-y-auto"
+        >
+          <motion.div
+            initial={shouldReduceMotion ? { opacity: 1, scale: 1, y: 0 } : { opacity: 0, scale: 0.94, y: 16 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            transition={{ duration: shouldReduceMotion ? 0 : 0.25, ease: 'easeOut' }}
+            className="max-w-xl w-full bg-[#0a0000] border-2 border-[#ff003c] p-4 sm:p-8 md:p-12 shadow-[10px_10px_0_#ff003c] max-h-[92vh] overflow-y-auto"
+          >
+            <motion.h2
+              initial={shouldReduceMotion ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 1.15, y: -4 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              transition={{ duration: shouldReduceMotion ? 0 : 0.15, delay: shouldReduceMotion ? 0 : 0.05 }}
+              className="text-4xl sm:text-6xl md:text-7xl font-black text-[#ff003c] mb-2 sm:mb-4 tracking-tighter uppercase"
+              style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}
+            >
+              ANNIHILATED
+            </motion.h2>
+
+            <motion.div
+              initial={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: shouldReduceMotion ? 0 : 0.2, delay: shouldReduceMotion ? 0 : 0.1 }}
+              className="text-xs sm:text-sm font-mono text-[#ff003c] font-bold tracking-widest uppercase mb-3 bg-[#ff003c]/10 py-1.5 px-3 border border-[#ff003c]/30 inline-block rounded-sm"
+            >
+              CAUSE // {endReason?.label || 'ARENA ELIMINATION'}
+            </motion.div>
+
+            <motion.div
+              initial={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: shouldReduceMotion ? 0 : 0.2, delay: shouldReduceMotion ? 0 : 0.15 }}
+              className="flex flex-col sm:flex-row items-center justify-center gap-3 sm:gap-8 text-xs sm:text-sm font-mono text-red-200/80 mb-4 sm:mb-6 md:mb-10 uppercase tracking-widest border-t border-b border-red-500/30 py-3 sm:py-6"
+            >
               <div>FINAL SCORE: <span className="text-white font-bold text-xl sm:text-2xl ml-2">{uiState.score}</span></div>
               <div>SPAWNERS LEFT: <span className="text-white font-bold text-xl sm:text-2xl ml-2">{uiState.spawnersLeft}/{(MAPS[uiState.mapId] || MAPS.medium).spawners.length}</span></div>
-            </div>
-            <div className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center">
+            </motion.div>
+
+            <motion.div
+              initial={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, y: 6 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: shouldReduceMotion ? 0 : 0.2, delay: shouldReduceMotion ? 0 : 0.22 }}
+              className="flex flex-col sm:flex-row gap-3 sm:gap-4 justify-center"
+            >
               <button
                 onClick={() => {
                   startFreshSinglePlayerRun(uiState.mapId, uiState.gameMode);
@@ -10088,43 +10469,91 @@ export default function GameCanvas() {
               >
                 MAIN MENU
               </button>
-            </div>
-          </div>
-        </div>
+            </motion.div>
+          </motion.div>
+        </motion.div>
       )}
 
-      {mpState.roomId && (uiState.status === 'GAME_OVER' || uiState.status === 'VICTORY') && (() => {
+      {mpState.roomId && (uiState.status === 'GAME_OVER' || uiState.status === 'VICTORY') && presentationStage === 'results' && (() => {
         const { list: standings, isWholeGameEnded } = getMultiplayerStandings();
         const myName = playerProfileRef.current.name || 'YOU';
         const myId = socketRef.current?.id || 'local';
 
+        const myIndex = standings.findIndex(p => p.id === myId);
+        const myRank = myIndex >= 0 ? myIndex + 1 : 1;
+        const isLocalWinner = isWholeGameEnded && (stateRef.current.winnerId === myId || (standings.length > 0 && standings[0].id === myId));
+
         return (
-          <div className="absolute inset-0 bg-[#0a0000]/95 flex flex-col items-center justify-center p-2 sm:p-6 text-center backdrop-blur-md z-[70] overflow-y-auto">
-            <div className="max-w-xl w-full bg-[#0d0404] border-2 border-[#ff005c] p-5 sm:p-8 md:p-10 shadow-[10px_10px_0_#ff005c] my-auto">
+          <motion.div
+            initial={shouldReduceMotion ? { opacity: 1 } : { opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: shouldReduceMotion ? 0 : 0.18 }}
+            className="absolute inset-0 bg-[#0a0000]/95 flex flex-col items-center justify-center p-2 sm:p-6 text-center backdrop-blur-md z-[70] overflow-y-auto"
+          >
+            <motion.div
+              initial={shouldReduceMotion ? { opacity: 1, scale: 1, y: 0 } : { opacity: 0, scale: 0.94, y: 16 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              transition={{ duration: shouldReduceMotion ? 0 : 0.25, ease: 'easeOut' }}
+              className="max-w-xl w-full bg-[#0d0404] border-2 border-[#ff005c] p-5 sm:p-8 md:p-10 shadow-[10px_10px_0_#ff005c] my-auto"
+            >
 
               {/* GOAL display */}
               <div className="text-[10px] font-mono text-[#ffcc00] tracking-[0.2em] uppercase mb-1 font-bold">
                 GOAL: GET THE HIGHEST SCORE BEFORE YOU DIE
               </div>
 
-              {/* Title based on state */}
+              {/* Title and outcome lines based on Requirement 8 */}
               {isWholeGameEnded ? (
-                <h2 className="text-4xl sm:text-5xl md:text-6xl font-black text-[#ffcc00] mb-2 tracking-tighter uppercase drop-shadow-[0_0_15px_rgba(255,204,0,0.5)]" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>
-                  MATCH CONCLUDED
-                </h2>
+                isLocalWinner ? (
+                  <>
+                    <motion.h2
+                      initial={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, scale: 1.15 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      transition={{ duration: shouldReduceMotion ? 0 : 0.15 }}
+                      className="text-4xl sm:text-5xl md:text-6xl font-black text-[#00f0ff] mb-2 tracking-tighter uppercase drop-shadow-[0_0_15px_rgba(0,240,255,0.5)]"
+                      style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}
+                    >
+                      VICTORY
+                    </motion.h2>
+                    <div className="text-xs sm:text-sm font-mono text-[#00f0ff] font-bold tracking-widest uppercase mb-4 bg-[#00f0ff]/10 py-1.5 px-3 border border-[#00f0ff]/30 inline-block rounded-sm">
+                      REASON // HIGHEST SCORE
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <motion.h2
+                      initial={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, scale: 1.15 }}
+                      animate={{ opacity: 1, scale: 1 }}
+                      transition={{ duration: shouldReduceMotion ? 0 : 0.15 }}
+                      className="text-4xl sm:text-5xl md:text-6xl font-black text-[#ff005c] mb-2 tracking-tighter uppercase drop-shadow-[0_0_15px_rgba(255,0,92,0.5)]"
+                      style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}
+                    >
+                      MATCH LOST
+                    </motion.h2>
+                    <div className="text-xs sm:text-sm font-mono text-[#ff005c] font-bold tracking-widest uppercase mb-4 bg-[#ff005c]/10 py-1.5 px-3 border border-[#ff005c]/30 inline-block rounded-sm">
+                      FINISHED #{myRank} // HIGHEST SCORE
+                    </div>
+                  </>
+                )
               ) : (
-                <h2 className="text-4xl sm:text-5xl md:text-6xl font-black text-[#ff005c] mb-2 tracking-tighter uppercase drop-shadow-[0_0_15px_rgba(255,0,92,0.5)]" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>
-                  ANNIHILATED
-                </h2>
+                <>
+                  <motion.h2
+                    initial={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, scale: 1.15 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={{ duration: shouldReduceMotion ? 0 : 0.15 }}
+                    className="text-4xl sm:text-5xl md:text-6xl font-black text-[#ff005c] mb-2 tracking-tighter uppercase drop-shadow-[0_0_15px_rgba(255,0,92,0.5)]"
+                    style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}
+                  >
+                    ANNIHILATED
+                  </motion.h2>
+                  <div className="text-xs sm:text-sm font-mono text-[#ff005c] font-bold tracking-widest uppercase mb-2 bg-[#ff005c]/10 py-1.5 px-3 border border-[#ff005c]/30 inline-block rounded-sm">
+                    CAUSE // {endReason?.label || 'ARENA ELIMINATION'}
+                  </div>
+                  <p className="text-[10px] sm:text-xs font-mono text-zinc-400 tracking-wider uppercase mb-6 sm:mb-8 border-b border-white/5 pb-4">
+                    SPECTATING LIVE MATCH...
+                  </p>
+                </>
               )}
-
-              {/* Subtitle explanation */}
-              <p className="text-[10px] sm:text-xs font-mono text-zinc-400 tracking-wider uppercase mb-6 sm:mb-8 border-b border-white/5 pb-4">
-                {isWholeGameEnded
-                  ? "MATCH CONCLUDED // FINAL STANDINGS"
-                  : "YOU WERE ELIMINATED // SPECTATING LIVE MATCH..."
-                }
-              </p>
 
               {/* FINAL RUN indicator in Spectator Card */}
               {!isWholeGameEnded && currentMatchPhase === 'FINAL_RUN' && (
@@ -10138,7 +10567,12 @@ export default function GameCanvas() {
               )}
 
               {/* Leaderboard Table */}
-              <div className="w-full mb-6 sm:mb-8 space-y-2 max-h-[220px] overflow-y-auto pr-1">
+              <motion.div
+                initial={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: shouldReduceMotion ? 0 : 0.2, delay: shouldReduceMotion ? 0 : 0.1 }}
+                className="w-full mb-6 sm:mb-8 space-y-2 max-h-[220px] overflow-y-auto pr-1"
+              >
                 {standings.map((p, idx) => {
                   const isMe = p.id === myId;
                   const colorDef = PLAYER_COLORS[p.colorIdx] || PLAYER_COLORS[0];
@@ -10194,10 +10628,15 @@ export default function GameCanvas() {
                     </div>
                   );
                 })}
-              </div>
+              </motion.div>
 
               {/* Action Buttons */}
-              <div className="flex flex-col gap-3">
+              <motion.div
+                initial={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: shouldReduceMotion ? 0 : 0.2, delay: shouldReduceMotion ? 0 : 0.2 }}
+                className="flex flex-col gap-3"
+              >
                 {mpError && (
                   <div className="text-[#FF005C] font-mono text-xs sm:text-sm font-bold text-center uppercase">
                     {mpError}
@@ -10256,10 +10695,9 @@ export default function GameCanvas() {
                     </button>
                   </div>
                 )}
-              </div>
-
-            </div>
-          </div>
+              </motion.div>
+            </motion.div>
+          </motion.div>
         );
       })()}
 
