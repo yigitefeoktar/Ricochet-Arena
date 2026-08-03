@@ -1859,11 +1859,13 @@ export default function GameCanvas() {
       if (presentationTimerRef.current) {
         clearTimeout(presentationTimerRef.current);
       }
+      const isScoreBased = reason.causeCode === 'highest_score' || reason.causeCode === 'outscored' || reason.causeCode === 'match_concluded';
+      const delay = isScoreBased ? 200 : 650;
       presentationTimerRef.current = setTimeout(() => {
         setPresentationStage('results');
         presentationStageRef.current = 'results';
         presentationTimerRef.current = null;
-      }, 650);
+      }, delay);
     }
   }, [shouldReduceMotion]);
 
@@ -1983,7 +1985,7 @@ export default function GameCanvas() {
   }, [uiState.status, invalidateQuickSave]);
   const socketRef = useRef<Socket | null>(null);
   const lastReceivedGameStateTimeRef = useRef<number>(0);
-  const triggerEliminationRef = useRef<((x: number, y: number, colorIdx: number, label: string) => void) | null>(null);
+  const triggerEliminationRef = useRef<((x: number, y: number, colorIdx: number, label?: string) => void) | null>(null);
   const bannerShowingRef = useRef(false);
 
   const isMobileRef = useRef(typeof window !== 'undefined' && /Mobi|Android|iPhone|iPad|iPod|Windows Phone/i.test(navigator.userAgent));
@@ -5678,7 +5680,7 @@ export default function GameCanvas() {
     window.addEventListener('focus', handleWindowFocus);
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
-    const triggerEliminationAnimation = (x: number, y: number, colorIdx: number, label: string) => {
+    const triggerEliminationAnimation = (x: number, y: number, colorIdx: number, label?: string) => {
       const pDef = PLAYER_COLORS[colorIdx !== undefined ? colorIdx : 0] || PLAYER_COLORS[0];
       const pColor = pDef.n;
 
@@ -5727,18 +5729,20 @@ export default function GameCanvas() {
       stateRef.current.shake = 25;
 
       // 4. Floating holographic / neon panel
-      if (!stateRef.current.floatingTexts) {
-        stateRef.current.floatingTexts = [];
+      if (label && label.trim().length > 0) {
+        if (!stateRef.current.floatingTexts) {
+          stateRef.current.floatingTexts = [];
+        }
+        stateRef.current.floatingTexts.push({
+          x,
+          y: y - 10,
+          text: label.trim().toUpperCase(),
+          age: 0,
+          maxAge: 1.5,
+          color: pColor,
+          vy: -45
+        });
       }
-      stateRef.current.floatingTexts.push({
-        x,
-        y: y - 10,
-        text: label.toUpperCase(),
-        age: 0,
-        maxAge: 1.5,
-        color: pColor,
-        vy: -45
-      });
     };
     triggerEliminationRef.current = triggerEliminationAnimation;
 
@@ -5772,9 +5776,18 @@ export default function GameCanvas() {
       }
 
       if (lastStatus === 'PLAYING' && STATUS === 'GAME_OVER') {
-        const myColorIdx = playerProfileRef.current.colorIdx;
-        const myName = playerProfileRef.current.name || 'YOU';
-        triggerEliminationAnimation(state.player.x, state.player.y, myColorIdx, `${myName} ELIMINATED`);
+        if (!shouldReduceMotion) {
+          const reason = endReasonRef.current;
+          const causeCode = reason?.causeCode;
+          const isScoreBased = causeCode === 'highest_score' || causeCode === 'outscored' || causeCode === 'match_concluded';
+          const isDefeat = reason?.outcome === 'defeat' || !reason;
+
+          if (isDefeat && !isScoreBased) {
+            const myColorIdx = playerProfileRef.current.colorIdx;
+            const label = reason?.label || 'ARENA ELIMINATION';
+            triggerEliminationAnimation(state.player.x, state.player.y, myColorIdx, label);
+          }
+        }
       }
       lastStatus = STATUS;
       const shouldRunUpdates = (STATUS === 'PLAYING' && !bannerShowingRef.current) || (STATUS === 'GAME_OVER' && mpRef.current.isConnected && mpRef.current.roomId && mpRef.current.isHost);
@@ -6130,8 +6143,6 @@ export default function GameCanvas() {
                   markerColor: '#ff003c',
                   startTimestamp: performance.now(),
                 });
-                spawnParticles(state.player.x, state.player.y, localColor, 50);
-                state.shake = 20;
                 setUiState(prev => {
                   uiRef.current = { ...prev, status: 'GAME_OVER' };
                   return uiRef.current;
@@ -6155,8 +6166,6 @@ export default function GameCanvas() {
                   markerColor: '#ff003c',
                   startTimestamp: performance.now(),
                 });
-                spawnParticles(state.player.x, state.player.y, localColor, 50);
-                state.shake = 20;
                 setUiState(prev => {
                   uiRef.current = { ...prev, status: 'GAME_OVER' };
                   return uiRef.current;
@@ -6182,8 +6191,6 @@ export default function GameCanvas() {
                     markerColor: '#ff003c',
                     startTimestamp: performance.now(),
                   });
-                  spawnParticles(state.player.x, state.player.y, localColor, 50);
-                  state.shake = 20;
                   setUiState(prev => {
                     uiRef.current = { ...prev, status: 'GAME_OVER' };
                     return uiRef.current;
@@ -6229,8 +6236,6 @@ export default function GameCanvas() {
                     startTimestamp: performance.now(),
                   });
 
-                  spawnParticles(state.player.x, state.player.y, localColor, 50);
-                  state.shake = 20;
                   setUiState(prev => {
                     uiRef.current = { ...prev, status: 'GAME_OVER' };
                     return uiRef.current;
@@ -6754,8 +6759,6 @@ export default function GameCanvas() {
                   markerColor: '#ff003c',
                   startTimestamp: performance.now(),
                 });
-                spawnParticles(state.player.x, state.player.y, localColor, 50);
-                state.shake = 20;
                 setUiState(prev => {
                   uiRef.current = { ...prev, status: 'GAME_OVER' };
                   return uiRef.current;
@@ -7402,8 +7405,6 @@ export default function GameCanvas() {
                   startTimestamp: performance.now(),
                 });
 
-                spawnParticles(state.player.x, state.player.y, hostColor, 50);
-                state.shake = 20;
                 setUiState(prev => {
                   uiRef.current = { ...prev, status: 'GAME_OVER' };
                   return uiRef.current;
@@ -8422,62 +8423,6 @@ export default function GameCanvas() {
         ctx.globalAlpha = 1.0;
       }
 
-      if (presentationStageRef.current === 'impact' && endReasonRef.current && endReasonRef.current.impactPos) {
-        const reason = endReasonRef.current;
-        const pos = reason.impactPos;
-        const now = performance.now();
-        const elapsed = (now - reason.startTimestamp) / 1000;
-        const progress = Math.min(1, Math.max(0, elapsed / 0.65));
-        const alpha = Math.max(0, 1 - progress);
-
-        if (alpha > 0) {
-          ctx.save();
-          ctx.globalAlpha = alpha;
-          ctx.strokeStyle = reason.markerColor || '#ff003c';
-          ctx.fillStyle = reason.markerColor || '#ff003c';
-          ctx.lineWidth = 2;
-
-          const playerX = state.player.x;
-          const playerY = state.player.y;
-          if (Math.hypot(pos.x - playerX, pos.y - playerY) > 5) {
-            ctx.beginPath();
-            ctx.setLineDash([6, 4]);
-            ctx.moveTo(playerX, playerY);
-            ctx.lineTo(pos.x, pos.y);
-            ctx.stroke();
-            ctx.setLineDash([]);
-          }
-
-          const r1 = 12 + progress * 48;
-          const r2 = 6 + progress * 24;
-          ctx.beginPath();
-          ctx.arc(pos.x, pos.y, r1, 0, Math.PI * 2);
-          ctx.stroke();
-
-          ctx.beginPath();
-          ctx.arc(pos.x, pos.y, r2, 0, Math.PI * 2);
-          ctx.stroke();
-
-          const d = 6;
-          ctx.beginPath();
-          ctx.moveTo(pos.x, pos.y - d);
-          ctx.lineTo(pos.x + d, pos.y);
-          ctx.lineTo(pos.x, pos.y + d);
-          ctx.lineTo(pos.x - d, pos.y);
-          ctx.closePath();
-          ctx.fill();
-
-          ctx.beginPath();
-          ctx.moveTo(pos.x - 12, pos.y);
-          ctx.lineTo(pos.x + 12, pos.y);
-          ctx.moveTo(pos.x, pos.y - 12);
-          ctx.lineTo(pos.x, pos.y + 12);
-          ctx.stroke();
-
-          ctx.restore();
-        }
-      }
-
       ctx.restore(); // Reset transform to draw fixed UI
 
       const drawObjectiveTag = (
@@ -8556,7 +8501,7 @@ export default function GameCanvas() {
         ctx.restore();
       };
 
-      if (state.tutorial.active && state.tutorial.spawnerIndex !== null) {
+      if (uiRef.current.status === 'PLAYING' && presentationStageRef.current === 'idle' && state.tutorial.active && state.tutorial.spawnerIndex !== null) {
         const mapDef = MAPS[uiRef.current.mapId] || MAPS.medium;
         const tutDef = mapDef.spawners[state.tutorial.spawnerIndex];
         const spawner = state.spawners.find(s => s.x === tutDef.x && s.y === tutDef.y);
@@ -10319,64 +10264,6 @@ export default function GameCanvas() {
         );
       })()}
 
-      {presentationStage === 'impact' && endReason && (
-        <div className="absolute inset-0 pointer-events-none z-[65] flex flex-col items-center justify-center overflow-hidden">
-          <motion.div
-            initial={shouldReduceMotion ? { opacity: 0 } : { opacity: 0.8 }}
-            animate={{ opacity: 0 }}
-            transition={{ duration: shouldReduceMotion ? 0 : 0.45, ease: 'easeOut' }}
-            className={`absolute inset-0 ${
-              endReason.outcome === 'victory' ? 'bg-[#00f0ff]/20' : 'bg-[#ff003c]/25'
-            }`}
-          />
-
-          <div
-            className="absolute inset-0"
-            style={{
-              background: 'radial-gradient(circle, rgba(0,0,0,0) 35%, rgba(0,0,0,0.85) 100%)',
-            }}
-          />
-
-          {endReason.outcome === 'victory' && !shouldReduceMotion && (
-            <motion.div
-              initial={{ scale: 0.8, opacity: 0.6 }}
-              animate={{ scale: 1.5, opacity: 0 }}
-              transition={{ duration: 0.6, ease: 'easeOut' }}
-              className="absolute w-96 h-96 rounded-full border-2 border-[#00f0ff]/50 shadow-[0_0_50px_#00f0ff]"
-            />
-          )}
-
-          <motion.div
-            initial={shouldReduceMotion ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 0.9, y: 10 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            transition={{ duration: shouldReduceMotion ? 0 : 0.2 }}
-            className="relative z-10 flex flex-col items-center text-center px-6 py-4 rounded-xl backdrop-blur-md bg-black/75 border border-white/10 shadow-2xl"
-          >
-            {(() => {
-              let heading = 'ELIMINATION CAUSE';
-              if (endReason.causeCode === 'highest_score') {
-                heading = 'MATCH WON';
-              } else if (endReason.causeCode === 'outscored' || endReason.causeCode === 'match_concluded') {
-                heading = 'MATCH RESULT';
-              } else if (endReason.outcome === 'victory') {
-                heading = 'OBJECTIVE COMPLETE';
-              }
-
-              return (
-                <div className={`text-xs sm:text-sm font-extrabold tracking-widest uppercase mb-1 ${
-                  endReason.outcome === 'victory' ? 'text-[#00f0ff]' : (endReason.causeCode === 'match_concluded' ? 'text-[#ffcc00]' : 'text-[#ff003c]')
-                }`}>
-                  {heading}
-                </div>
-              );
-            })()}
-            <div className="text-xl sm:text-3xl font-black tracking-wider text-white uppercase drop-shadow-md" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>
-              {endReason.label}
-            </div>
-          </motion.div>
-        </div>
-      )}
-
       {uiState.status === 'VICTORY' && !mpState.roomId && presentationStage === 'results' && (
         <motion.div
           initial={shouldReduceMotion ? { opacity: 1 } : { opacity: 0 }}
@@ -10732,7 +10619,7 @@ export default function GameCanvas() {
       })()}
 
       <AnimatePresence>
-        {bannerState.show && bannerState.mode && (
+        {bannerState.show && bannerState.mode && uiState.status === 'PLAYING' && presentationStage === 'idle' && (
           <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[90%] sm:w-[480px] z-[70] pointer-events-none select-none">
             <motion.div
               initial={{ scale: 0.9, opacity: 0, y: -40 }}
