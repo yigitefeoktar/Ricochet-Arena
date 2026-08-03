@@ -1876,10 +1876,46 @@ export default function GameCanvas() {
     };
   }, []);
 
+  const triggerMultiplayerMatchConclusion = useCallback((winnerId?: string | null) => {
+    const myId = socketRef.current?.id;
+    if (myId && winnerId) {
+      if (myId === winnerId) {
+        triggerEndPresentation({
+          outcome: 'victory',
+          causeCode: 'highest_score',
+          label: 'HIGHEST SCORE',
+          impactPos: null,
+          markerColor: '#00f0ff',
+          startTimestamp: performance.now(),
+        });
+      } else {
+        triggerEndPresentation({
+          outcome: 'defeat',
+          causeCode: 'outscored',
+          label: 'OUTSCORED',
+          impactPos: null,
+          markerColor: '#ff003c',
+          startTimestamp: performance.now(),
+        });
+      }
+    } else {
+      triggerEndPresentation({
+        outcome: 'defeat',
+        causeCode: 'match_concluded',
+        label: 'MATCH CONCLUDED',
+        impactPos: null,
+        markerColor: '#ffcc00',
+        startTimestamp: performance.now(),
+      });
+    }
+  }, [triggerEndPresentation]);
+
   useEffect(() => {
     const currentStatus = uiState.status;
     if ((currentStatus === 'GAME_OVER' || currentStatus === 'VICTORY') && presentationStage === 'idle' && !endReason) {
-      if (currentStatus === 'VICTORY') {
+      if (mpRef.current.roomId && stateRef.current.matchPhase === 'FINISHED') {
+        triggerMultiplayerMatchConclusion(stateRef.current.winnerId);
+      } else if (currentStatus === 'VICTORY') {
         triggerEndPresentation({
           outcome: 'victory',
           causeCode: 'spawner_destroyed',
@@ -1899,7 +1935,7 @@ export default function GameCanvas() {
         });
       }
     }
-  }, [uiState.status, presentationStage, endReason, triggerEndPresentation]);
+  }, [uiState.status, presentationStage, endReason, triggerEndPresentation, triggerMultiplayerMatchConclusion]);
 
   const resolvePlayerName = useCallback((ownerId?: string): string | null => {
     if (!ownerId || ownerId === 'local') return null;
@@ -4734,6 +4770,7 @@ export default function GameCanvas() {
         }
 
         if (state.matchPhase === 'FINISHED' && uiRef.current.status === 'PLAYING') {
+          triggerMultiplayerMatchConclusion(state.winnerId);
           setUiState(prev => ({ ...prev, status: 'GAME_OVER' }));
         }
 
@@ -7294,21 +7331,25 @@ export default function GameCanvas() {
 
                   const bOwner = bullet.ownerId || 'local';
                   const hostId = socketRef.current?.id || 'local';
+
+                  const isSinglePlayerVictory = state.spawners.length === 0 && !mpRef.current.roomId;
+                  if (isSinglePlayerVictory) {
+                    triggerEndPresentation({
+                      outcome: 'victory',
+                      causeCode: 'spawner_destroyed',
+                      label: 'ALL SPAWNERS DESTROYED',
+                      impactPos: { x: spawner.x, y: spawner.y },
+                      markerColor: '#00f0ff',
+                      startTimestamp: performance.now(),
+                    });
+                  }
+
                   if (bOwner === hostId || bOwner === 'local') {
                     setUiState(prev => {
                       const newScore = prev.score + pts;
                       let newBlocks = prev.blocks + 3; // Bonus blocks
                       uiRef.current = { ...prev, score: newScore, blocks: newBlocks, spawnersLeft: state.spawners.length };
-                      // Check win condition
-                      if (state.spawners.length === 0 && !mpRef.current.roomId) {
-                        triggerEndPresentation({
-                          outcome: 'victory',
-                          causeCode: 'spawner_destroyed',
-                          label: 'ALL SPAWNERS DESTROYED',
-                          impactPos: { x: spawner.x, y: spawner.y },
-                          markerColor: '#00f0ff',
-                          startTimestamp: performance.now(),
-                        });
+                      if (isSinglePlayerVictory) {
                         uiRef.current.status = 'VICTORY';
                       }
                       return uiRef.current;
@@ -7319,15 +7360,7 @@ export default function GameCanvas() {
                     }
                     setUiState(prev => {
                       uiRef.current = { ...prev, spawnersLeft: state.spawners.length };
-                      if (state.spawners.length === 0 && !mpRef.current.roomId) {
-                        triggerEndPresentation({
-                          outcome: 'victory',
-                          causeCode: 'spawner_destroyed',
-                          label: 'ALL SPAWNERS DESTROYED',
-                          impactPos: { x: spawner.x, y: spawner.y },
-                          markerColor: '#00f0ff',
-                          startTimestamp: performance.now(),
-                        });
+                      if (isSinglePlayerVictory) {
                         uiRef.current.status = 'VICTORY';
                       }
                       return uiRef.current;
@@ -7462,6 +7495,7 @@ export default function GameCanvas() {
       if (mpRef.current.isConnected && mpRef.current.roomId && mpRef.current.isHost) {
         evaluateMatchState(currentTime);
         if (state.matchPhase === 'FINISHED' && uiRef.current.status === 'PLAYING') {
+          triggerMultiplayerMatchConclusion(state.winnerId);
           setUiState(prev => ({ ...prev, status: 'GAME_OVER' }));
         }
       }
@@ -10318,11 +10352,24 @@ export default function GameCanvas() {
             transition={{ duration: shouldReduceMotion ? 0 : 0.2 }}
             className="relative z-10 flex flex-col items-center text-center px-6 py-4 rounded-xl backdrop-blur-md bg-black/75 border border-white/10 shadow-2xl"
           >
-            <div className={`text-xs sm:text-sm font-extrabold tracking-widest uppercase mb-1 ${
-              endReason.outcome === 'victory' ? 'text-[#00f0ff]' : 'text-[#ff003c]'
-            }`}>
-              {endReason.outcome === 'victory' ? 'OBJECTIVE COMPLETE' : 'ELIMINATION CAUSE'}
-            </div>
+            {(() => {
+              let heading = 'ELIMINATION CAUSE';
+              if (endReason.causeCode === 'highest_score') {
+                heading = 'MATCH WON';
+              } else if (endReason.causeCode === 'outscored' || endReason.causeCode === 'match_concluded') {
+                heading = 'MATCH RESULT';
+              } else if (endReason.outcome === 'victory') {
+                heading = 'OBJECTIVE COMPLETE';
+              }
+
+              return (
+                <div className={`text-xs sm:text-sm font-extrabold tracking-widest uppercase mb-1 ${
+                  endReason.outcome === 'victory' ? 'text-[#00f0ff]' : (endReason.causeCode === 'match_concluded' ? 'text-[#ffcc00]' : 'text-[#ff003c]')
+                }`}>
+                  {heading}
+                </div>
+              );
+            })()}
             <div className="text-xl sm:text-3xl font-black tracking-wider text-white uppercase drop-shadow-md" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>
               {endReason.label}
             </div>
@@ -10494,7 +10541,11 @@ export default function GameCanvas() {
               initial={shouldReduceMotion ? { opacity: 1, scale: 1, y: 0 } : { opacity: 0, scale: 0.94, y: 16 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
               transition={{ duration: shouldReduceMotion ? 0 : 0.25, ease: 'easeOut' }}
-              className="max-w-xl w-full bg-[#0d0404] border-2 border-[#ff005c] p-5 sm:p-8 md:p-10 shadow-[10px_10px_0_#ff005c] my-auto"
+              className={`max-w-xl w-full p-5 sm:p-8 md:p-10 my-auto border-2 ${
+                isWholeGameEnded && isLocalWinner
+                  ? 'bg-[#030d0f] border-[#00f0ff] shadow-[10px_10px_0_#00f0ff]'
+                  : 'bg-[#0d0404] border-[#ff005c] shadow-[10px_10px_0_#ff005c]'
+              }`}
             >
 
               {/* GOAL display */}
@@ -10531,7 +10582,7 @@ export default function GameCanvas() {
                       MATCH LOST
                     </motion.h2>
                     <div className="text-xs sm:text-sm font-mono text-[#ff005c] font-bold tracking-widest uppercase mb-4 bg-[#ff005c]/10 py-1.5 px-3 border border-[#ff005c]/30 inline-block rounded-sm">
-                      FINISHED #{myRank} // HIGHEST SCORE
+                      FINISHED #{myRank} // OUTSCORED
                     </div>
                   </>
                 )
