@@ -2063,6 +2063,7 @@ export default function GameCanvas() {
   const socketRef = useRef<Socket | null>(null);
   const lastReceivedGameStateTimeRef = useRef<number>(0);
   const triggerEliminationRef = useRef<((x: number, y: number, colorIdx: number, label?: string) => void) | null>(null);
+  const eliminateRemotePlayerRef = useRef<((victimId: string, impactPos: { x: number, y: number }, currentTime: number) => void) | null>(null);
   const bannerShowingRef = useRef(false);
 
   const isMobileRef = useRef(typeof window !== 'undefined' && /Mobi|Android|iPhone|iPad|iPod|Windows Phone/i.test(navigator.userAgent));
@@ -4824,7 +4825,34 @@ export default function GameCanvas() {
           }
         }
         if (state.winnerId !== undefined) stateRef.current.winnerId = state.winnerId;
-        if (state.matchPlayers !== undefined) stateRef.current.matchPlayers = state.matchPlayers;
+        if (state.matchPlayers !== undefined) {
+          const myId = socket.id;
+          if (myId) {
+            const prevMe = stateRef.current.matchPlayers[myId];
+            const incomingMe = state.matchPlayers[myId];
+            if (prevMe && incomingMe && !prevMe.isDead && incomingMe.isDead && uiRef.current.status === 'PLAYING') {
+              // Trigger the local visual burst animation
+              const localColorIdx = playerProfileRef.current.colorIdx;
+              const localName = playerProfileRef.current.name || 'YOU';
+              triggerEliminationRef.current?.(stateRef.current.player.x, stateRef.current.player.y, localColorIdx, localName);
+
+              // start the existing local elimination/end presentation once
+              triggerEndPresentation({
+                outcome: 'defeat',
+                causeCode: 'eliminated_by_host',
+                label: 'ELIMINATED',
+                impactPos: { x: stateRef.current.player.x, y: stateRef.current.player.y },
+                markerColor: '#ff003c',
+                startTimestamp: performance.now(),
+              });
+              setUiState(prev => {
+                uiRef.current = { ...prev, status: 'GAME_OVER' };
+                return uiRef.current;
+              });
+            }
+          }
+          stateRef.current.matchPlayers = state.matchPlayers;
+        }
         if (state.playerActionAuthority !== undefined) {
           const hostNow = state.hostTime;
           if (hostNow !== undefined && typeof hostNow === 'number' && Number.isFinite(hostNow)) {
@@ -5054,18 +5082,6 @@ export default function GameCanvas() {
       const authority = getOrInitializeAuthority(clientId);
       const isDash = currentTime < authority.specialActiveUntil;
 
-      // E. One-way death
-      const reportedDeath = input.isDead === true;
-      const isProtected = isOpeningProtectionActiveForHost(currentTime);
-
-      let isDead = false;
-      if (reportedDeath && !isProtected) {
-        isDead = true;
-        triggerEliminationRef.current?.(clampedX, clampedY, matchPlayer.colorIdx, matchPlayer.name);
-        matchPlayer.isDead = true;
-        stateRef.current.forceBroadcast = true;
-      }
-
       // C. Preserve authoritative fields
       const score = (prevPlayer.score !== undefined) ? prevPlayer.score : (matchPlayer.score || 0);
 
@@ -5073,7 +5089,7 @@ export default function GameCanvas() {
         ...prevPlayer,
         x: clampedX,
         y: clampedY,
-        isDead: isDead || prevPlayer.isDead,
+        isDead: prevPlayer.isDead,
         isDash,
         radius: PLAYER_RADIUS,
         name: matchPlayer.name,
@@ -5361,6 +5377,27 @@ export default function GameCanvas() {
     if (!ctx) return;
 
     const state = stateRef.current;
+
+    const eliminateRemotePlayer = (victimId: string, impactPos: { x: number, y: number }, currentTime: number) => {
+      if (!mpRef.current.isHost) return;
+
+      const state = stateRef.current;
+      const mpPlayer = state.multiplayerPlayers[victimId];
+      const matchPlayer = state.matchPlayers[victimId];
+
+      if (!mpPlayer || !matchPlayer) return;
+      if (mpPlayer.isDead || matchPlayer.isDead || matchPlayer.isDisconnected) return;
+
+      if (isOpeningProtectionActiveForHost(currentTime)) return;
+
+      mpPlayer.isDead = true;
+      matchPlayer.isDead = true;
+
+      triggerEliminationRef.current?.(mpPlayer.x, mpPlayer.y, mpPlayer.colorIdx !== undefined ? mpPlayer.colorIdx : 0, matchPlayer.name);
+
+      state.forceBroadcast = true;
+    };
+    eliminateRemotePlayerRef.current = eliminateRemotePlayer;
 
     const handleResize = () => {
       const w = wrapper.clientWidth;
@@ -5910,8 +5947,7 @@ export default function GameCanvas() {
         state.lastBroadcastTime = currentTime;
         socketRef.current?.emit('client_input', mpRef.current.roomId, {
           x: state.player.x,
-          y: state.player.y,
-          isDead: STATUS === 'GAME_OVER'
+          y: state.player.y
         });
       }
 
@@ -6224,7 +6260,7 @@ export default function GameCanvas() {
         }
 
         // Local player instant death trigger checks (runs in ALL modes: Solo, Host, and Client)
-        if (uiRef.current.status === 'PLAYING') {
+        if (uiRef.current.status === 'PLAYING' && (!mpRef.current.roomId || mpRef.current.isHost)) {
           const localColorIdx = playerProfileRef.current.colorIdx;
           const localColor = PLAYER_COLORS[localColorIdx]?.n || '#00f0ff';
 
@@ -6667,6 +6703,23 @@ export default function GameCanvas() {
           enemy.x = enemyResolved.x;
           enemy.y = enemyResolved.y;
 
+          // B2: Host-side enemy contact collision checks against living remote players
+          if (mpRef.current.roomId && mpRef.current.isHost) {
+            for (const pid in state.multiplayerPlayers) {
+              const mpPlayer = state.multiplayerPlayers[pid];
+              if (mpPlayer && !mpPlayer.isDead) {
+                const isProtected = mpPlayer.isDash || isOpeningProtectionActiveForHost(currentTime);
+                if (!isProtected) {
+                  const edx = mpPlayer.x - enemy.x;
+                  const edy = mpPlayer.y - enemy.y;
+                  if (edx * edx + edy * edy < (mpPlayer.radius + enemy.radius) ** 2) {
+                    eliminateRemotePlayerRef.current?.(pid, { x: enemy.x, y: enemy.y }, currentTime);
+                  }
+                }
+              }
+            }
+          }
+
           for (const n of enemyResolved.normals) {
             const dotKb = enemy.kbvx * n.nx + enemy.kbvy * n.ny;
             if (dotKb < 0) {
@@ -6835,6 +6888,26 @@ export default function GameCanvas() {
             }
           }
 
+          // B3: Host-side bouncer contact collision checks against living remote players
+          if (mpRef.current.roomId && mpRef.current.isHost) {
+            for (const pid in state.multiplayerPlayers) {
+              const mpPlayer = state.multiplayerPlayers[pid];
+              if (mpPlayer && !mpPlayer.isDead) {
+                const pdx = mpPlayer.x - b.x;
+                const pdy = mpPlayer.y - b.y;
+                if (pdx * pdx + pdy * pdy < (mpPlayer.radius + b.radius) ** 2) {
+                  if (mpPlayer.isDash) {
+                    // Dashing player vs bouncer -> bounce behavior
+                    b.dx *= -1;
+                    b.dy *= -1;
+                  } else if (!isOpeningProtectionActiveForHost(currentTime)) {
+                    eliminateRemotePlayerRef.current?.(pid, { x: b.x, y: b.y }, currentTime);
+                  }
+                }
+              }
+            }
+          }
+
           // Collision with Player
           if (uiRef.current.status === 'PLAYING') {
             const pdx = state.player.x - b.x;
@@ -6877,6 +6950,26 @@ export default function GameCanvas() {
                 x: b.x, y: b.y, dx: Math.cos(angle), dy: Math.sin(angle),
                 size: 1, radius: 24, speed: ENEMY_SPEED + Math.random() * 20, lastDirChange: currentTime, lastMultiply: currentTime
               });
+            }
+          }
+        }
+
+        // B4: Host-side Orbiting relic obstacles checks against living remote players
+        if (mpRef.current.roomId && mpRef.current.isHost) {
+          for (const spawner of state.spawners) {
+            if (spawner.specialType) {
+              for (const pid in state.multiplayerPlayers) {
+                const mpPlayer = state.multiplayerPlayers[pid];
+                if (mpPlayer && !mpPlayer.isDead) {
+                  const isProtected = mpPlayer.isDash || isOpeningProtectionActiveForHost(currentTime);
+                  if (!isProtected) {
+                    const collision = getBulletRelicCollision(mpPlayer.x, mpPlayer.y, mpPlayer.radius, spawner, worldPhaseTime);
+                    if (collision) {
+                      eliminateRemotePlayerRef.current?.(pid, { x: mpPlayer.x, y: mpPlayer.y }, currentTime);
+                    }
+                  }
+                }
+              }
             }
           }
         }
@@ -7514,8 +7607,8 @@ export default function GameCanvas() {
                   const dy = mpPlayer.y - bullet.y;
                   const isProtected = mpPlayer.isDash || isOpeningProtectionActiveForHost(currentTime);
                   if (!isProtected && dx * dx + dy * dy < (mpPlayer.radius + bullet.radius * 0.5) ** 2) {
-                    // Explode bullet on hit, remote player triggers death locally based on color sync
-                    spawnParticles(mpPlayer.x, mpPlayer.y, mpColor, 50);
+                    // Call the elimination helper
+                    eliminateRemotePlayerRef.current?.(pid, { x: bullet.x, y: bullet.y }, currentTime);
                     bulletDestroyed = true;
                     break;
                   }

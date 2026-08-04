@@ -377,17 +377,10 @@ async function startServer() {
       if (typeof input.x !== "number" || !Number.isFinite(input.x)) return;
       if (typeof input.y !== "number" || !Number.isFinite(input.y)) return;
 
-      // Require isDead to be a boolean when supplied.
-      if (input.isDead !== undefined && typeof input.isDead !== "boolean") return;
-
-      const sanitizedInput: { x: number; y: number; isDead?: boolean } = {
+      const sanitizedInput: { x: number; y: number } = {
         x: input.x,
         y: input.y
       };
-
-      if (input.isDead !== undefined) {
-        sanitizedInput.isDead = input.isDead;
-      }
 
       // Send gameplay input strictly to the room's host
       const host = room.players.find(p => p.isHost);
