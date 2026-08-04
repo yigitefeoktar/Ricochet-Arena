@@ -5575,14 +5575,49 @@ export default function GameCanvas() {
     };
 
     const handleTouchStart = (e: TouchEvent) => {
-      if (!canAcceptGameplayInput()) return;
+      if (document.hidden) return;
       if (uiRef.current.status !== 'PLAYING') return; // let normal touches pass
       if (mpRef.current.roomId && (mpMenuOpenRef.current || confirmResignRef.current)) {
          return;
       }
+
+      const isMobile = uiRef.current.deviceType === 'mobile';
+
+      // Recover from stale touch identifiers if touches were lost/reset
+      const activeTouchIds = new Set<number>();
+      for (let i = 0; i < e.touches.length; i++) {
+        activeTouchIds.add(e.touches[i].identifier);
+      }
+
+      if (state.touches.left.active && !activeTouchIds.has(state.touches.left.id)) {
+        state.touches.left.active = false;
+        state.touches.left.id = -1;
+        state.touches.left.dirX = 0;
+        state.touches.left.dirY = 0;
+        if (isMobile) {
+          state.touches.left.currentX = state.touches.left.startX;
+          state.touches.left.currentY = state.touches.left.startY;
+        }
+      }
+
+      if (state.touches.right.active && !activeTouchIds.has(state.touches.right.id)) {
+        state.touches.right.active = false;
+        state.touches.right.id = -1;
+        state.touches.right.dirX = 0;
+        state.touches.right.dirY = 0;
+        state.touches.right.aimLength = 0;
+        state.touches.right.startTime = 0;
+        state.touches.right.justReleased = false;
+        state.touches.right.releaseDx = 0;
+        state.touches.right.releaseDy = 0;
+        if (isMobile) {
+          state.touches.right.currentX = state.touches.right.startX;
+          state.touches.right.currentY = state.touches.right.startY;
+        }
+      }
+
       e.preventDefault();
       const rect = canvas.getBoundingClientRect();
-      const isMobile = uiRef.current.deviceType === 'mobile';
 
       for (let i = 0; i < e.changedTouches.length; i++) {
         const t = e.changedTouches[i];
@@ -5667,7 +5702,6 @@ export default function GameCanvas() {
 
     const handleTouchMove = (e: TouchEvent) => {
       if (uiRef.current.status !== 'PLAYING') return;
-      e.preventDefault();
       const isMobile = uiRef.current.deviceType === 'mobile';
       const rect = canvas.getBoundingClientRect();
       const maxDist = 40;
@@ -5677,12 +5711,14 @@ export default function GameCanvas() {
       const rightJoyX = canvas.width - leftJoyX;
       const rightJoyY = canvas.height - joyOffset;
 
+      let processed = false;
       for (let i = 0; i < e.changedTouches.length; i++) {
         const t = e.changedTouches[i];
         const x = t.clientX - rect.left;
         const y = t.clientY - rect.top;
 
         if (state.touches.left.active && t.identifier === state.touches.left.id) {
+          processed = true;
           let dx = x - state.touches.left.startX;
           let dy = y - state.touches.left.startY;
           const dist = Math.sqrt(dx * dx + dy * dy);
@@ -5700,6 +5736,7 @@ export default function GameCanvas() {
           state.touches.left.dirX = dx / maxDist;
           state.touches.left.dirY = dy / maxDist;
         } else if (state.touches.right.active && t.identifier === state.touches.right.id) {
+          processed = true;
           let dx = x - state.touches.right.startX;
           let dy = y - state.touches.right.startY;
           const dist = Math.sqrt(dx * dx + dy * dy);
@@ -5717,6 +5754,9 @@ export default function GameCanvas() {
           state.touches.right.dirX = dx / maxDist;
           state.touches.right.dirY = dy / maxDist;
         }
+      }
+      if (processed) {
+        e.preventDefault();
       }
     };
 
@@ -5804,7 +5844,7 @@ export default function GameCanvas() {
     canvas.addEventListener('mousedown', handleMouseDown);
     canvas.addEventListener('mouseup', handleMouseUp);
     canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
-    canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
+    window.addEventListener('touchmove', handleTouchMove, { passive: false });
     window.addEventListener('touchend', handleTouchEnd, { passive: false });
     window.addEventListener('touchcancel', handleTouchCancel, { passive: false });
     window.addEventListener('pagehide', handleBlurOrHide);
@@ -8948,8 +8988,8 @@ export default function GameCanvas() {
         canvas.removeEventListener('mousedown', handleMouseDown);
         canvas.removeEventListener('mouseup', handleMouseUp);
         canvas.removeEventListener('touchstart', handleTouchStart);
-        canvas.removeEventListener('touchmove', handleTouchMove);
       }
+      window.removeEventListener('touchmove', handleTouchMove);
       window.removeEventListener('touchend', handleTouchEnd);
       window.removeEventListener('touchcancel', handleTouchCancel);
       window.removeEventListener('pagehide', handleBlurOrHide);
