@@ -1635,22 +1635,48 @@ function getClosestSpawner<T extends { x: number; y: number; hp?: number }>(
   return closest;
 }
 
+export interface ExclusionRect {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+interface PaddedRect {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+}
+
+function isPointerPosValid(
+  x: number,
+  y: number,
+  paddedRects: PaddedRect[],
+  canvasW: number,
+  canvasH: number,
+  inset: number
+): boolean {
+  if (x < inset || x > canvasW - inset || y < inset || y > canvasH - inset) {
+    return false;
+  }
+  for (const r of paddedRects) {
+    if (x >= r.x1 && x <= r.x2 && y >= r.y1 && y <= r.y2) {
+      return false;
+    }
+  }
+  return true;
+}
+
 function calculateEdgePointerPosition(
   targetScreenX: number,
   targetScreenY: number,
   canvasWidth: number,
   canvasHeight: number,
-  isMobile: boolean
-) {
-  const boxMarginLeft = isMobile ? 45 : 35;
-  const boxMarginRight = isMobile ? 45 : 35;
-  const boxMarginTop = 85;
-  const boxMarginBottom = isMobile ? 135 : 45;
-
-  const boxX1 = boxMarginLeft;
-  const boxY1 = boxMarginTop;
-  const boxX2 = canvasWidth - boxMarginRight;
-  const boxY2 = canvasHeight - boxMarginBottom;
+  exclusionRects: ExclusionRect[] = []
+): { x: number; y: number; angle: number } {
+  const EDGE_INSET = 24;
+  const PADDING = 24;
 
   const anchorX = canvasWidth / 2;
   const anchorY = canvasHeight / 2;
@@ -1659,33 +1685,129 @@ function calculateEdgePointerPosition(
   const dy = targetScreenY - anchorY;
   const angle = Math.atan2(dy, dx);
 
-  let ix = targetScreenX;
-  let iy = targetScreenY;
+  const boxX1 = EDGE_INSET;
+  const boxY1 = EDGE_INSET;
+  const boxX2 = canvasWidth - EDGE_INSET;
+  const boxY2 = canvasHeight - EDGE_INSET;
 
-  if (dx !== 0 || dy !== 0) {
-    let tMin = Infinity;
+  const paddedRects: PaddedRect[] = exclusionRects.map((r) => ({
+    x1: r.x - PADDING,
+    y1: r.y - PADDING,
+    x2: r.x + r.w + PADDING,
+    y2: r.y + r.h + PADDING,
+  }));
 
-    if (dx < 0) {
-      const t = (boxX1 - anchorX) / dx;
-      if (t >= 0 && t < tMin) tMin = t;
+  if (dx === 0 && dy === 0) {
+    return { x: anchorX, y: anchorY, angle };
+  }
+
+  let tMin = Infinity;
+  let primaryEdge: 'top' | 'bottom' | 'left' | 'right' = 'top';
+
+  if (dx < 0) {
+    const t = (boxX1 - anchorX) / dx;
+    if (t >= 0 && t < tMin) {
+      tMin = t;
+      primaryEdge = 'left';
     }
-    if (dx > 0) {
-      const t = (boxX2 - anchorX) / dx;
-      if (t >= 0 && t < tMin) tMin = t;
+  }
+  if (dx > 0) {
+    const t = (boxX2 - anchorX) / dx;
+    if (t >= 0 && t < tMin) {
+      tMin = t;
+      primaryEdge = 'right';
     }
-    if (dy < 0) {
-      const t = (boxY1 - anchorY) / dy;
-      if (t >= 0 && t < tMin) tMin = t;
+  }
+  if (dy < 0) {
+    const t = (boxY1 - anchorY) / dy;
+    if (t >= 0 && t < tMin) {
+      tMin = t;
+      primaryEdge = 'top';
     }
-    if (dy > 0) {
-      const t = (boxY2 - anchorY) / dy;
-      if (t >= 0 && t < tMin) tMin = t;
+  }
+  if (dy > 0) {
+    const t = (boxY2 - anchorY) / dy;
+    if (t >= 0 && t < tMin) {
+      tMin = t;
+      primaryEdge = 'bottom';
+    }
+  }
+
+  let ix = anchorX + dx * tMin;
+  let iy = anchorY + dy * tMin;
+
+  ix = Math.max(boxX1, Math.min(boxX2, ix));
+  iy = Math.max(boxY1, Math.min(boxY2, iy));
+
+  if (isPointerPosValid(ix, iy, paddedRects, canvasWidth, canvasHeight, EDGE_INSET)) {
+    return { x: ix, y: iy, angle };
+  }
+
+  const findClosestValidOnEdge = (
+    edge: 'top' | 'bottom' | 'left' | 'right'
+  ): { x: number; y: number; dist: number } | null => {
+    let bestX = 0;
+    let bestY = 0;
+    let minDistance = Infinity;
+    let found = false;
+
+    if (edge === 'top' || edge === 'bottom') {
+      const edgeY = edge === 'top' ? boxY1 : boxY2;
+      for (let x = boxX1; x <= boxX2; x++) {
+        if (isPointerPosValid(x, edgeY, paddedRects, canvasWidth, canvasHeight, EDGE_INSET)) {
+          const dist = Math.hypot(x - ix, edgeY - iy);
+          if (dist < minDistance) {
+            minDistance = dist;
+            bestX = x;
+            bestY = edgeY;
+            found = true;
+          }
+        }
+      }
+    } else {
+      const edgeX = edge === 'left' ? boxX1 : boxX2;
+      for (let y = boxY1; y <= boxY2; y++) {
+        if (isPointerPosValid(edgeX, y, paddedRects, canvasWidth, canvasHeight, EDGE_INSET)) {
+          const dist = Math.hypot(edgeX - ix, y - iy);
+          if (dist < minDistance) {
+            minDistance = dist;
+            bestX = edgeX;
+            bestY = y;
+            found = true;
+          }
+        }
+      }
     }
 
-    if (tMin !== Infinity) {
-      ix = anchorX + dx * tMin;
-      iy = anchorY + dy * tMin;
+    return found ? { x: bestX, y: bestY, dist: minDistance } : null;
+  };
+
+  const primaryResult = findClosestValidOnEdge(primaryEdge);
+  if (primaryResult) {
+    return { x: primaryResult.x, y: primaryResult.y, angle };
+  }
+
+  const adjacentEdges: ('top' | 'bottom' | 'left' | 'right')[] =
+    primaryEdge === 'top' || primaryEdge === 'bottom' ? ['left', 'right'] : ['top', 'bottom'];
+
+  let bestAdjacentResult: { x: number; y: number; dist: number } | null = null;
+  for (const adjEdge of adjacentEdges) {
+    const res = findClosestValidOnEdge(adjEdge);
+    if (res && (!bestAdjacentResult || res.dist < bestAdjacentResult.dist)) {
+      bestAdjacentResult = res;
     }
+  }
+
+  if (bestAdjacentResult) {
+    return { x: bestAdjacentResult.x, y: bestAdjacentResult.y, angle };
+  }
+
+  const oppositeEdge: 'top' | 'bottom' | 'left' | 'right' =
+    primaryEdge === 'top' ? 'bottom' : primaryEdge === 'bottom' ? 'top' : primaryEdge === 'left' ? 'right' : 'left';
+
+  const oppositeResult = findClosestValidOnEdge(oppositeEdge);
+  if (oppositeResult) {
+    return { x: oppositeResult.x, y: oppositeResult.y, angle };
   }
 
   return { x: ix, y: iy, angle };
@@ -1705,6 +1827,73 @@ export default function GameCanvas() {
   const wrapperRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const mapListRef = useRef<HTMLDivElement>(null);
+
+  const hudTopLeftRef = useRef<HTMLDivElement>(null);
+  const hudTopRightRef = useRef<HTMLDivElement>(null);
+  const hudTopCenterRef = useRef<HTMLDivElement>(null);
+  const hudBottomCenterRef = useRef<HTMLDivElement>(null);
+  const hudBottomLeftRef = useRef<HTMLDivElement>(null);
+  const hudBottomRightRef = useRef<HTMLDivElement>(null);
+  const exclusionRectsRef = useRef<ExclusionRect[]>([]);
+
+  const updateExclusionRects = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const canvasRect = canvas.getBoundingClientRect();
+    if (canvasRect.width === 0 || canvasRect.height === 0) return;
+
+    const scaleX = canvas.width / canvasRect.width;
+    const scaleY = canvas.height / canvasRect.height;
+
+    const rects: ExclusionRect[] = [];
+    const refs = [
+      hudTopLeftRef,
+      hudTopRightRef,
+      hudTopCenterRef,
+      hudBottomCenterRef,
+      hudBottomLeftRef,
+      hudBottomRightRef,
+    ];
+
+    for (const r of refs) {
+      if (r.current) {
+        const domRect = r.current.getBoundingClientRect();
+        if (domRect.width > 0 && domRect.height > 0) {
+          rects.push({
+            x: (domRect.left - canvasRect.left) * scaleX,
+            y: (domRect.top - canvasRect.top) * scaleY,
+            w: domRect.width * scaleX,
+            h: domRect.height * scaleY,
+          });
+        }
+      }
+    }
+
+    if (uiRef.current.status === 'PLAYING' && uiRef.current.deviceType === 'mobile') {
+      const joyOffset = Math.min(160, Math.max(85, Math.floor(canvas.height * 0.22)));
+      const leftJoyX = Math.min(80, Math.floor(canvas.width * 0.18));
+      const leftJoyY = canvas.height - joyOffset;
+      const rightJoyX = canvas.width - leftJoyX;
+      const rightJoyY = canvas.height - joyOffset;
+      const joyRadius = 60;
+
+      rects.push({
+        x: leftJoyX - joyRadius,
+        y: leftJoyY - joyRadius,
+        w: joyRadius * 2,
+        h: joyRadius * 2,
+      });
+      rects.push({
+        x: rightJoyX - joyRadius,
+        y: rightJoyY - joyRadius,
+        w: joyRadius * 2,
+        h: joyRadius * 2,
+      });
+    }
+
+    exclusionRectsRef.current = rects;
+  }, []);
 
   const PLAYER_COLORS = [
     { n: '#00f0ff', g: 'rgba(0, 240, 255, 0.4)', name: 'CYAN' },
@@ -2128,10 +2317,28 @@ export default function GameCanvas() {
   const pauseStartRef = useRef<number | null>(null);
   const accumulatedPauseOffsetRef = useRef<number>(0);
 
+  useEffect(() => {
+    const handleResize = () => {
+      updateExclusionRects();
+    };
+    window.addEventListener('resize', handleResize);
+    return () => window.removeEventListener('resize', handleResize);
+  }, [updateExclusionRects]);
+
+  useEffect(() => {
+    updateExclusionRects();
+  }, [uiState.status, uiState.deviceType, mpState.roomId, currentMatchPhase, updateExclusionRects]);
+
   const handleSpawnerDestroyed = useCallback((destroyedSpawner: { x: number; y: number; radius?: number }) => {
     const state = stateRef.current;
     const canvas = canvasRef.current;
     if (!state || !canvas || uiRef.current.status !== 'PLAYING') {
+      spawnerPointerAnimRef.current = null;
+      return;
+    }
+
+    const isNormalMode = state.gameMode ? state.gameMode === 'normal' : !uiRef.current.hardMode;
+    if (!isNormalMode) {
       spawnerPointerAnimRef.current = null;
       return;
     }
@@ -8512,25 +8719,14 @@ export default function GameCanvas() {
 
 
 
+      // Ensure exclusion rects are computed if empty
+      if (uiRef.current.status === 'PLAYING' && exclusionRectsRef.current.length === 0) {
+        updateExclusionRects();
+      }
+
       // Draw off-screen indicators for other players in multiplayer
       if (uiRef.current.status === 'PLAYING' && mpRef.current.roomId) {
         const localId = socketRef.current?.id || 'local';
-        const isMobile = uiRef.current.deviceType === 'mobile';
-
-        // Invisible screen-area box: adjusted to be larger while avoiding overlapping UI elements
-        const boxMarginLeft = isMobile ? 45 : 35;
-        const boxMarginRight = isMobile ? 45 : 35;
-        const boxMarginTop = 85;
-        const boxMarginBottom = isMobile ? 135 : 45;
-
-        const boxX1 = boxMarginLeft;
-        const boxY1 = boxMarginTop;
-        const boxX2 = canvas.width - boxMarginRight;
-        const boxY2 = canvas.height - boxMarginBottom;
-
-        // Anchor point is the absolute center of the viewport/player screen
-        const anchorX = canvas.width / 2;
-        const anchorY = canvas.height / 2;
 
         for (const tId in state.multiplayerPlayers) {
           if (tId === localId) continue;
@@ -8549,7 +8745,13 @@ export default function GameCanvas() {
             screenOtherY > canvas.height + margin;
 
           if (isOffScreen) {
-            const { x: ix, y: iy, angle } = calculateEdgePointerPosition(screenOtherX, screenOtherY, canvas.width, canvas.height, isMobile);
+            const { x: ix, y: iy, angle } = calculateEdgePointerPosition(
+              screenOtherX,
+              screenOtherY,
+              canvas.width,
+              canvas.height,
+              exclusionRectsRef.current
+            );
 
             const pDef = PLAYER_COLORS[pData.colorIdx] || PLAYER_COLORS[0];
             const pColor = pDef.n;
@@ -8583,95 +8785,111 @@ export default function GameCanvas() {
         }
       }
 
-      // Draw closest spawner direction indicator if no living spawners are visible
+      // Draw closest spawner direction indicator if no living spawners are visible (Normal mode only)
+      const isNormalMode = state.gameMode ? state.gameMode === 'normal' : !uiRef.current.hardMode;
       if (uiRef.current.status === 'PLAYING') {
-        const livingSpawners = state.spawners.filter(s => s.hp === undefined || s.hp > 0);
-        const isMobile = uiRef.current.deviceType === 'mobile';
-        const canvasW = canvas.width;
-        const canvasH = canvas.height;
-
-        if (livingSpawners.length === 0) {
+        if (!isNormalMode) {
           spawnerPointerAnimRef.current = null;
         } else {
-          const isAnyVisible = livingSpawners.some(s => isSpawnerVisible(s, state.camera, canvasW, canvasH));
-          if (isAnyVisible) {
+          const livingSpawners = state.spawners.filter(s => s.hp === undefined || s.hp > 0);
+          const canvasW = canvas.width;
+          const canvasH = canvas.height;
+
+          if (livingSpawners.length === 0) {
             spawnerPointerAnimRef.current = null;
           } else {
-            const spawnerColor = state.hardMode ? '#ff3300' : '#ff00ff';
-            const anim = spawnerPointerAnimRef.current;
-            const now = currentTime;
+            const isAnyVisible = livingSpawners.some(s => isSpawnerVisible(s, state.camera, canvasW, canvasH));
+            if (isAnyVisible) {
+              spawnerPointerAnimRef.current = null;
+            } else {
+              const spawnerColor = state.hardMode ? '#ff3300' : '#ff00ff';
+              const anim = spawnerPointerAnimRef.current;
+              const now = currentTime;
 
-            let drawX: number | null = null;
-            let drawY: number | null = null;
-            let drawAngle: number | null = null;
+              let drawX: number | null = null;
+              let drawY: number | null = null;
+              let drawAngle: number | null = null;
 
-            if (anim) {
-              const elapsed = now - anim.startTime;
-              if (elapsed < anim.duration) {
-                const t = Math.max(0, Math.min(1, elapsed / anim.duration));
-                const p = 1 - (1 - t) * (1 - t);
+              if (anim) {
+                const elapsed = now - anim.startTime;
+                if (elapsed < anim.duration) {
+                  const t = Math.max(0, Math.min(1, elapsed / anim.duration));
+                  const p = 1 - (1 - t) * (1 - t);
 
-                const targetSpawner = livingSpawners.find(
-                  s => Math.abs(s.x - anim.targetWorldX) < 5 && Math.abs(s.y - anim.targetWorldY) < 5
-                ) || getClosestSpawner(livingSpawners, state.player);
+                  const targetSpawner = livingSpawners.find(
+                    s => Math.abs(s.x - anim.targetWorldX) < 5 && Math.abs(s.y - anim.targetWorldY) < 5
+                  ) || getClosestSpawner(livingSpawners, state.player);
 
-                if (targetSpawner) {
-                  const startScreenX = anim.startWorldX - state.camera.x;
-                  const startScreenY = anim.startWorldY - state.camera.y;
+                  if (targetSpawner) {
+                    const startScreenX = anim.startWorldX - state.camera.x;
+                    const startScreenY = anim.startWorldY - state.camera.y;
 
-                  const targetScreenX = targetSpawner.x - state.camera.x;
-                  const targetScreenY = targetSpawner.y - state.camera.y;
+                    const targetScreenX = targetSpawner.x - state.camera.x;
+                    const targetScreenY = targetSpawner.y - state.camera.y;
 
-                  const edgePos = calculateEdgePointerPosition(targetScreenX, targetScreenY, canvasW, canvasH, isMobile);
+                    const edgePos = calculateEdgePointerPosition(
+                      targetScreenX,
+                      targetScreenY,
+                      canvasW,
+                      canvasH,
+                      exclusionRectsRef.current
+                    );
 
-                  drawX = startScreenX + (edgePos.x - startScreenX) * p;
-                  drawY = startScreenY + (edgePos.y - startScreenY) * p;
+                    drawX = startScreenX + (edgePos.x - startScreenX) * p;
+                    drawY = startScreenY + (edgePos.y - startScreenY) * p;
 
-                  const dx = targetScreenX - drawX;
-                  const dy = targetScreenY - drawY;
-                  drawAngle = Math.atan2(dy, dx);
+                    const dx = targetScreenX - drawX;
+                    const dy = targetScreenY - drawY;
+                    drawAngle = Math.atan2(dy, dx);
+                  } else {
+                    spawnerPointerAnimRef.current = null;
+                  }
                 } else {
                   spawnerPointerAnimRef.current = null;
                 }
-              } else {
-                spawnerPointerAnimRef.current = null;
               }
-            }
 
-            if (drawX === null || drawY === null || drawAngle === null) {
-              const closest = getClosestSpawner(livingSpawners, state.player);
-              if (closest) {
-                const targetScreenX = closest.x - state.camera.x;
-                const targetScreenY = closest.y - state.camera.y;
-                const edgePos = calculateEdgePointerPosition(targetScreenX, targetScreenY, canvasW, canvasH, isMobile);
-                drawX = edgePos.x;
-                drawY = edgePos.y;
-                drawAngle = edgePos.angle;
+              if (drawX === null || drawY === null || drawAngle === null) {
+                const closest = getClosestSpawner(livingSpawners, state.player);
+                if (closest) {
+                  const targetScreenX = closest.x - state.camera.x;
+                  const targetScreenY = closest.y - state.camera.y;
+                  const edgePos = calculateEdgePointerPosition(
+                    targetScreenX,
+                    targetScreenY,
+                    canvasW,
+                    canvasH,
+                    exclusionRectsRef.current
+                  );
+                  drawX = edgePos.x;
+                  drawY = edgePos.y;
+                  drawAngle = edgePos.angle;
+                }
               }
-            }
 
-            if (drawX !== null && drawY !== null && drawAngle !== null) {
-              ctx.save();
-              ctx.translate(drawX, drawY);
-              ctx.rotate(drawAngle);
+              if (drawX !== null && drawY !== null && drawAngle !== null) {
+                ctx.save();
+                ctx.translate(drawX, drawY);
+                ctx.rotate(drawAngle);
 
-              ctx.shadowColor = spawnerColor;
-              ctx.shadowBlur = 8;
-              ctx.fillStyle = spawnerColor;
+                ctx.shadowColor = spawnerColor;
+                ctx.shadowBlur = 8;
+                ctx.fillStyle = spawnerColor;
 
-              const size = 12;
-              ctx.beginPath();
-              ctx.moveTo(size, 0);
-              ctx.lineTo(-size / 2, -size / 1.5);
-              ctx.lineTo(-size / 2, size / 1.5);
-              ctx.closePath();
-              ctx.fill();
+                const size = 12;
+                ctx.beginPath();
+                ctx.moveTo(size, 0);
+                ctx.lineTo(-size / 2, -size / 1.5);
+                ctx.lineTo(-size / 2, size / 1.5);
+                ctx.closePath();
+                ctx.fill();
 
-              ctx.strokeStyle = '#020205';
-              ctx.lineWidth = 2;
-              ctx.shadowBlur = 0;
-              ctx.stroke();
-              ctx.restore();
+                ctx.strokeStyle = '#020205';
+                ctx.lineWidth = 2;
+                ctx.shadowBlur = 0;
+                ctx.stroke();
+                ctx.restore();
+              }
             }
           }
         }
@@ -9819,7 +10037,7 @@ export default function GameCanvas() {
               >
                 {/* Active-player HUD for FINAL_RUN */}
                 {mpState.roomId && currentMatchPhase === 'FINAL_RUN' && (
-                  <div className="absolute top-[116px] sm:top-6 left-1/2 -translate-x-1/2 pointer-events-none z-20">
+                  <div ref={hudTopCenterRef} className="absolute top-[116px] sm:top-6 left-1/2 -translate-x-1/2 pointer-events-none z-20">
                     <div className="bg-[#0a0000]/85 border border-[#FFCC00] text-[#FFCC00] shadow-[0_0_12px_rgba(255,204,0,0.35)] px-3 sm:px-4 py-1.5 sm:py-2 rounded-md font-mono font-black text-xs sm:text-sm tracking-widest uppercase flex items-center gap-2 backdrop-blur-sm">
                       <span>FINAL RUN</span>
                       <span className="text-[#FFCC00]/50">//</span>
@@ -9830,7 +10048,7 @@ export default function GameCanvas() {
 
                 {/* Active-player HUD for START SHIELD */}
                 {mpState.roomId && isOpeningProtectionActiveLocal(performance.now()) && (
-                  <div className="absolute top-[116px] sm:top-6 left-1/2 -translate-x-1/2 pointer-events-none z-20">
+                  <div ref={hudTopCenterRef} className="absolute top-[116px] sm:top-6 left-1/2 -translate-x-1/2 pointer-events-none z-20">
                     <div className="bg-[#0a0000]/85 border border-[#00f0ff] text-[#00f0ff] shadow-[0_0_12px_rgba(0,240,255,0.35)] px-3 sm:px-4 py-1.5 sm:py-2 rounded-md font-mono font-black text-xs sm:text-sm tracking-widest uppercase flex items-center gap-2 backdrop-blur-sm">
                       <span>START SHIELD</span>
                       <span className="text-[#00f0ff]/50">//</span>
@@ -9852,7 +10070,7 @@ export default function GameCanvas() {
                   }}
                 >
                   {/* Left: Score & Spawners / Target Counters */}
-                  <div className="flex items-stretch gap-2 sm:gap-6 ml-0 sm:ml-4">
+                  <div ref={hudTopLeftRef} className="flex items-stretch gap-2 sm:gap-6 ml-0 sm:ml-4">
                     <motion.div
                       animate={flashScore ? {
                         filter: [
@@ -9910,7 +10128,7 @@ export default function GameCanvas() {
                   </div>
 
                   {/* Right: Pause & Quit buttons */}
-                  <div className="flex flex-col sm:flex-row items-end sm:items-center justify-center gap-2 sm:gap-4 pointer-events-auto h-full pr-0 sm:pr-2">
+                  <div ref={hudTopRightRef} className="flex flex-col sm:flex-row items-end sm:items-center justify-center gap-2 sm:gap-4 pointer-events-auto h-full pr-0 sm:pr-2">
                     <button
                       onPointerDown={(e) => {
                         e.stopPropagation();
@@ -10148,12 +10366,13 @@ export default function GameCanvas() {
 
             {uiState.status !== 'PAUSED' && (
               <>
-                <div className="hidden sm:block absolute bottom-0 left-0 p-8 pointer-events-none z-10">
+                <div ref={hudBottomLeftRef} className="hidden sm:block absolute bottom-0 left-0 p-8 pointer-events-none z-10">
                    <div className="text-sm text-[#94A3B8] tracking-[0.2em] font-bold font-mono">
                      {uiState.deviceType === 'mobile' ? 'JOYSTICK TO MOVE' : 'WASD TO MOVE'}
                    </div>
                 </div>
                 <div
+                  ref={hudBottomCenterRef}
                   className={`absolute left-1/2 -translate-x-1/2 pointer-events-none z-10 flex gap-[10px] sm:gap-[16px] bottom-3 sm:bottom-6 max-w-[calc(100vw-24px)]`}
                   style={{
                     bottom: 'calc(0.75rem + env(safe-area-inset-bottom, 0px))',
@@ -10250,7 +10469,7 @@ export default function GameCanvas() {
                    })}
                 </div>
 
-                <div className="hidden sm:block absolute bottom-0 right-0 p-8 pointer-events-none z-10 text-right">
+                <div ref={hudBottomRightRef} className="hidden sm:block absolute bottom-0 right-0 p-8 pointer-events-none z-10 text-right">
                    <div className="text-sm text-[#94A3B8] tracking-[0.2em] font-bold font-mono">
                      {uiState.deviceType === 'mobile' ? 'TAP TO SHOOT' : 'MOUSE TO SHOOT'}
                    </div>
