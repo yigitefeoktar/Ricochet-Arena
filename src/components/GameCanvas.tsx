@@ -5784,8 +5784,7 @@ export default function GameCanvas() {
 
           if (isDefeat && !isScoreBased) {
             const myColorIdx = playerProfileRef.current.colorIdx;
-            const label = reason?.label || 'ARENA ELIMINATION';
-            triggerEliminationAnimation(state.player.x, state.player.y, myColorIdx, label);
+            triggerEliminationAnimation(state.player.x, state.player.y, myColorIdx);
           }
         }
       }
