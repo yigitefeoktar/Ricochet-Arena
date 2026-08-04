@@ -4831,11 +4831,6 @@ export default function GameCanvas() {
             const prevMe = stateRef.current.matchPlayers[myId];
             const incomingMe = state.matchPlayers[myId];
             if (prevMe && incomingMe && !prevMe.isDead && incomingMe.isDead && uiRef.current.status === 'PLAYING') {
-              // Trigger the local visual burst animation
-              const localColorIdx = playerProfileRef.current.colorIdx;
-              const localName = playerProfileRef.current.name || 'YOU';
-              triggerEliminationRef.current?.(stateRef.current.player.x, stateRef.current.player.y, localColorIdx, localName);
-
               // start the existing local elimination/end presentation once
               triggerEndPresentation({
                 outcome: 'defeat',
