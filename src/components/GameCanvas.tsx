@@ -1635,37 +1635,11 @@ function getClosestSpawner<T extends { x: number; y: number; hp?: number }>(
   return closest;
 }
 
-export interface ExclusionRect {
-  x: number;
-  y: number;
-  w: number;
-  h: number;
-}
-
-interface PaddedRect {
-  x1: number;
-  y1: number;
-  x2: number;
-  y2: number;
-}
-
-function isPointerPosValid(
-  x: number,
-  y: number,
-  paddedRects: PaddedRect[],
-  canvasW: number,
-  canvasH: number,
-  inset: number
-): boolean {
-  if (x < inset || x > canvasW - inset || y < inset || y > canvasH - inset) {
-    return false;
-  }
-  for (const r of paddedRects) {
-    if (x >= r.x1 && x <= r.x2 && y >= r.y1 && y <= r.y2) {
-      return false;
-    }
-  }
-  return true;
+export interface PointerSafeRect {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
 }
 
 function calculateEdgePointerPosition(
@@ -1673,10 +1647,14 @@ function calculateEdgePointerPosition(
   targetScreenY: number,
   canvasWidth: number,
   canvasHeight: number,
-  exclusionRects: ExclusionRect[] = []
+  safeRect: PointerSafeRect | null
 ): { x: number; y: number; angle: number } {
-  const EDGE_INSET = 24;
-  const PADDING = 24;
+  const rect = safeRect || {
+    left: 24,
+    top: 24,
+    right: canvasWidth - 24,
+    bottom: canvasHeight - 24,
+  };
 
   const anchorX = canvasWidth / 2;
   const anchorY = canvasHeight / 2;
@@ -1685,130 +1663,43 @@ function calculateEdgePointerPosition(
   const dy = targetScreenY - anchorY;
   const angle = Math.atan2(dy, dx);
 
-  const boxX1 = EDGE_INSET;
-  const boxY1 = EDGE_INSET;
-  const boxX2 = canvasWidth - EDGE_INSET;
-  const boxY2 = canvasHeight - EDGE_INSET;
-
-  const paddedRects: PaddedRect[] = exclusionRects.map((r) => ({
-    x1: r.x - PADDING,
-    y1: r.y - PADDING,
-    x2: r.x + r.w + PADDING,
-    y2: r.y + r.h + PADDING,
-  }));
-
   if (dx === 0 && dy === 0) {
     return { x: anchorX, y: anchorY, angle };
   }
 
+  const boxX1 = rect.left;
+  const boxY1 = rect.top;
+  const boxX2 = rect.right;
+  const boxY2 = rect.bottom;
+
   let tMin = Infinity;
-  let primaryEdge: 'top' | 'bottom' | 'left' | 'right' = 'top';
 
   if (dx < 0) {
     const t = (boxX1 - anchorX) / dx;
-    if (t >= 0 && t < tMin) {
-      tMin = t;
-      primaryEdge = 'left';
-    }
+    if (t >= 0 && t < tMin) tMin = t;
   }
   if (dx > 0) {
     const t = (boxX2 - anchorX) / dx;
-    if (t >= 0 && t < tMin) {
-      tMin = t;
-      primaryEdge = 'right';
-    }
+    if (t >= 0 && t < tMin) tMin = t;
   }
   if (dy < 0) {
     const t = (boxY1 - anchorY) / dy;
-    if (t >= 0 && t < tMin) {
-      tMin = t;
-      primaryEdge = 'top';
-    }
+    if (t >= 0 && t < tMin) tMin = t;
   }
   if (dy > 0) {
     const t = (boxY2 - anchorY) / dy;
-    if (t >= 0 && t < tMin) {
-      tMin = t;
-      primaryEdge = 'bottom';
-    }
+    if (t >= 0 && t < tMin) tMin = t;
   }
 
-  let ix = anchorX + dx * tMin;
-  let iy = anchorY + dy * tMin;
+  let ix = targetScreenX;
+  let iy = targetScreenY;
+  if (tMin !== Infinity) {
+    ix = anchorX + dx * tMin;
+    iy = anchorY + dy * tMin;
+  }
 
   ix = Math.max(boxX1, Math.min(boxX2, ix));
   iy = Math.max(boxY1, Math.min(boxY2, iy));
-
-  if (isPointerPosValid(ix, iy, paddedRects, canvasWidth, canvasHeight, EDGE_INSET)) {
-    return { x: ix, y: iy, angle };
-  }
-
-  const findClosestValidOnEdge = (
-    edge: 'top' | 'bottom' | 'left' | 'right'
-  ): { x: number; y: number; dist: number } | null => {
-    let bestX = 0;
-    let bestY = 0;
-    let minDistance = Infinity;
-    let found = false;
-
-    if (edge === 'top' || edge === 'bottom') {
-      const edgeY = edge === 'top' ? boxY1 : boxY2;
-      for (let x = boxX1; x <= boxX2; x++) {
-        if (isPointerPosValid(x, edgeY, paddedRects, canvasWidth, canvasHeight, EDGE_INSET)) {
-          const dist = Math.hypot(x - ix, edgeY - iy);
-          if (dist < minDistance) {
-            minDistance = dist;
-            bestX = x;
-            bestY = edgeY;
-            found = true;
-          }
-        }
-      }
-    } else {
-      const edgeX = edge === 'left' ? boxX1 : boxX2;
-      for (let y = boxY1; y <= boxY2; y++) {
-        if (isPointerPosValid(edgeX, y, paddedRects, canvasWidth, canvasHeight, EDGE_INSET)) {
-          const dist = Math.hypot(edgeX - ix, y - iy);
-          if (dist < minDistance) {
-            minDistance = dist;
-            bestX = edgeX;
-            bestY = y;
-            found = true;
-          }
-        }
-      }
-    }
-
-    return found ? { x: bestX, y: bestY, dist: minDistance } : null;
-  };
-
-  const primaryResult = findClosestValidOnEdge(primaryEdge);
-  if (primaryResult) {
-    return { x: primaryResult.x, y: primaryResult.y, angle };
-  }
-
-  const adjacentEdges: ('top' | 'bottom' | 'left' | 'right')[] =
-    primaryEdge === 'top' || primaryEdge === 'bottom' ? ['left', 'right'] : ['top', 'bottom'];
-
-  let bestAdjacentResult: { x: number; y: number; dist: number } | null = null;
-  for (const adjEdge of adjacentEdges) {
-    const res = findClosestValidOnEdge(adjEdge);
-    if (res && (!bestAdjacentResult || res.dist < bestAdjacentResult.dist)) {
-      bestAdjacentResult = res;
-    }
-  }
-
-  if (bestAdjacentResult) {
-    return { x: bestAdjacentResult.x, y: bestAdjacentResult.y, angle };
-  }
-
-  const oppositeEdge: 'top' | 'bottom' | 'left' | 'right' =
-    primaryEdge === 'top' ? 'bottom' : primaryEdge === 'bottom' ? 'top' : primaryEdge === 'left' ? 'right' : 'left';
-
-  const oppositeResult = findClosestValidOnEdge(oppositeEdge);
-  if (oppositeResult) {
-    return { x: oppositeResult.x, y: oppositeResult.y, angle };
-  }
 
   return { x: ix, y: iy, angle };
 }
@@ -1834,71 +1725,62 @@ export default function GameCanvas() {
   const hudBottomCenterRef = useRef<HTMLDivElement>(null);
   const hudBottomLeftRef = useRef<HTMLDivElement>(null);
   const hudBottomRightRef = useRef<HTMLDivElement>(null);
-  const exclusionRectsRef = useRef<ExclusionRect[]>([]);
+  const pointerSafeRectRef = useRef<PointerSafeRect | null>(null);
 
   const updateExclusionRects = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) {
-      exclusionRectsRef.current = [];
+      pointerSafeRectRef.current = null;
       return;
     }
 
     const canvasRect = canvas.getBoundingClientRect();
     if (canvasRect.width === 0 || canvasRect.height === 0) {
-      exclusionRectsRef.current = [];
+      pointerSafeRectRef.current = null;
       return;
     }
 
-    const scaleX = canvas.width / canvasRect.width;
     const scaleY = canvas.height / canvasRect.height;
 
-    const rects: ExclusionRect[] = [];
-    const refs = [
-      hudTopLeftRef,
-      hudTopRightRef,
-      hudTopCenterRef,
-      hudBottomCenterRef,
-      hudBottomLeftRef,
-      hudBottomRightRef,
-    ];
+    const EDGE_INSET = 24;
+    const POINTER_CLEARANCE = 24;
 
-    for (const r of refs) {
+    let left = EDGE_INSET;
+    let right = canvas.width - EDGE_INSET;
+    let top = EDGE_INSET;
+    let bottom = canvas.height - EDGE_INSET;
+
+    const topRefs = [hudTopLeftRef, hudTopRightRef, hudTopCenterRef];
+    for (const r of topRefs) {
       if (r.current) {
         const domRect = r.current.getBoundingClientRect();
         if (domRect.width > 0 && domRect.height > 0) {
-          rects.push({
-            x: (domRect.left - canvasRect.left) * scaleX,
-            y: (domRect.top - canvasRect.top) * scaleY,
-            w: domRect.width * scaleX,
-            h: domRect.height * scaleY,
-          });
+          const groupBottom = (domRect.top - canvasRect.top) * scaleY + domRect.height * scaleY;
+          top = Math.max(top, groupBottom + POINTER_CLEARANCE);
+        }
+      }
+    }
+
+    const bottomRefs = [hudBottomCenterRef, hudBottomLeftRef, hudBottomRightRef];
+    for (const r of bottomRefs) {
+      if (r.current) {
+        const domRect = r.current.getBoundingClientRect();
+        if (domRect.width > 0 && domRect.height > 0) {
+          const groupTop = (domRect.top - canvasRect.top) * scaleY;
+          bottom = Math.min(bottom, groupTop - POINTER_CLEARANCE);
         }
       }
     }
 
     if (uiRef.current.status === 'PLAYING' && uiRef.current.deviceType === 'mobile') {
       const joyOffset = Math.min(160, Math.max(85, Math.floor(canvas.height * 0.22)));
-      const leftJoyX = Math.min(80, Math.floor(canvas.width * 0.18));
       const leftJoyY = canvas.height - joyOffset;
-      const rightJoyX = canvas.width - leftJoyX;
-      const rightJoyY = canvas.height - joyOffset;
       const joyRadius = 60;
-
-      rects.push({
-        x: leftJoyX - joyRadius,
-        y: leftJoyY - joyRadius,
-        w: joyRadius * 2,
-        h: joyRadius * 2,
-      });
-      rects.push({
-        x: rightJoyX - joyRadius,
-        y: rightJoyY - joyRadius,
-        w: joyRadius * 2,
-        h: joyRadius * 2,
-      });
+      const joystickTop = leftJoyY - joyRadius;
+      bottom = Math.min(bottom, joystickTop - POINTER_CLEARANCE);
     }
 
-    exclusionRectsRef.current = rects;
+    pointerSafeRectRef.current = { left, top, right, bottom };
   }, []);
 
   const PLAYER_COLORS = [
@@ -8758,7 +8640,7 @@ export default function GameCanvas() {
               screenOtherY,
               canvas.width,
               canvas.height,
-              exclusionRectsRef.current
+              pointerSafeRectRef.current
             );
 
             const pDef = PLAYER_COLORS[pData.colorIdx] || PLAYER_COLORS[0];
@@ -8840,7 +8722,7 @@ export default function GameCanvas() {
                       targetScreenY,
                       canvasW,
                       canvasH,
-                      exclusionRectsRef.current
+                      pointerSafeRectRef.current
                     );
 
                     drawX = startScreenX + (edgePos.x - startScreenX) * p;
@@ -8867,7 +8749,7 @@ export default function GameCanvas() {
                     targetScreenY,
                     canvasW,
                     canvasH,
-                    exclusionRectsRef.current
+                    pointerSafeRectRef.current
                   );
                   drawX = edgePos.x;
                   drawY = edgePos.y;
