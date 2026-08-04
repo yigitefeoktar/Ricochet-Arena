@@ -8875,11 +8875,17 @@ export default function GameCanvas() {
   const menuScale = Math.max(0.75, Math.min(1.2, Math.min(containerSize.width / 460, containerSize.height / 650)));
   const mapScale = Math.max(0.75, Math.min(1.1, Math.min(containerSize.width / 920, containerSize.height / 650)));
 
+  const isAnyMapSelectorOpen =
+    (uiState.status === 'MENU' && isMapSelectOpen) ||
+    (uiState.status === 'LOBBY' && isMpMapSelectOpen);
+
   return (
     <div ref={wrapperRef} className="w-full h-full relative overflow-hidden bg-[#050508] font-mono select-none">
-      <div className="absolute inset-0 pointer-events-none z-[60] opacity-[0.1]" style={{
-        backgroundImage: `repeating-linear-gradient(0deg, transparent, transparent 2px, #fff 2px, #fff 4px)`
-      }} />
+      {!isAnyMapSelectorOpen && (
+        <div className="absolute inset-0 pointer-events-none z-[60] opacity-[0.1]" style={{
+          backgroundImage: `repeating-linear-gradient(0deg, transparent, transparent 2px, #fff 2px, #fff 4px)`
+        }} />
+      )}
       <div className="absolute inset-0 pointer-events-none z-[60] shadow-[inset_0_0_150px_rgba(0,0,0,0.9)]" />
 
       <canvas ref={canvasRef} className="w-full h-full block cursor-crosshair touch-none mix-blend-screen" />
