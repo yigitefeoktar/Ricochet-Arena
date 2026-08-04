@@ -7372,21 +7372,9 @@ export default function GameCanvas() {
                     setUiState(prev => {
                       const newScore = prev.score + pts;
                       let newBlocks = prev.blocks;
-                      let gainedBlocks = false;
                       while (newScore >= state.nextBlockScore) {
                         newBlocks++;
                         state.nextBlockScore += 100;
-                        gainedBlocks = true;
-                      }
-                      if (gainedBlocks) {
-                        const buildBtn = document.getElementById('tool-btn-build');
-                        if (buildBtn) {
-                          buildBtn.animate([
-                            { transform: 'scale(1)', boxShadow: '0 0 0px #ffcc00' },
-                            { transform: 'scale(1.1)', boxShadow: '0 0 30px #ffcc00' },
-                            { transform: 'scale(1)', boxShadow: '0 0 0px #ffcc00' }
-                          ], { duration: 400, easing: 'ease-out' });
-                        }
                       }
                       uiRef.current = { ...prev, score: newScore, blocks: newBlocks };
                       return uiRef.current;
