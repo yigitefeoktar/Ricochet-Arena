@@ -1838,10 +1838,16 @@ export default function GameCanvas() {
 
   const updateExclusionRects = useCallback(() => {
     const canvas = canvasRef.current;
-    if (!canvas) return;
+    if (!canvas) {
+      exclusionRectsRef.current = [];
+      return;
+    }
 
     const canvasRect = canvas.getBoundingClientRect();
-    if (canvasRect.width === 0 || canvasRect.height === 0) return;
+    if (canvasRect.width === 0 || canvasRect.height === 0) {
+      exclusionRectsRef.current = [];
+      return;
+    }
 
     const scaleX = canvas.width / canvasRect.width;
     const scaleY = canvas.height / canvasRect.height;
@@ -2209,7 +2215,7 @@ export default function GameCanvas() {
   const wasProtectionActiveRef = useRef<boolean>(false);
   const [currentMatchPhase, setCurrentMatchPhase] = useState<'PLAYING' | 'FINAL_RUN' | 'FINISHED'>('PLAYING');
   const [, setFinalRunTick] = useState<number>(0);
-  const [, setProtectionTick] = useState<number>(0);
+  const [protectionTick, setProtectionTick] = useState<number>(0);
 
   const isOpeningProtectionActiveForHost = useCallback((currentTime: number = performance.now()) => {
     if (!mpRef.current.roomId || !mpRef.current.isHost) return false;
@@ -2318,16 +2324,21 @@ export default function GameCanvas() {
   const accumulatedPauseOffsetRef = useRef<number>(0);
 
   useEffect(() => {
-    const handleResize = () => {
+    const handle = requestAnimationFrame(() => {
       updateExclusionRects();
-    };
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, [updateExclusionRects]);
-
-  useEffect(() => {
-    updateExclusionRects();
-  }, [uiState.status, uiState.deviceType, mpState.roomId, currentMatchPhase, updateExclusionRects]);
+    });
+    return () => cancelAnimationFrame(handle);
+  }, [
+    containerSize.width,
+    containerSize.height,
+    uiState.status,
+    uiState.deviceType,
+    mpState.roomId,
+    currentMatchPhase,
+    bannerState.show,
+    protectionTick,
+    updateExclusionRects,
+  ]);
 
   const handleSpawnerDestroyed = useCallback((destroyedSpawner: { x: number; y: number; radius?: number }) => {
     const state = stateRef.current;
@@ -8719,10 +8730,7 @@ export default function GameCanvas() {
 
 
 
-      // Ensure exclusion rects are computed if empty
-      if (uiRef.current.status === 'PLAYING' && exclusionRectsRef.current.length === 0) {
-        updateExclusionRects();
-      }
+
 
       // Draw off-screen indicators for other players in multiplayer
       if (uiRef.current.status === 'PLAYING' && mpRef.current.roomId) {
