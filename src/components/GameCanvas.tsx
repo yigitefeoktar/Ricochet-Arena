@@ -1801,6 +1801,8 @@ export default function GameCanvas() {
   const quickSaveRef = useRef<{ runId: number; serialized: string } | null>(null);
   const activeSinglePlayerRunIdRef = useRef<number>(1);
   const activeMultiplayerRoundIdRef = useRef<number>(0);
+  const multiplayerStartPendingRef = useRef<boolean>(false);
+  const [multiplayerStartPending, setMultiplayerStartPending] = useState<boolean>(false);
 
   const invalidateQuickSave = useCallback(() => {
     quickSaveRef.current = null;
@@ -2443,6 +2445,7 @@ export default function GameCanvas() {
   };
 
   const handleStartMultiplayerMatch = () => {
+    if (multiplayerStartPendingRef.current) return;
     if (!mpRef.current.roomId || !mpState.isHost) return;
 
     if (matchSettingsUpdatePendingRef.current) {
@@ -2476,6 +2479,9 @@ export default function GameCanvas() {
       return;
     }
 
+    multiplayerStartPendingRef.current = true;
+    setMultiplayerStartPending(true);
+
     socketRef.current?.emit(
       'start_game',
       mpRef.current.roomId,
@@ -2483,33 +2489,38 @@ export default function GameCanvas() {
         spawnAssignments
       },
       (response?: { success: boolean; roundId?: number; config?: { mapId: string; gameMode: GameMode; hardMode: boolean; spawnAssignments: any }; error?: string }) => {
-        if (response && response.success && response.config && typeof response.roundId === 'number') {
-          activeMultiplayerRoundIdRef.current = response.roundId;
-          setMpError(null);
-          const startConfig = response.config;
-          const ok = resetGame(isMobileRef.current ? 'mobile' : 'desktop', startConfig.mapId, startConfig.gameMode, startConfig.spawnAssignments);
-          if (ok) {
-            setUiState(prev => ({
-              ...prev,
-              status: 'PLAYING',
-              mapId: startConfig.mapId,
-              hardMode: startConfig.hardMode,
-              gameMode: startConfig.gameMode
-            }));
+        try {
+          if (response && response.success && response.config && typeof response.roundId === 'number') {
+            activeMultiplayerRoundIdRef.current = response.roundId;
+            setMpError(null);
+            const startConfig = response.config;
+            const ok = resetGame(isMobileRef.current ? 'mobile' : 'desktop', startConfig.mapId, startConfig.gameMode, startConfig.spawnAssignments);
+            if (ok) {
+              setUiState(prev => ({
+                ...prev,
+                status: 'PLAYING',
+                mapId: startConfig.mapId,
+                hardMode: startConfig.hardMode,
+                gameMode: startConfig.gameMode
+              }));
+            } else {
+              setMpError("FAILED TO INITIALIZE MATCH");
+            }
           } else {
-            setMpError("FAILED TO INITIALIZE MATCH");
+            const err = response?.error || 'START_FAILED';
+            const msg =
+              err === 'ROSTER_MISMATCH'
+                ? 'ROSTER CHANGED - TRY AGAIN'
+                : err === 'NO_SPAWN_ASSIGNMENTS' || err === 'INVALID_SPAWN_COORDINATES'
+                ? 'NO SAFE START FORMATION'
+                : err === 'NOT_ENOUGH_PLAYERS'
+                ? 'WAITING FOR ANOTHER PLAYER'
+                : `START FAILED: ${err}`;
+            setMpError(msg);
           }
-        } else {
-          const err = response?.error || 'START_FAILED';
-          const msg =
-            err === 'ROSTER_MISMATCH'
-              ? 'ROSTER CHANGED - TRY AGAIN'
-              : err === 'NO_SPAWN_ASSIGNMENTS' || err === 'INVALID_SPAWN_COORDINATES'
-              ? 'NO SAFE START FORMATION'
-              : err === 'NOT_ENOUGH_PLAYERS'
-              ? 'WAITING FOR ANOTHER PLAYER'
-              : `START FAILED: ${err}`;
-          setMpError(msg);
+        } finally {
+          multiplayerStartPendingRef.current = false;
+          setMultiplayerStartPending(false);
         }
       }
     );
@@ -4683,6 +4694,8 @@ export default function GameCanvas() {
     });
 
     socket.on('disconnect', () => {
+      multiplayerStartPendingRef.current = false;
+      setMultiplayerStartPending(false);
       cancelPendingMatchSettingsUpdate();
       closeMpMapSelector();
       setMpState(prev => ({ ...prev, isConnected: false }));
@@ -9951,17 +9964,23 @@ export default function GameCanvas() {
                   {mpState.isHost ? (() => {
                     const lobbyPlayerCount = Object.keys(lobbyPlayers).length + 1;
                     const canStartMatch = lobbyPlayerCount >= 2;
+                    const isButtonDisabled = !canStartMatch || multiplayerStartPending;
+                    const buttonLabel = multiplayerStartPending
+                      ? "STARTING..."
+                      : canStartMatch
+                      ? "START MATCH"
+                      : "WAITING FOR PLAYER";
                     return (
                       <button
                         onClick={handleStartMultiplayerMatch}
-                        disabled={!canStartMatch}
+                        disabled={isButtonDisabled}
                         className={`w-full py-4 font-black tracking-widest transition-all duration-200 uppercase text-sm mb-2 ${
-                          canStartMatch
+                          !isButtonDisabled
                             ? 'bg-[#ffcc00] hover:bg-white text-black cursor-pointer shadow-[3px_3px_0_rgba(255,204,0,0.15)] hover:shadow-[5px_5px_0_#fff] active:translate-x-1 active:translate-y-1 active:shadow-none'
                             : 'bg-[#ffcc00]/40 text-black/40 cursor-not-allowed opacity-60'
                         }`}
                       >
-                        {canStartMatch ? "START MATCH" : "WAITING FOR PLAYER"}
+                        {buttonLabel}
                       </button>
                     );
                   })() : (
@@ -10006,6 +10025,8 @@ export default function GameCanvas() {
               <button onClick={() => {
                 if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
                 activeMultiplayerRoundIdRef.current = 0;
+                multiplayerStartPendingRef.current = false;
+                setMultiplayerStartPending(false);
                 cancelPendingMatchSettingsUpdate();
                 closeMpMapSelector();
                 setMpState(prev => ({ ...prev, roomId: null, isHost: false, error: '' }));
@@ -10378,6 +10399,8 @@ export default function GameCanvas() {
                       stateRef.current.shake = 20;
                       if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
                       activeMultiplayerRoundIdRef.current = 0;
+                      multiplayerStartPendingRef.current = false;
+                      setMultiplayerStartPending(false);
                       cancelPendingMatchSettingsUpdate();
                       setMpState(prev => ({ ...prev, roomId: null, isHost: false, error: '' }));
                       setUiState(prev => ({ ...prev, status: 'MENU' }));
@@ -10560,6 +10583,8 @@ export default function GameCanvas() {
                 onClick={() => {
                   if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
                   activeMultiplayerRoundIdRef.current = 0;
+                  multiplayerStartPendingRef.current = false;
+                  setMultiplayerStartPending(false);
                   setMpState(prev => ({ ...prev, roomId: null, isHost: false, error: '' }));
                   setUiState(prev => ({ ...prev, status: 'MENU' }));
                 }}
@@ -10623,6 +10648,8 @@ export default function GameCanvas() {
                 onClick={() => {
                   if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
                   activeMultiplayerRoundIdRef.current = 0;
+                  multiplayerStartPendingRef.current = false;
+                  setMultiplayerStartPending(false);
                   cancelPendingMatchSettingsUpdate();
                   setMpState(prev => ({ ...prev, roomId: null, isHost: false, error: '' }));
                   setUiState(prev => ({ ...prev, status: 'MENU' }));
@@ -10815,6 +10842,8 @@ export default function GameCanvas() {
                         onClick={() => {
                           if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
                           activeMultiplayerRoundIdRef.current = 0;
+                          multiplayerStartPendingRef.current = false;
+                          setMultiplayerStartPending(false);
                           cancelPendingMatchSettingsUpdate();
                           setMpState(prev => ({ ...prev, roomId: null, isHost: false, error: '' }));
                           setUiState(prev => ({ ...prev, status: 'MENU' }));
@@ -10838,9 +10867,14 @@ export default function GameCanvas() {
                     {isWholeGameEnded && mpState.isHost && (
                       <button
                         onClick={handleMultiplayerRestart}
-                        className="flex-1 py-3 sm:py-4 bg-[#ffcc00] hover:bg-white text-black border-2 border-[#ffcc00] font-black tracking-[0.2em] transition-all duration-200 uppercase text-xs sm:text-sm active:translate-x-1 active:translate-y-1 active:shadow-none hover:shadow-[5px_5px_0_#fff] pointer-events-auto"
+                        disabled={multiplayerStartPending}
+                        className={`flex-1 py-3 sm:py-4 font-black tracking-[0.2em] transition-all duration-200 uppercase text-xs sm:text-sm border-2 pointer-events-auto ${
+                          multiplayerStartPending
+                            ? 'bg-[#ffcc00]/40 text-black/40 border-[#ffcc00]/40 cursor-not-allowed opacity-60'
+                            : 'bg-[#ffcc00] hover:bg-white text-black border-[#ffcc00] active:translate-x-1 active:translate-y-1 active:shadow-none hover:shadow-[5px_5px_0_#fff]'
+                        }`}
                       >
-                        RESTART MATCH
+                        {multiplayerStartPending ? "STARTING..." : "RESTART MATCH"}
                       </button>
                     )}
 
