@@ -6184,9 +6184,7 @@ export default function GameCanvas() {
       if (mpRef.current.roomId && !mpRef.current.isHost && pendingGuestShotsRef.current.size > 0) {
         for (const [shotId, entry] of pendingGuestShotsRef.current.entries()) {
           if (currentTime - entry.spawnTime > 1500) {
-            if (entry.status === 'pending') {
-              state.bullets = state.bullets.filter(b => b.id !== entry.localBulletId);
-            }
+            state.bullets = state.bullets.filter(b => b.id !== entry.localBulletId);
             pendingGuestShotsRef.current.delete(shotId);
           }
         }
@@ -10863,6 +10861,7 @@ export default function GameCanvas() {
               <button
                 onClick={() => {
                   if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
+                  clearPendingGuestShots(true);
                   activeMultiplayerRoundIdRef.current = 0;
                   multiplayerStartPendingRef.current = false;
                   setMultiplayerStartPending(false);
