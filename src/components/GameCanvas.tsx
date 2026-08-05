@@ -7134,7 +7134,7 @@ export default function GameCanvas() {
           if (zone.type === 'repel') {
              // Zone follows owner
              let ownerTarget = null;
-             if (zone.ownerId === 'local') {
+             if (zone.ownerId === 'local' || (mpRef.current.roomId && socketRef.current?.id && zone.ownerId === socketRef.current.id)) {
                  ownerTarget = state.player;
              } else if (state.multiplayerPlayers[zone.ownerId]) {
                  ownerTarget = state.multiplayerPlayers[zone.ownerId];
