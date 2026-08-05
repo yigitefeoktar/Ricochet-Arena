@@ -5497,6 +5497,11 @@ export default function GameCanvas() {
             const dash = stateRef.current.player.dash;
             const endTime = dash.endTime || 0;
             if (!dash.active && (endTime === 0 || currentTime - endTime >= DASH_COOLDOWN)) {
+               const inMultiplayer = Boolean(mpRef.current.roomId);
+               const socketId = socketRef.current?.id;
+               if (inMultiplayer && !socketId) return;
+               const ownerId = inMultiplayer ? socketId! : 'local';
+
                dash.active = true;
                dash.endTime = currentTime + 6000;
                dash.lastTime = currentTime;
@@ -5507,18 +5512,15 @@ export default function GameCanvas() {
 
                if (isHostMode) {
                  const cIdx = playerProfileRef.current.colorIdx;
-                 applySpecialAbility(finalX, finalY, cIdx, 'local');
+                 applySpecialAbility(finalX, finalY, cIdx, ownerId);
                  if (mpRef.current.roomId && mpRef.current.isHost) {
-                   const myId = socketRef.current?.id;
-                   if (myId) {
-                     const auth = getOrInitializeAuthority(myId);
-                     auth.specialActiveUntil = currentTime + 6000;
-                     auth.specialReadyAt = currentTime + 6000 + DASH_COOLDOWN;
-                   }
+                   const auth = getOrInitializeAuthority(ownerId);
+                   auth.specialActiveUntil = currentTime + 6000;
+                   auth.specialReadyAt = currentTime + 6000 + DASH_COOLDOWN;
                  }
                } else {
                  socketRef.current?.emit('client_action', mpRef.current.roomId, { roundId: activeMultiplayerRoundIdRef.current, type: 'special', x: finalX, y: finalY, colorIdx: playerProfileRef.current.colorIdx });
-                 applySpecialAbility(finalX, finalY, playerProfileRef.current.colorIdx, socketRef.current?.id || 'local');
+                 applySpecialAbility(finalX, finalY, playerProfileRef.current.colorIdx, ownerId);
                }
             }
          }
@@ -6258,12 +6260,12 @@ export default function GameCanvas() {
         }
 
         // Apply zone shockwave knockback to local player
-        const myId = mpRef.current.roomId ? socketRef.current?.id : 'local';
+        const localOwnerId = mpRef.current.roomId ? socketRef.current?.id : 'local';
         if (!state.player.processedZoneKbs) {
            state.player.processedZoneKbs = [];
         }
         for (const zone of state.zones) {
-           if (zone.ownerId !== myId && zone.ownerId !== 'local') {
+           if (zone.ownerId !== localOwnerId) {
               if (!state.player.processedZoneKbs.includes(zone.spawnTime)) {
                  const dx = state.player.x - zone.x;
                  const dy = state.player.y - zone.y;
@@ -10450,6 +10452,11 @@ export default function GameCanvas() {
                              const currentTime = performance.now();
                              if (toolKey === 'special') {
                                if (!stateRef.current.player.dash.active && (stateRef.current.player.dash.endTime === 0 || currentTime - stateRef.current.player.dash.endTime >= DASH_COOLDOWN)) {
+                                  const inMultiplayer = Boolean(mpRef.current.roomId);
+                                  const socketId = socketRef.current?.id;
+                                  if (inMultiplayer && !socketId) return;
+                                  const ownerId = inMultiplayer ? socketId! : 'local';
+
                                   stateRef.current.player.dash.active = true;
                                   stateRef.current.player.dash.endTime = currentTime + 6000;
                                   stateRef.current.player.dash.lastTime = currentTime;
@@ -10459,18 +10466,15 @@ export default function GameCanvas() {
                                   const finalY = stateRef.current.player.y;
                                   if (isHostMode) {
                                     const cIdx = playerProfileRef.current.colorIdx;
-                                    applySpecialAbility(finalX, finalY, cIdx, 'local');
+                                    applySpecialAbility(finalX, finalY, cIdx, ownerId);
                                     if (mpRef.current.roomId && mpRef.current.isHost) {
-                                      const myId = socketRef.current?.id;
-                                      if (myId) {
-                                        const auth = getOrInitializeAuthority(myId);
-                                        auth.specialActiveUntil = currentTime + 6000;
-                                        auth.specialReadyAt = currentTime + 6000 + DASH_COOLDOWN;
-                                      }
+                                      const auth = getOrInitializeAuthority(ownerId);
+                                      auth.specialActiveUntil = currentTime + 6000;
+                                      auth.specialReadyAt = currentTime + 6000 + DASH_COOLDOWN;
                                     }
                                   } else {
                                     socketRef.current?.emit('client_action', mpRef.current.roomId, { roundId: activeMultiplayerRoundIdRef.current, type: 'special', x: finalX, y: finalY, colorIdx: playerProfileRef.current.colorIdx });
-                                    applySpecialAbility(finalX, finalY, playerProfileRef.current.colorIdx, socketRef.current?.id || 'local');
+                                    applySpecialAbility(finalX, finalY, playerProfileRef.current.colorIdx, ownerId);
                                   }
                                }
                              } else if (toolKey === 'build') {
