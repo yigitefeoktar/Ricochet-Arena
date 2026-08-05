@@ -1797,10 +1797,27 @@ export default function GameCanvas() {
   const isEditingCallsignRef = useRef<boolean>(false);
   const [containerSize, setContainerSize] = useState({ width: 1200, height: 800 });
   const [loadError, setLoadError] = useState<string | null>(null);
+  interface PendingGuestShot {
+    clientShotId: string;
+    localBulletId: string;
+    authoritativeBulletId: string | null;
+    roundId: number;
+    spawnTime: number;
+    status: 'pending' | 'accepted' | 'rejected';
+  }
+
   const [quickSaveExists, setQuickSaveExists] = useState<boolean>(false);
   const quickSaveRef = useRef<{ runId: number; serialized: string } | null>(null);
   const activeSinglePlayerRunIdRef = useRef<number>(1);
   const activeMultiplayerRoundIdRef = useRef<number>(0);
+  const clientShotSeqRef = useRef<number>(0);
+  const pendingGuestShotsRef = useRef<Map<string, PendingGuestShot>>(new Map());
+
+  const clearPendingGuestShots = useCallback(() => {
+    clientShotSeqRef.current = 0;
+    pendingGuestShotsRef.current.clear();
+  }, []);
+
   const multiplayerStartPendingRef = useRef<boolean>(false);
   const [multiplayerStartPending, setMultiplayerStartPending] = useState<boolean>(false);
 
@@ -2475,6 +2492,7 @@ export default function GameCanvas() {
   const handleStartMultiplayerMatch = () => {
     if (multiplayerStartPendingRef.current) return;
     if (!mpRef.current.roomId || !mpState.isHost) return;
+    clearPendingGuestShots();
 
     if (matchSettingsUpdatePendingRef.current) {
       setMpError("WAITING FOR SETTINGS SYNC");
@@ -3904,6 +3922,7 @@ export default function GameCanvas() {
 
   const createRoom = () => {
     setMpError(null);
+    clearPendingGuestShots();
     cancelPendingMatchSettingsUpdate();
     closeMpMapSelector();
     const initialMode: GameMode = uiState.hardMode ? 'hard' : 'normal';
@@ -3930,6 +3949,7 @@ export default function GameCanvas() {
 
   const joinRoom = () => {
     setMpError(null);
+    clearPendingGuestShots();
     cancelPendingMatchSettingsUpdate();
     closeMpMapSelector();
     if (!mpRef.current.joinCode) {
@@ -4123,6 +4143,7 @@ export default function GameCanvas() {
     spawnAssignments?: Record<string, { x: number; y: number }>
   ): boolean => {
     resetEndPresentation();
+    clearPendingGuestShots();
     const dType = deviceType || uiRef.current.deviceType;
     const selectedMapId = mapId || uiRef.current.mapId;
     const isMultiplayer = !!mpRef.current.roomId;
@@ -4727,6 +4748,7 @@ export default function GameCanvas() {
     });
 
     socket.on('disconnect', () => {
+      clearPendingGuestShots();
       multiplayerStartPendingRef.current = false;
       setMultiplayerStartPending(false);
       cancelPendingMatchSettingsUpdate();
@@ -4828,6 +4850,7 @@ export default function GameCanvas() {
     });
 
     socket.on('start_game', (config) => {
+      clearPendingGuestShots();
       lastReceivedGameStateTimeRef.current = performance.now();
       if (typeof config?.roundId === 'number') {
         activeMultiplayerRoundIdRef.current = config.roundId;
@@ -4852,6 +4875,29 @@ export default function GameCanvas() {
           }));
         } else {
           setMpError('INVALID START ASSIGNMENT');
+        }
+      }
+    });
+
+    socket.on('client_action_result', (result: any) => {
+      if (mpRef.current.isHost) return;
+      if (!result || typeof result !== 'object') return;
+      if (result.roundId !== activeMultiplayerRoundIdRef.current) return;
+
+      if (result.actionType === 'shoot' && typeof result.clientShotId === 'string') {
+        const pending = pendingGuestShotsRef.current.get(result.clientShotId);
+        if (!pending) return;
+
+        if (result.status === 'rejected') {
+          stateRef.current.bullets = stateRef.current.bullets.filter(
+            b => b.id !== pending.localBulletId
+          );
+          pendingGuestShotsRef.current.delete(result.clientShotId);
+        } else if (result.status === 'accepted') {
+          pending.status = 'accepted';
+          if (typeof result.authoritativeBulletId === 'string') {
+            pending.authoritativeBulletId = result.authoritativeBulletId;
+          }
         }
       }
     });
@@ -5062,18 +5108,35 @@ export default function GameCanvas() {
           const mappedSpawnTime = now - age;
 
           // Reconcile client's own local pre-spawns, or any already active/predicted bullet, to prevent snapping or micro-jitters
-          const matchedLocal = prevBullets.find((pb: any) =>
-            pb.id && (
-              (pb.id === ib.id && Math.sqrt((pb.x - ib.x) ** 2 + (pb.y - ib.y) ** 2) < 150) ||
-              (ib.ownerId === myId && pb.id.toString().startsWith('local_') &&
-               Math.abs(pb.dx - ib.dx) < 1 &&
-               Math.abs(pb.dy - ib.dy) < 1 &&
-               Math.sqrt((pb.x - ib.x) ** 2 + (pb.y - ib.y) ** 2) < 250)
-            )
-          );
+          let matchedLocal: any = undefined;
+
+          if (ib.clientShotId) {
+            matchedLocal = prevBullets.find((pb: any) => pb.clientShotId === ib.clientShotId);
+            if (!matchedLocal) {
+              const pending = pendingGuestShotsRef.current.get(ib.clientShotId);
+              if (pending) {
+                matchedLocal = prevBullets.find((pb: any) => pb.id === pending.localBulletId);
+              }
+            }
+          }
+
+          if (!matchedLocal) {
+            matchedLocal = prevBullets.find((pb: any) =>
+              pb.id && (
+                (pb.id === ib.id && Math.sqrt((pb.x - ib.x) ** 2 + (pb.y - ib.y) ** 2) < 150) ||
+                (ib.ownerId === myId && pb.id.toString().startsWith('local_') &&
+                 Math.abs(pb.dx - ib.dx) < 1 &&
+                 Math.abs(pb.dy - ib.dy) < 1 &&
+                 Math.sqrt((pb.x - ib.x) ** 2 + (pb.y - ib.y) ** 2) < 250)
+              )
+            );
+          }
 
           if (matchedLocal && matchedLocal.id) {
             matchedLocalIds.add(matchedLocal.id);
+            if (ib.clientShotId) {
+              pendingGuestShotsRef.current.delete(ib.clientShotId);
+            }
             return {
               ...ib,
               x: matchedLocal.x,
@@ -5091,7 +5154,7 @@ export default function GameCanvas() {
         // Retain fresh unmatched local-only bullets so they fly smoothly until acknowledged
         const unmatchedLocals = prevBullets.filter((pb: any) =>
           pb.id && pb.id.toString().startsWith('local_') &&
-          (now - pb.spawnTime < 500) &&
+          (now - pb.spawnTime < 1500) &&
           !matchedLocalIds.has(pb.id)
         );
 
@@ -5172,25 +5235,81 @@ export default function GameCanvas() {
           if (!matchPlayer || !clientPlayer) return;
 
           // Reject if dead or disconnected
-          if (matchPlayer.isDead || matchPlayer.isDisconnected) return;
-          if (clientPlayer.isDead) return;
+          if (matchPlayer.isDead || matchPlayer.isDisconnected || clientPlayer.isDead) {
+            if (action && action.type === 'shoot' && typeof action.clientShotId === 'string') {
+              socket.emit('host_action_result', mpRef.current.roomId, {
+                targetClientId: clientId,
+                roundId: activeMultiplayerRoundIdRef.current,
+                actionType: 'shoot',
+                clientShotId: action.clientShotId,
+                status: 'rejected',
+                reason: 'player_dead'
+              });
+            }
+            return;
+          }
 
           if (isOpeningProtectionActiveForHost(performance.now())) {
+            if (action && action.type === 'shoot' && typeof action.clientShotId === 'string') {
+              socket.emit('host_action_result', mpRef.current.roomId, {
+                targetClientId: clientId,
+                roundId: activeMultiplayerRoundIdRef.current,
+                actionType: 'shoot',
+                clientShotId: action.clientShotId,
+                status: 'rejected',
+                reason: 'opening_protection'
+              });
+            }
             if (action.type === 'shoot' || action.type === 'special' || action.type === 'build' || action.type === 'build_remove' || action.type === 'build_start') {
               return;
             }
           }
 
           if (action.type === 'shoot') {
+               const clientShotId = action.clientShotId;
+               if (typeof clientShotId !== 'string' || !clientShotId || clientShotId.length > 96 || !/^[a-zA-Z0-9_\-:]+$/.test(clientShotId)) {
+                 return;
+               }
+
                if (action.dx === undefined || typeof action.dx !== 'number' || !Number.isFinite(action.dx) ||
-                   action.dy === undefined || typeof action.dy !== 'number' || !Number.isFinite(action.dy)) return;
+                   action.dy === undefined || typeof action.dy !== 'number' || !Number.isFinite(action.dy)) {
+                 socket.emit('host_action_result', mpRef.current.roomId, {
+                   targetClientId: clientId,
+                   roundId: activeMultiplayerRoundIdRef.current,
+                   actionType: 'shoot',
+                   clientShotId,
+                   status: 'rejected',
+                   reason: 'invalid_vector'
+                 });
+                 return;
+               }
 
                const len = Math.sqrt(action.dx * action.dx + action.dy * action.dy);
-               if (len < 0.0001) return;
+               if (len < 0.0001) {
+                 socket.emit('host_action_result', mpRef.current.roomId, {
+                   targetClientId: clientId,
+                   roundId: activeMultiplayerRoundIdRef.current,
+                   actionType: 'shoot',
+                   clientShotId,
+                   status: 'rejected',
+                   reason: 'invalid_vector'
+                 });
+                 return;
+               }
 
                const currentTime = performance.now();
                const auth = getOrInitializeAuthority(clientId);
-               if (currentTime - auth.lastShootAt < FIRE_RATE) return;
+               if (currentTime - auth.lastShootAt < FIRE_RATE) {
+                 socket.emit('host_action_result', mpRef.current.roomId, {
+                   targetClientId: clientId,
+                   roundId: activeMultiplayerRoundIdRef.current,
+                   actionType: 'shoot',
+                   clientShotId,
+                   status: 'rejected',
+                   reason: 'rate_limit'
+                 });
+                 return;
+               }
 
                auth.lastShootAt = currentTime;
 
@@ -5212,9 +5331,11 @@ export default function GameCanvas() {
 
                const bvx = (action.dx / len) * BULLET_SPEED;
                const bvy = (action.dy / len) * BULLET_SPEED;
+               const authoritativeBulletId = 'bl_' + stateRef.current.nextEntityId++;
 
                stateRef.current.bullets.push({
-                 id: 'bl_' + stateRef.current.nextEntityId++,
+                 id: authoritativeBulletId,
+                 clientShotId,
                  x: clientPlayer.x,
                  y: clientPlayer.y,
                  dx: bvx,
@@ -5228,6 +5349,15 @@ export default function GameCanvas() {
                  colorIdx: matchPlayer.colorIdx,
                  allowedBlockKeys: clientAllowedKeys,
                  leftBlockKeys: []
+               });
+
+               socket.emit('host_action_result', mpRef.current.roomId, {
+                 targetClientId: clientId,
+                 roundId: activeMultiplayerRoundIdRef.current,
+                 actionType: 'shoot',
+                 clientShotId,
+                 status: 'accepted',
+                 authoritativeBulletId
                });
           } else if (action.type === 'special') {
               const currentTime = performance.now();
@@ -6014,6 +6144,18 @@ export default function GameCanvas() {
             );
 
       state.lastTime = currentTime;
+
+      // Defensive timeout / cleanup for pending guest shots
+      if (mpRef.current.roomId && !mpRef.current.isHost && pendingGuestShotsRef.current.size > 0) {
+        for (const [shotId, entry] of pendingGuestShotsRef.current.entries()) {
+          if (currentTime - entry.spawnTime > 1500) {
+            if (entry.status === 'pending') {
+              state.bullets = state.bullets.filter(b => b.id !== entry.localBulletId);
+            }
+            pendingGuestShotsRef.current.delete(shotId);
+          }
+        }
+      }
 
       const isLocalMenuOpen = mpRef.current.roomId && (mpMenuOpenRef.current || confirmResignRef.current);
       if (STATUS !== 'PLAYING' || isLocalMenuOpen) {
@@ -7144,9 +7286,35 @@ export default function GameCanvas() {
             }
           }
 
+          const isGuest = mpRef.current.roomId && !mpRef.current.isHost;
+          let clientShotId: string | undefined = undefined;
+          let localBulletId = 'bh_' + state.nextEntityId++;
+
+          if (isGuest) {
+            const socketId = socketRef.current?.id;
+            const activeRoundId = activeMultiplayerRoundIdRef.current;
+            if (socketRef.current?.connected && socketId && activeRoundId) {
+              const seq = ++clientShotSeqRef.current;
+              clientShotId = `${socketId}:${seq}`;
+              localBulletId = `local_${clientShotId}`;
+
+              pendingGuestShotsRef.current.set(clientShotId, {
+                clientShotId,
+                localBulletId,
+                authoritativeBulletId: null,
+                roundId: activeRoundId,
+                spawnTime: currentTime,
+                status: 'pending'
+              });
+            } else {
+              localBulletId = 'local_' + Math.random();
+            }
+          }
+
           // Spawn bullet locally first for immediate visual feedback
           state.bullets.push({
-            id: mpRef.current.roomId && !mpRef.current.isHost ? 'local_' + Math.random() : 'bh_' + state.nextEntityId++,
+            id: localBulletId,
+            clientShotId,
             x: state.player.x,
             y: state.player.y,
             dx: bvx,
@@ -7163,8 +7331,17 @@ export default function GameCanvas() {
           });
 
           // In multiplayer client mode, also notify the host to create the authoritative bullet
-          if (mpRef.current.roomId && !mpRef.current.isHost) {
-            socketRef.current?.emit('client_action', mpRef.current.roomId, { roundId: activeMultiplayerRoundIdRef.current, type: 'shoot', x: state.player.x, y: state.player.y, dx: bvx, dy: bvy, colorIdx: playerProfileRef.current.colorIdx });
+          if (isGuest && clientShotId) {
+            socketRef.current?.emit('client_action', mpRef.current.roomId, {
+              roundId: activeMultiplayerRoundIdRef.current,
+              type: 'shoot',
+              clientShotId,
+              x: state.player.x,
+              y: state.player.y,
+              dx: bvx,
+              dy: bvy,
+              colorIdx: playerProfileRef.current.colorIdx
+            });
           }
         }
 

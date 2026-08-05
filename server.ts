@@ -61,6 +61,12 @@ async function startServer() {
     return rawColor;
   }
 
+  function isValidClientShotId(id: any): boolean {
+    if (typeof id !== "string") return false;
+    if (id.length < 1 || id.length > 96) return false;
+    return /^[a-zA-Z0-9_\-:]+$/.test(id);
+  }
+
   // Multiplayer logic
   io.on("connection", (socket) => {
     console.log("User connected", socket.id);
@@ -451,6 +457,10 @@ async function startServer() {
       const knownActionTypes = ["shoot", "build", "build_remove", "special", "build_start"];
       if (typeof action.type !== "string" || !knownActionTypes.includes(action.type)) return;
 
+      if (action.type === "shoot") {
+        if (!isValidClientShotId(action.clientShotId)) return;
+      }
+
       // Reject non-finite coordinates or directions
       if (action.x !== undefined && (typeof action.x !== "number" || !Number.isFinite(action.x))) return;
       if (action.y !== undefined && (typeof action.y !== "number" || !Number.isFinite(action.y))) return;
@@ -461,6 +471,57 @@ async function startServer() {
       if (host && host.id !== socket.id) {
         io.to(host.id).emit("client_action", socket.id, action);
       }
+    });
+
+    // Host sends explicit action results (e.g. shot acceptance/rejection) to guest
+    socket.on("host_action_result", (roomId, result) => {
+      if (!roomId || typeof roomId !== "string" || !result || typeof result !== "object") return;
+      const roomIdUpper = roomId.trim().toUpperCase();
+      const room = rooms.get(roomIdUpper);
+      if (!room) return;
+
+      // Verify sender is the room host
+      const host = room.players.find(p => p.isHost);
+      if (!host || host.id !== socket.id) return;
+
+      // Validate result fields
+      if (!result.roundId || result.roundId !== room.roundId) return;
+      if (typeof result.targetClientId !== "string" || !result.targetClientId) return;
+      if (typeof result.actionType !== "string") return;
+      if (result.status !== "accepted" && result.status !== "rejected") return;
+
+      // Ensure target client is in room players
+      const targetPlayer = room.players.find(p => p.id === result.targetClientId);
+      if (!targetPlayer) return;
+
+      if (result.actionType === "shoot") {
+        if (!isValidClientShotId(result.clientShotId)) return;
+      }
+
+      const sanitizedResult: {
+        roundId: number;
+        actionType: string;
+        clientShotId?: string;
+        status: "accepted" | "rejected";
+        reason?: string;
+        authoritativeBulletId?: string;
+      } = {
+        roundId: result.roundId,
+        actionType: result.actionType,
+        status: result.status,
+      };
+
+      if (result.clientShotId !== undefined && isValidClientShotId(result.clientShotId)) {
+        sanitizedResult.clientShotId = result.clientShotId;
+      }
+      if (typeof result.reason === "string" && result.reason.length <= 64) {
+        sanitizedResult.reason = result.reason;
+      }
+      if (typeof result.authoritativeBulletId === "string" && result.authoritativeBulletId.length <= 64) {
+        sanitizedResult.authoritativeBulletId = result.authoritativeBulletId;
+      }
+
+      io.to(result.targetClientId).emit("client_action_result", sanitizedResult);
     });
 
     // Host explicitly starts the game to sync all clients
