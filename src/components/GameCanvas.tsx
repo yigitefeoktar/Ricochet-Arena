@@ -2209,6 +2209,27 @@ export default function GameCanvas() {
   const pauseStartRef = useRef<number | null>(null);
   const accumulatedPauseOffsetRef = useRef<number>(0);
 
+  const multiplayerWorldPhaseAnchorRef = useRef<{
+    phaseAtAnchor: number;
+    localTimeAtAnchor: number;
+    initialized: boolean;
+  }>({
+    phaseAtAnchor: 0,
+    localTimeAtAnchor: 0,
+    initialized: false,
+  });
+
+  const getMultiplayerWorldPhaseTime = useCallback((localTime: number): number => {
+    const anchor = multiplayerWorldPhaseAnchorRef.current;
+    if (!anchor.initialized) {
+      anchor.phaseAtAnchor = 0;
+      anchor.localTimeAtAnchor = localTime;
+      anchor.initialized = true;
+      return 0;
+    }
+    return anchor.phaseAtAnchor + (localTime - anchor.localTimeAtAnchor);
+  }, []);
+
   useEffect(() => {
     const handle = requestAnimationFrame(() => {
       updateExclusionRects();
@@ -4200,6 +4221,11 @@ export default function GameCanvas() {
     setUiState(newUi);
 
     if (isMultiplayer) {
+      multiplayerWorldPhaseAnchorRef.current = {
+        phaseAtAnchor: 0,
+        localTimeAtAnchor: performance.now(),
+        initialized: true,
+      };
       state.matchPhase = 'PLAYING';
       state.finalRunnerId = null;
       state.finalRunDeadline = null;
@@ -4758,6 +4784,12 @@ export default function GameCanvas() {
             }
 
             if (becameHost) {
+              const currentPhase = getMultiplayerWorldPhaseTime(performance.now());
+              multiplayerWorldPhaseAnchorRef.current = {
+                phaseAtAnchor: currentPhase,
+                localTimeAtAnchor: performance.now(),
+                initialized: true,
+              };
               awaitingOpeningProtectionAuthorityRef.current = false;
               if (mappedProtectionDeadlineRef.current !== null) {
                 const rem = mappedProtectionDeadlineRef.current - performance.now();
@@ -4822,6 +4854,13 @@ export default function GameCanvas() {
       if (!mpRef.current.isHost) {
         if (!state || typeof state.roundId !== 'number' || state.roundId !== activeMultiplayerRoundIdRef.current) {
           return;
+        }
+        if (typeof state.worldPhaseTime === 'number' && Number.isFinite(state.worldPhaseTime)) {
+          multiplayerWorldPhaseAnchorRef.current = {
+            phaseAtAnchor: state.worldPhaseTime,
+            localTimeAtAnchor: performance.now(),
+            initialized: true,
+          };
         }
         if (state.matchPhase !== undefined) {
           if (state.matchPhase !== stateRef.current.matchPhase) {
@@ -5954,8 +5993,10 @@ export default function GameCanvas() {
           ? pauseStartRef.current
           : rawCurrentTime;
 
-      const worldPhaseTime =
-        currentTime - accumulatedPauseOffsetRef.current;
+      const isMultiplayer = !!mpRef.current.roomId;
+      const worldPhaseTime = isMultiplayer
+        ? getMultiplayerWorldPhaseTime(currentTime)
+        : (currentTime - accumulatedPauseOffsetRef.current);
 
       const dt =
         STATUS === 'PAUSED'
@@ -7747,6 +7788,7 @@ export default function GameCanvas() {
           if (currentTime - state.lastBroadcastTime > 50 || state.forceBroadcast) {
               state.lastBroadcastTime = currentTime;
               state.forceBroadcast = false;
+              const hostWorldPhaseTime = getMultiplayerWorldPhaseTime(currentTime);
               socketRef.current?.emit('host_game_state', mpRef.current.roomId, {
                 roundId: activeMultiplayerRoundIdRef.current,
                 hostId: socketRef.current?.id,
@@ -7774,7 +7816,8 @@ export default function GameCanvas() {
                 spawnersLeft: state.spawners.length,
                 blocksLeft: uiRef.current.blocks,
                 cameraZ: state.camera.z,
-                hostTime: currentTime
+                hostTime: currentTime,
+                worldPhaseTime: hostWorldPhaseTime
               });
           }
       }
