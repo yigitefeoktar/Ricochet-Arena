@@ -31,6 +31,7 @@ async function startServer() {
     lastHostStateTime?: number; // Server-side tracker of last valid host game state emit
     matchActive?: boolean;
     matchSettings: MatchSettings;
+    roundId: number;
   }
 
   const rooms = new Map<string, RoomInfo>();
@@ -172,6 +173,7 @@ async function startServer() {
         lastHostStateTime: Date.now(),
         matchActive: false,
         matchSettings,
+        roundId: 0,
       });
 
       io.to(roomId).emit("lobby_players", [hostPlayer]);
@@ -345,13 +347,16 @@ async function startServer() {
 
     // Host sends complete game state strictly for syncing visuals for clients
     socket.on("host_game_state", (roomId, state) => {
-      if (!roomId || typeof roomId !== "string") return;
+      if (!roomId || typeof roomId !== "string" || !state || typeof state !== "object") return;
       const roomIdUpper = roomId.trim().toUpperCase();
       const room = rooms.get(roomIdUpper);
       if (!room) return;
       const player = room.players.find(p => p.id === socket.id);
       if (!player || !player.isHost) return;
       
+      // Reject state packets from mismatched or stale round generation
+      if (!state.roundId || state.roundId !== room.roundId) return;
+
       // Update server state timing tracker
       room.lastHostStateTime = Date.now();
       
@@ -373,13 +378,17 @@ async function startServer() {
       // Require input to be a non-null object.
       if (!input || typeof input !== "object") return;
 
+      // Reject input packets from mismatched or stale round generation
+      if (!input.roundId || input.roundId !== room.roundId) return;
+
       // Require x and y to be finite numbers.
       if (typeof input.x !== "number" || !Number.isFinite(input.x)) return;
       if (typeof input.y !== "number" || !Number.isFinite(input.y)) return;
 
-      const sanitizedInput: { x: number; y: number } = {
+      const sanitizedInput: { x: number; y: number; roundId: number } = {
         x: input.x,
-        y: input.y
+        y: input.y,
+        roundId: input.roundId,
       };
 
       // Send gameplay input strictly to the room's host
@@ -426,7 +435,7 @@ async function startServer() {
 
     // Client interaction triggers (shoot, build, dash)
     socket.on("client_action", (roomId, action) => {
-      if (!roomId || typeof roomId !== "string" || !action) return;
+      if (!roomId || typeof roomId !== "string" || !action || typeof action !== "object") return;
       const roomIdUpper = roomId.trim().toUpperCase();
       const room = rooms.get(roomIdUpper);
       if (!room) return;
@@ -434,6 +443,9 @@ async function startServer() {
       // Verify sender is in the player roster
       const player = room.players.find(p => p.id === socket.id);
       if (!player) return;
+
+      // Reject action packets from mismatched or stale round generation
+      if (!action.roundId || action.roundId !== room.roundId) return;
 
       // Reject unknown action types
       const knownActionTypes = ["shoot", "build", "build_remove", "special", "build_start"];
@@ -518,6 +530,10 @@ async function startServer() {
         }
       }
 
+      // Increment round generation ID for the new match
+      room.roundId += 1;
+      const currentRoundId = room.roundId;
+
       // Construct authoritative start configuration from room's stored settings
       const mapId = room.matchSettings.mapId;
       const gameMode = room.matchSettings.gameMode;
@@ -528,12 +544,13 @@ async function startServer() {
         gameMode,
         hardMode,
         spawnAssignments,
+        roundId: currentRoundId,
       };
 
       room.matchActive = true;
       room.lastHostStateTime = Date.now();
       socket.to(roomIdUpper).emit("start_game", startPayload);
-      if (cb) cb({ success: true, config: startPayload });
+      if (cb) cb({ success: true, roundId: currentRoundId, config: startPayload });
     });
 
     socket.on("disconnect", () => {

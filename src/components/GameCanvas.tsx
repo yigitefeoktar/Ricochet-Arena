@@ -1800,6 +1800,7 @@ export default function GameCanvas() {
   const [quickSaveExists, setQuickSaveExists] = useState<boolean>(false);
   const quickSaveRef = useRef<{ runId: number; serialized: string } | null>(null);
   const activeSinglePlayerRunIdRef = useRef<number>(1);
+  const activeMultiplayerRoundIdRef = useRef<number>(0);
 
   const invalidateQuickSave = useCallback(() => {
     quickSaveRef.current = null;
@@ -2481,8 +2482,9 @@ export default function GameCanvas() {
       {
         spawnAssignments
       },
-      (response?: { success: boolean; config?: { mapId: string; gameMode: GameMode; hardMode: boolean; spawnAssignments: any }; error?: string }) => {
-        if (response && response.success && response.config) {
+      (response?: { success: boolean; roundId?: number; config?: { mapId: string; gameMode: GameMode; hardMode: boolean; spawnAssignments: any }; error?: string }) => {
+        if (response && response.success && response.config && typeof response.roundId === 'number') {
+          activeMultiplayerRoundIdRef.current = response.roundId;
           setMpError(null);
           const startConfig = response.config;
           const ok = resetGame(isMobileRef.current ? 'mobile' : 'desktop', startConfig.mapId, startConfig.gameMode, startConfig.spawnAssignments);
@@ -4621,14 +4623,14 @@ export default function GameCanvas() {
             } else {
                s.blocks.splice(existingIdx, 1);
                if (socketRef.current && mpRef.current.roomId && !mpRef.current.isHost) {
-                  socketRef.current.emit('client_action', mpRef.current.roomId, { type: 'build_remove', x: gridX, y: gridY });
+                  socketRef.current.emit('client_action', mpRef.current.roomId, { roundId: activeMultiplayerRoundIdRef.current, type: 'build_remove', x: gridX, y: gridY });
                }
             }
          }
 
          s.blocks.push({ x: gridX, y: gridY, size: 40, createdAt: currentTime, colorIdx: cIdx, ownerId: mpRef.current.roomId ? (socketRef.current?.id || 'local') : 'local' });
          if (socketRef.current && mpRef.current.roomId && !mpRef.current.isHost) {
-            socketRef.current.emit('client_action', mpRef.current.roomId, { type: 'build', x: gridX, y: gridY, colorIdx: cIdx });
+            socketRef.current.emit('client_action', mpRef.current.roomId, { roundId: activeMultiplayerRoundIdRef.current, type: 'build', x: gridX, y: gridY, colorIdx: cIdx });
          }
      } catch(e) {
          console.error("Error in tryPlaceBuildBlock:", e);
@@ -4775,6 +4777,9 @@ export default function GameCanvas() {
 
     socket.on('start_game', (config) => {
       lastReceivedGameStateTimeRef.current = performance.now();
+      if (typeof config?.roundId === 'number') {
+        activeMultiplayerRoundIdRef.current = config.roundId;
+      }
       if (!mpRef.current.isHost) {
         const mapId = config?.mapId || 'medium';
         const rawGameMode: GameMode | undefined = config?.gameMode;
@@ -4802,6 +4807,9 @@ export default function GameCanvas() {
     socket.on('game_state', (state) => {
       lastReceivedGameStateTimeRef.current = performance.now();
       if (!mpRef.current.isHost) {
+        if (!state || typeof state.roundId !== 'number' || state.roundId !== activeMultiplayerRoundIdRef.current) {
+          return;
+        }
         if (state.matchPhase !== undefined) {
           if (state.matchPhase !== stateRef.current.matchPhase) {
             setCurrentMatchPhase(state.matchPhase);
@@ -5054,6 +5062,7 @@ export default function GameCanvas() {
     socket.on('client_input', (clientId, input) => {
       // A. Authority checks
       if (!mpRef.current.isHost) return;
+      if (!input || typeof input.roundId !== 'number' || input.roundId !== activeMultiplayerRoundIdRef.current) return;
 
       const matchPlayer = stateRef.current.matchPlayers[clientId];
       const prevPlayer = stateRef.current.multiplayerPlayers[clientId];
@@ -5097,6 +5106,7 @@ export default function GameCanvas() {
 
     socket.on('client_action', (clientId, action) => {
        if (mpRef.current.isHost) {
+          if (!action || typeof action.roundId !== 'number' || action.roundId !== activeMultiplayerRoundIdRef.current) return;
           // Confirm clientId exists in matchPlayers and multiplayerPlayers
           const matchPlayer = stateRef.current.matchPlayers[clientId];
           const clientPlayer = stateRef.current.multiplayerPlayers[clientId];
@@ -5494,7 +5504,7 @@ export default function GameCanvas() {
                    }
                  }
                } else {
-                 socketRef.current?.emit('client_action', mpRef.current.roomId, { type: 'special', x: finalX, y: finalY, colorIdx: playerProfileRef.current.colorIdx });
+                 socketRef.current?.emit('client_action', mpRef.current.roomId, { roundId: activeMultiplayerRoundIdRef.current, type: 'special', x: finalX, y: finalY, colorIdx: playerProfileRef.current.colorIdx });
                  applySpecialAbility(finalX, finalY, playerProfileRef.current.colorIdx, socketRef.current?.id || 'local');
                }
             }
@@ -5505,7 +5515,7 @@ export default function GameCanvas() {
             if (isOpeningProtectionActiveLocal(currentTime)) return;
             if (!stateRef.current.player.build.active && (stateRef.current.player.build.endTime === 0 || currentTime - stateRef.current.player.build.endTime >= BUILD_COOLDOWN)) {
                if (socketRef.current && mpRef.current.roomId && !mpRef.current.isHost) {
-                  socketRef.current.emit('client_action', mpRef.current.roomId, { type: 'build_start' });
+                  socketRef.current.emit('client_action', mpRef.current.roomId, { roundId: activeMultiplayerRoundIdRef.current, type: 'build_start' });
                }
                stateRef.current.player.build.active = true;
                stateRef.current.player.build.endTime = currentTime + 8000;
@@ -5981,6 +5991,7 @@ export default function GameCanvas() {
       if (currentTime - state.lastBroadcastTime > 16 && mpRef.current.isConnected && mpRef.current.roomId && !mpRef.current.isHost && (STATUS === 'PLAYING' || STATUS === 'GAME_OVER')) {
         state.lastBroadcastTime = currentTime;
         socketRef.current?.emit('client_input', mpRef.current.roomId, {
+          roundId: activeMultiplayerRoundIdRef.current,
           x: state.player.x,
           y: state.player.y
         });
@@ -7090,7 +7101,7 @@ export default function GameCanvas() {
 
           // In multiplayer client mode, also notify the host to create the authoritative bullet
           if (mpRef.current.roomId && !mpRef.current.isHost) {
-            socketRef.current?.emit('client_action', mpRef.current.roomId, { type: 'shoot', x: state.player.x, y: state.player.y, dx: bvx, dy: bvy, colorIdx: playerProfileRef.current.colorIdx });
+            socketRef.current?.emit('client_action', mpRef.current.roomId, { roundId: activeMultiplayerRoundIdRef.current, type: 'shoot', x: state.player.x, y: state.player.y, dx: bvx, dy: bvy, colorIdx: playerProfileRef.current.colorIdx });
           }
         }
 
@@ -7722,6 +7733,7 @@ export default function GameCanvas() {
               state.lastBroadcastTime = currentTime;
               state.forceBroadcast = false;
               socketRef.current?.emit('host_game_state', mpRef.current.roomId, {
+                roundId: activeMultiplayerRoundIdRef.current,
                 hostId: socketRef.current?.id,
                 hostPlayer: { ...state.player, isDead: STATUS === 'GAME_OVER', name: playerProfileRef.current.name, colorIdx: playerProfileRef.current.colorIdx, score: uiRef.current.score },
                 multiplayerPlayers: state.multiplayerPlayers,
@@ -9993,6 +10005,7 @@ export default function GameCanvas() {
 
               <button onClick={() => {
                 if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
+                activeMultiplayerRoundIdRef.current = 0;
                 cancelPendingMatchSettingsUpdate();
                 closeMpMapSelector();
                 setMpState(prev => ({ ...prev, roomId: null, isHost: false, error: '' }));
@@ -10364,6 +10377,7 @@ export default function GameCanvas() {
                       mpMenuOpenRef.current = false;
                       stateRef.current.shake = 20;
                       if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
+                      activeMultiplayerRoundIdRef.current = 0;
                       cancelPendingMatchSettingsUpdate();
                       setMpState(prev => ({ ...prev, roomId: null, isHost: false, error: '' }));
                       setUiState(prev => ({ ...prev, status: 'MENU' }));
@@ -10432,14 +10446,14 @@ export default function GameCanvas() {
                                       }
                                     }
                                   } else {
-                                    socketRef.current?.emit('client_action', mpRef.current.roomId, { type: 'special', x: finalX, y: finalY, colorIdx: playerProfileRef.current.colorIdx });
+                                    socketRef.current?.emit('client_action', mpRef.current.roomId, { roundId: activeMultiplayerRoundIdRef.current, type: 'special', x: finalX, y: finalY, colorIdx: playerProfileRef.current.colorIdx });
                                     applySpecialAbility(finalX, finalY, playerProfileRef.current.colorIdx, socketRef.current?.id || 'local');
                                   }
                                }
                              } else if (toolKey === 'build') {
                                if (!stateRef.current.player.build.active && (stateRef.current.player.build.endTime === 0 || currentTime - stateRef.current.player.build.endTime >= BUILD_COOLDOWN)) {
                                  if (socketRef.current && mpRef.current.roomId && !mpRef.current.isHost) {
-                                   socketRef.current.emit('client_action', mpRef.current.roomId, { type: 'build_start' });
+                                   socketRef.current.emit('client_action', mpRef.current.roomId, { roundId: activeMultiplayerRoundIdRef.current, type: 'build_start' });
                                  }
                                  stateRef.current.player.build.active = true;
                                  stateRef.current.player.build.endTime = currentTime + 8000;
@@ -10545,6 +10559,7 @@ export default function GameCanvas() {
               <button
                 onClick={() => {
                   if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
+                  activeMultiplayerRoundIdRef.current = 0;
                   setMpState(prev => ({ ...prev, roomId: null, isHost: false, error: '' }));
                   setUiState(prev => ({ ...prev, status: 'MENU' }));
                 }}
@@ -10607,6 +10622,7 @@ export default function GameCanvas() {
               <button
                 onClick={() => {
                   if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
+                  activeMultiplayerRoundIdRef.current = 0;
                   cancelPendingMatchSettingsUpdate();
                   setMpState(prev => ({ ...prev, roomId: null, isHost: false, error: '' }));
                   setUiState(prev => ({ ...prev, status: 'MENU' }));
@@ -10798,6 +10814,7 @@ export default function GameCanvas() {
                       <button
                         onClick={() => {
                           if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
+                          activeMultiplayerRoundIdRef.current = 0;
                           cancelPendingMatchSettingsUpdate();
                           setMpState(prev => ({ ...prev, roomId: null, isHost: false, error: '' }));
                           setUiState(prev => ({ ...prev, status: 'MENU' }));
