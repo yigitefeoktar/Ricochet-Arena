@@ -1813,8 +1813,21 @@ export default function GameCanvas() {
   const clientShotSeqRef = useRef<number>(0);
   const pendingGuestShotsRef = useRef<Map<string, PendingGuestShot>>(new Map());
 
-  const clearPendingGuestShots = useCallback(() => {
+  const clearPendingGuestShots = useCallback((removeBullets: boolean = false) => {
     clientShotSeqRef.current = 0;
+    if (removeBullets && pendingGuestShotsRef.current.size > 0 && stateRef.current) {
+      const idsToRemove = new Set<string>();
+      for (const entry of pendingGuestShotsRef.current.values()) {
+        if (entry.localBulletId) {
+          idsToRemove.add(entry.localBulletId);
+        }
+      }
+      if (idsToRemove.size > 0 && stateRef.current.bullets) {
+        stateRef.current.bullets = stateRef.current.bullets.filter(
+          b => !b.id || !idsToRemove.has(b.id)
+        );
+      }
+    }
     pendingGuestShotsRef.current.clear();
   }, []);
 
@@ -4748,7 +4761,7 @@ export default function GameCanvas() {
     });
 
     socket.on('disconnect', () => {
-      clearPendingGuestShots();
+      clearPendingGuestShots(true);
       multiplayerStartPendingRef.current = false;
       setMultiplayerStartPending(false);
       cancelPendingMatchSettingsUpdate();
@@ -4813,6 +4826,7 @@ export default function GameCanvas() {
             }
 
             if (becameHost) {
+              clearPendingGuestShots(true);
               const currentPhase = getMultiplayerWorldPhaseTime(performance.now());
               multiplayerWorldPhaseAnchorRef.current = {
                 phaseAtAnchor: currentPhase,
@@ -5505,6 +5519,7 @@ export default function GameCanvas() {
 
     return () => {
       cancelPendingMatchSettingsUpdate();
+      clearPendingGuestShots(true);
       socket.disconnect();
     };
   }, []);
@@ -10627,6 +10642,7 @@ export default function GameCanvas() {
                       mpMenuOpenRef.current = false;
                       stateRef.current.shake = 20;
                       if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
+                      clearPendingGuestShots(true);
                       activeMultiplayerRoundIdRef.current = 0;
                       multiplayerStartPendingRef.current = false;
                       setMultiplayerStartPending(false);
@@ -10878,6 +10894,7 @@ export default function GameCanvas() {
               <button
                 onClick={() => {
                   if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
+                  clearPendingGuestShots(true);
                   activeMultiplayerRoundIdRef.current = 0;
                   multiplayerStartPendingRef.current = false;
                   setMultiplayerStartPending(false);
@@ -11072,6 +11089,7 @@ export default function GameCanvas() {
                       <button
                         onClick={() => {
                           if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
+                          clearPendingGuestShots(true);
                           activeMultiplayerRoundIdRef.current = 0;
                           multiplayerStartPendingRef.current = false;
                           setMultiplayerStartPending(false);

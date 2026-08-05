@@ -450,25 +450,55 @@ async function startServer() {
       const player = room.players.find(p => p.id === socket.id);
       if (!player) return;
 
+      const isShoot = action.type === "shoot";
+      const clientShotIdValid = isShoot && isValidClientShotId(action.clientShotId);
+
+      const emitServerShootRejection = (reason: string) => {
+        if (clientShotIdValid) {
+          const roundId = typeof action.roundId === "number" ? action.roundId : room.roundId;
+          socket.emit("client_action_result", {
+            roundId,
+            actionType: "shoot",
+            clientShotId: action.clientShotId,
+            status: "rejected",
+            reason
+          });
+        }
+      };
+
       // Reject action packets from mismatched or stale round generation
-      if (!action.roundId || action.roundId !== room.roundId) return;
+      if (!action.roundId || action.roundId !== room.roundId) {
+        emitServerShootRejection("stale_round");
+        return;
+      }
 
       // Reject unknown action types
       const knownActionTypes = ["shoot", "build", "build_remove", "special", "build_start"];
       if (typeof action.type !== "string" || !knownActionTypes.includes(action.type)) return;
 
-      if (action.type === "shoot") {
-        if (!isValidClientShotId(action.clientShotId)) return;
+      if (isShoot && !clientShotIdValid) {
+        return;
       }
 
       // Reject non-finite coordinates or directions
-      if (action.x !== undefined && (typeof action.x !== "number" || !Number.isFinite(action.x))) return;
-      if (action.y !== undefined && (typeof action.y !== "number" || !Number.isFinite(action.y))) return;
-      if (action.dx !== undefined && (typeof action.dx !== "number" || !Number.isFinite(action.dx))) return;
-      if (action.dy !== undefined && (typeof action.dy !== "number" || !Number.isFinite(action.dy))) return;
+      const hasNonFinite =
+        (action.x !== undefined && (typeof action.x !== "number" || !Number.isFinite(action.x))) ||
+        (action.y !== undefined && (typeof action.y !== "number" || !Number.isFinite(action.y))) ||
+        (action.dx !== undefined && (typeof action.dx !== "number" || !Number.isFinite(action.dx))) ||
+        (action.dy !== undefined && (typeof action.dy !== "number" || !Number.isFinite(action.dy)));
+
+      if (hasNonFinite) {
+        emitServerShootRejection("invalid_payload");
+        return;
+      }
 
       const host = room.players.find(p => p.isHost);
-      if (host && host.id !== socket.id) {
+      if (!host) {
+        emitServerShootRejection("host_unavailable");
+        return;
+      }
+
+      if (host.id !== socket.id) {
         io.to(host.id).emit("client_action", socket.id, action);
       }
     });
