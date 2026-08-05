@@ -2227,7 +2227,14 @@ export default function GameCanvas() {
       anchor.initialized = true;
       return 0;
     }
-    return anchor.phaseAtAnchor + (localTime - anchor.localTimeAtAnchor);
+    const calculatedPhase = anchor.phaseAtAnchor + (localTime - anchor.localTimeAtAnchor);
+    if (!Number.isFinite(calculatedPhase)) {
+      anchor.phaseAtAnchor = 0;
+      anchor.localTimeAtAnchor = localTime;
+      anchor.initialized = true;
+      return 0;
+    }
+    return Math.max(0, calculatedPhase);
   }, []);
 
   useEffect(() => {
@@ -4855,7 +4862,7 @@ export default function GameCanvas() {
         if (!state || typeof state.roundId !== 'number' || state.roundId !== activeMultiplayerRoundIdRef.current) {
           return;
         }
-        if (typeof state.worldPhaseTime === 'number' && Number.isFinite(state.worldPhaseTime)) {
+        if (typeof state.worldPhaseTime === 'number' && Number.isFinite(state.worldPhaseTime) && state.worldPhaseTime >= 0) {
           multiplayerWorldPhaseAnchorRef.current = {
             phaseAtAnchor: state.worldPhaseTime,
             localTimeAtAnchor: performance.now(),
