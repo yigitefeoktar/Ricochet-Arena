@@ -4896,22 +4896,30 @@ export default function GameCanvas() {
     socket.on('client_action_result', (result: any) => {
       if (mpRef.current.isHost) return;
       if (!result || typeof result !== 'object') return;
-      if (result.roundId !== activeMultiplayerRoundIdRef.current) return;
 
-      if (result.actionType === 'shoot' && typeof result.clientShotId === 'string') {
-        const pending = pendingGuestShotsRef.current.get(result.clientShotId);
-        if (!pending) return;
+      const activeRoundId = activeMultiplayerRoundIdRef.current;
+      if (typeof activeRoundId !== 'number' || activeRoundId <= 0 || !Number.isInteger(activeRoundId)) return;
+      if (result.roundId !== activeRoundId) return;
+      if (result.actionType !== 'shoot') return;
 
-        if (result.status === 'rejected') {
-          stateRef.current.bullets = stateRef.current.bullets.filter(
-            b => b.id !== pending.localBulletId
-          );
-          pendingGuestShotsRef.current.delete(result.clientShotId);
-        } else if (result.status === 'accepted') {
-          pending.status = 'accepted';
-          if (typeof result.authoritativeBulletId === 'string') {
-            pending.authoritativeBulletId = result.authoritativeBulletId;
-          }
+      const clientShotId = result.clientShotId;
+      if (typeof clientShotId !== 'string' || clientShotId.length < 1 || clientShotId.length > 96 || !/^[a-zA-Z0-9_\-:]+$/.test(clientShotId)) return;
+
+      if (result.status !== 'accepted' && result.status !== 'rejected') return;
+
+      const pending = pendingGuestShotsRef.current.get(clientShotId);
+      if (!pending) return;
+      if (pending.roundId !== result.roundId) return;
+
+      if (result.status === 'rejected') {
+        stateRef.current.bullets = stateRef.current.bullets.filter(
+          b => b.id !== pending.localBulletId
+        );
+        pendingGuestShotsRef.current.delete(clientShotId);
+      } else if (result.status === 'accepted') {
+        pending.status = 'accepted';
+        if (typeof result.authoritativeBulletId === 'string' && result.authoritativeBulletId.length > 0 && result.authoritativeBulletId.length <= 96 && /^[a-zA-Z0-9_\-:]+$/.test(result.authoritativeBulletId)) {
+          pending.authoritativeBulletId = result.authoritativeBulletId;
         }
       }
     });
@@ -5246,7 +5254,19 @@ export default function GameCanvas() {
           // Confirm clientId exists in matchPlayers and multiplayerPlayers
           const matchPlayer = stateRef.current.matchPlayers[clientId];
           const clientPlayer = stateRef.current.multiplayerPlayers[clientId];
-          if (!matchPlayer || !clientPlayer) return;
+          if (!matchPlayer || !clientPlayer) {
+            if (action && action.type === 'shoot' && typeof action.clientShotId === 'string' && action.clientShotId.length >= 1 && action.clientShotId.length <= 96 && /^[a-zA-Z0-9_\-:]+$/.test(action.clientShotId)) {
+              socket.emit('host_action_result', mpRef.current.roomId, {
+                targetClientId: clientId,
+                roundId: activeMultiplayerRoundIdRef.current,
+                actionType: 'shoot',
+                clientShotId: action.clientShotId,
+                status: 'rejected',
+                reason: 'missing_player_state'
+              });
+            }
+            return;
+          }
 
           // Reject if dead or disconnected
           if (matchPlayer.isDead || matchPlayer.isDisconnected || clientPlayer.isDead) {
@@ -7267,96 +7287,109 @@ export default function GameCanvas() {
 
         const isLocalMenuOpen = mpRef.current.roomId && (mpMenuOpenRef.current || confirmResignRef.current);
         if (isShooting && !isOpeningProtectionActiveLocal(currentTime) && !isLocalMenuOpen && currentTime - state.player.lastShoot > FIRE_RATE) {
-          state.player.lastShoot = currentTime;
-          if (mpRef.current.roomId && mpRef.current.isHost) {
-            const myId = socketRef.current?.id;
-            if (myId) {
-              const auth = getOrInitializeAuthority(myId);
-              auth.lastShootAt = currentTime;
+          const isGuest = !!(mpRef.current.roomId && !mpRef.current.isHost);
+          let clientShotId: string | undefined = undefined;
+          let localBulletId = '';
+          let canShoot = false;
+
+          if (isGuest) {
+            const socket = socketRef.current;
+            const activeRoundId = activeMultiplayerRoundIdRef.current;
+            const hasRoom = typeof mpRef.current.roomId === 'string' && mpRef.current.roomId.length > 0;
+            const hasSocket = !!(socket && socket.connected && typeof socket.id === 'string' && socket.id.length > 0);
+            const hasValidRound = typeof activeRoundId === 'number' && activeRoundId > 0 && Number.isInteger(activeRoundId);
+
+            if (hasRoom && hasSocket && hasValidRound && socket) {
+              const seq = clientShotSeqRef.current + 1;
+              const candidateShotId = `${socket.id}:${activeRoundId}:${seq}`;
+              if (candidateShotId.length >= 1 && candidateShotId.length <= 96 && /^[a-zA-Z0-9_\-:]+$/.test(candidateShotId)) {
+                clientShotSeqRef.current = seq;
+                clientShotId = candidateShotId;
+                localBulletId = `local_${clientShotId}`;
+                state.player.lastShoot = currentTime;
+                canShoot = true;
+
+                pendingGuestShotsRef.current.set(clientShotId, {
+                  clientShotId,
+                  localBulletId,
+                  authoritativeBulletId: null,
+                  roundId: activeRoundId,
+                  spawnTime: currentTime,
+                  status: 'pending'
+                });
+              }
             }
+          } else {
+            state.player.lastShoot = currentTime;
+            if (mpRef.current.roomId && mpRef.current.isHost) {
+              const myId = socketRef.current?.id;
+              if (myId) {
+                const auth = getOrInitializeAuthority(myId);
+                auth.lastShootAt = currentTime;
+              }
+            }
+            localBulletId = 'bh_' + state.nextEntityId++;
+            canShoot = true;
           }
 
-          let bvx = 0;
-          let bvy = 0;
-          const shootLen = Math.sqrt(shootDirX * shootDirX + shootDirY * shootDirY);
+          if (canShoot) {
+            let bvx = 0;
+            let bvy = 0;
+            const shootLen = Math.sqrt(shootDirX * shootDirX + shootDirY * shootDirY);
 
-          if (shootLen > 0) {
-            bvx = (shootDirX / shootLen) * BULLET_SPEED;
-            bvy = (shootDirY / shootLen) * BULLET_SPEED;
-          }
+            if (shootLen > 0) {
+              bvx = (shootDirX / shootLen) * BULLET_SPEED;
+              bvy = (shootDirY / shootLen) * BULLET_SPEED;
+            }
 
-          const localAllowedKeys: string[] = [];
-          if (state.player.recentBlocks) {
-            for (const rb of state.player.recentBlocks) {
-              const blockObj = state.blocks.find(b => b.x === rb.x && b.y === rb.y);
-              if (blockObj) {
-                const comp = getConnectedComponent(blockObj, state.blocks.filter(b => b.colorIdx === blockObj.colorIdx));
-                for (const cb of comp) {
-                  const cbKey = `${cb.x}_${cb.y}`;
-                  if (!localAllowedKeys.includes(cbKey)) {
-                    localAllowedKeys.push(cbKey);
+            const localAllowedKeys: string[] = [];
+            if (state.player.recentBlocks) {
+              for (const rb of state.player.recentBlocks) {
+                const blockObj = state.blocks.find(b => b.x === rb.x && b.y === rb.y);
+                if (blockObj) {
+                  const comp = getConnectedComponent(blockObj, state.blocks.filter(b => b.colorIdx === blockObj.colorIdx));
+                  for (const cb of comp) {
+                    const cbKey = `${cb.x}_${cb.y}`;
+                    if (!localAllowedKeys.includes(cbKey)) {
+                      localAllowedKeys.push(cbKey);
+                    }
                   }
                 }
               }
             }
-          }
 
-          const isGuest = mpRef.current.roomId && !mpRef.current.isHost;
-          let clientShotId: string | undefined = undefined;
-          let localBulletId = 'bh_' + state.nextEntityId++;
-
-          if (isGuest) {
-            const socketId = socketRef.current?.id;
-            const activeRoundId = activeMultiplayerRoundIdRef.current;
-            if (socketRef.current?.connected && socketId && activeRoundId) {
-              const seq = ++clientShotSeqRef.current;
-              clientShotId = `${socketId}:${seq}`;
-              localBulletId = `local_${clientShotId}`;
-
-              pendingGuestShotsRef.current.set(clientShotId, {
-                clientShotId,
-                localBulletId,
-                authoritativeBulletId: null,
-                roundId: activeRoundId,
-                spawnTime: currentTime,
-                status: 'pending'
-              });
-            } else {
-              localBulletId = 'local_' + Math.random();
-            }
-          }
-
-          // Spawn bullet locally first for immediate visual feedback
-          state.bullets.push({
-            id: localBulletId,
-            clientShotId,
-            x: state.player.x,
-            y: state.player.y,
-            dx: bvx,
-            dy: bvy,
-            radius: BULLET_RADIUS,
-            isPlayer: true,
-            bounceCount: 0,
-            spawnTime: currentTime,
-            isNeutral: false,
-            ownerId: socketRef.current?.id || 'local',
-            colorIdx: playerProfileRef.current.colorIdx,
-            allowedBlockKeys: localAllowedKeys,
-            leftBlockKeys: []
-          });
-
-          // In multiplayer client mode, also notify the host to create the authoritative bullet
-          if (isGuest && clientShotId) {
-            socketRef.current?.emit('client_action', mpRef.current.roomId, {
-              roundId: activeMultiplayerRoundIdRef.current,
-              type: 'shoot',
+            // Spawn bullet locally first for immediate visual feedback
+            state.bullets.push({
+              id: localBulletId,
               clientShotId,
               x: state.player.x,
               y: state.player.y,
               dx: bvx,
               dy: bvy,
-              colorIdx: playerProfileRef.current.colorIdx
+              radius: BULLET_RADIUS,
+              isPlayer: true,
+              bounceCount: 0,
+              spawnTime: currentTime,
+              isNeutral: false,
+              ownerId: socketRef.current?.id || 'local',
+              colorIdx: playerProfileRef.current.colorIdx,
+              allowedBlockKeys: localAllowedKeys,
+              leftBlockKeys: []
             });
+
+            // In multiplayer client mode, also notify the host to create the authoritative bullet
+            if (isGuest && clientShotId) {
+              socketRef.current?.emit('client_action', mpRef.current.roomId, {
+                roundId: activeMultiplayerRoundIdRef.current,
+                type: 'shoot',
+                clientShotId,
+                x: state.player.x,
+                y: state.player.y,
+                dx: bvx,
+                dy: bvy,
+                colorIdx: playerProfileRef.current.colorIdx
+              });
+            }
           }
         }
 
@@ -10268,6 +10301,7 @@ export default function GameCanvas() {
 
               <button onClick={() => {
                 if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
+                clearPendingGuestShots(true);
                 activeMultiplayerRoundIdRef.current = 0;
                 multiplayerStartPendingRef.current = false;
                 setMultiplayerStartPending(false);

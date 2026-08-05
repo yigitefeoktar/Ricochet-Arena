@@ -455,9 +455,8 @@ async function startServer() {
 
       const emitServerShootRejection = (reason: string) => {
         if (clientShotIdValid) {
-          const roundId = typeof action.roundId === "number" ? action.roundId : room.roundId;
           socket.emit("client_action_result", {
-            roundId,
+            roundId: room.roundId,
             actionType: "shoot",
             clientShotId: action.clientShotId,
             status: "rejected",
