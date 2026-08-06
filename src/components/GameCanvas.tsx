@@ -4644,49 +4644,133 @@ export default function GameCanvas() {
     }
   };
 
-  const tryPlaceBuildBlock = useCallback((currentTime: number, gridX: number, gridY: number, cIdx: number) => {
-     if (isOpeningProtectionActiveLocal(currentTime)) return;
+  const authMultiplayerPlaceBlock = useCallback((
+    builderId: string,
+    builderPos: { x: number; y: number },
+    gridX: number,
+    gridY: number,
+    colorIdx: number,
+    currentTime: number
+  ): boolean => {
      try {
          const s = stateRef.current;
-         let blockOccupied = false;
+         const hostId = socketRef.current?.id || 'host';
 
+         // 1. builderId is a valid current match player
+         const matchPlayer = s.matchPlayers[builderId];
+         if (!matchPlayer) return false;
+
+         // 2. builder is alive and connected
+         if (matchPlayer.isDead || matchPlayer.isDisconnected) return false;
+         
+         // If guest, check s.multiplayerPlayers[builderId].isDead
+         if (builderId !== hostId) {
+             const clientPlayer = s.multiplayerPlayers[builderId];
+             if (!clientPlayer || clientPlayer.isDead) return false;
+         } else {
+             if (uiRef.current.status !== 'PLAYING' && uiRef.current.status !== 'LOBBY') {
+                 return false;
+             }
+         }
+
+         // 3. gridX and gridY are finite numbers
+         if (gridX === undefined || typeof gridX !== 'number' || !Number.isFinite(gridX) ||
+             gridY === undefined || typeof gridY !== 'number' || !Number.isFinite(gridY)) {
+             return false;
+         }
+
+         // 4. both coordinates are exact multiples of 40
+         if (gridX % 40 !== 0 || gridY % 40 !== 0) return false;
+
+         // 5. the complete 40×40 block remains within map bounds
+         if (gridX - 20 < 0 || gridX + 20 > MAP_WIDTH || gridY - 20 < 0 || gridY + 20 > MAP_HEIGHT) {
+             return false;
+         }
+
+         // 6. the position is no farther than 160 pixels from the authoritative builder position
+         const dx = gridX - builderPos.x;
+         const dy = gridY - builderPos.y;
+         if (dx * dx + dy * dy > 160 * 160) return false;
+
+         // 7. the block does not overlap any active static wall in activeWalls
+         for (const w of activeWalls) {
+            if (gridX > w.x - 20 && gridX < w.x + w.w + 20 &&
+                gridY > w.y - 20 && gridY < w.y + w.h + 20) {
+               return false;
+            }
+         }
+
+         // 8. the block does not overlap an enemy
          for (const enemy of s.enemies) {
             if (enemy.x > gridX - 20 - enemy.radius && enemy.x < gridX + 20 + enemy.radius &&
                 enemy.y > gridY - 20 - enemy.radius && enemy.y < gridY + 20 + enemy.radius) {
-               blockOccupied = true;
-               break;
+               return false;
             }
          }
-         if (!blockOccupied) {
-             for (const b of s.bouncers) {
-                if (b.x > gridX - 20 - b.radius && b.x < gridX + 20 + b.radius &&
-                    b.y > gridY - 20 - b.radius && b.y < gridY + 20 + b.radius) {
-                   blockOccupied = true;
-                   break;
-                }
-             }
-         }
-         if (!blockOccupied) {
-             for (const spawner of s.spawners) {
-                 if (spawner.hp > 0 && spawner.x > gridX - 20 - spawner.radius && spawner.x < gridX + 20 + spawner.radius &&
-                     spawner.y > gridY - 20 - spawner.radius && spawner.y < gridY + 20 + spawner.radius) {
-                     blockOccupied = true;
-                     break;
-                 }
-             }
-         }
-         if (!blockOccupied) {
-             const players = Object.values(s.multiplayerPlayers) as any[];
-             for (const p of players) {
-                if (!p.isDead && p.x > gridX - 20 - p.radius && p.x < gridX + 20 + p.radius &&
-                    p.y > gridY - 20 - p.radius && p.y < gridY + 20 + p.radius) {
-                   blockOccupied = true;
-                   break;
-                }
-             }
-         }
-         if (blockOccupied) return;
 
+         // 9. the block does not overlap a bouncer
+         for (const b of s.bouncers) {
+            if (b.x > gridX - 20 - b.radius && b.x < gridX + 20 + b.radius &&
+                b.y > gridY - 20 - b.radius && b.y < gridY + 20 + b.radius) {
+               return false;
+            }
+         }
+
+         // 10. the block does not overlap a living spawner
+         for (const spawner of s.spawners) {
+             if (spawner.hp > 0 && spawner.x > gridX - 20 - spawner.radius && spawner.x < gridX + 20 + spawner.radius &&
+                 spawner.y > gridY - 20 - spawner.radius && spawner.y < gridY + 20 + spawner.radius) {
+                 return false;
+             }
+         }
+
+         // 11. the block does not overlap any living player other than the builder
+         for (const pid in s.multiplayerPlayers) {
+            if (pid === builderId) continue;
+            const p = s.multiplayerPlayers[pid] as any;
+            if (p && !p.isDead && p.x > gridX - 20 - p.radius && p.x < gridX + 20 + p.radius &&
+                p.y > gridY - 20 - p.radius && p.y < gridY + 20 + p.radius) {
+               return false;
+            }
+         }
+         if (builderId !== hostId) {
+            const lp = s.player;
+            const hostMatchPlayer = s.matchPlayers[hostId];
+            const isHostAlive = hostMatchPlayer ? !hostMatchPlayer.isDead : (uiRef.current.status === 'PLAYING');
+            if (isHostAlive && lp.x > gridX - 20 - PLAYER_RADIUS && lp.x < gridX + 20 + PLAYER_RADIUS &&
+                lp.y > gridY - 20 - PLAYER_RADIUS && lp.y < gridY + 20 + PLAYER_RADIUS) {
+               return false;
+            }
+         }
+
+         // Existing block rules: use ownerId to check ownership
+         const existingIdx = s.blocks.findIndex(b => b.x === gridX && b.y === gridY);
+         if (existingIdx !== -1) {
+             const existingBlock = s.blocks[existingIdx];
+             if (existingBlock.ownerId === builderId) {
+                 return false;
+             } else {
+                 s.blocks[existingIdx] = {
+                     x: gridX,
+                     y: gridY,
+                     size: 40,
+                     createdAt: currentTime,
+                     colorIdx: colorIdx,
+                     ownerId: builderId
+                 };
+             }
+         } else {
+             s.blocks.push({
+                 x: gridX,
+                 y: gridY,
+                 size: 40,
+                 createdAt: currentTime,
+                 colorIdx: colorIdx,
+                 ownerId: builderId
+             });
+         }
+
+         // Remove authoritative bullets whose centers occupy the newly materialized area
          for (let i = s.bullets.length - 1; i >= 0; i--) {
             const b = s.bullets[i];
             if (b.x > gridX - 20 && b.x < gridX + 20 && b.y > gridY - 20 && b.y < gridY + 20) {
@@ -4694,26 +4778,105 @@ export default function GameCanvas() {
             }
          }
 
-         const existingIdx = s.blocks.findIndex(b => b.x === gridX && b.y === gridY);
-         if (existingIdx !== -1) {
-            if (s.blocks[existingIdx].colorIdx === cIdx) {
-               return;
-            } else {
-               s.blocks.splice(existingIdx, 1);
-               if (socketRef.current && mpRef.current.roomId && !mpRef.current.isHost) {
-                  socketRef.current.emit('client_action', mpRef.current.roomId, { roundId: activeMultiplayerRoundIdRef.current, type: 'build_remove', x: gridX, y: gridY });
-               }
-            }
+         s.forceBroadcast = true;
+         return true;
+     } catch (e) {
+         console.error("Error in authMultiplayerPlaceBlock:", e);
+         return false;
+     }
+  }, [activeWalls]);
+
+  const tryPlaceBuildBlock = useCallback((currentTime: number, gridX: number, gridY: number, cIdx: number) => {
+     if (isOpeningProtectionActiveLocal(currentTime)) return;
+     try {
+         const roomId = mpRef.current.roomId;
+
+         // A. Single-player
+         if (!roomId) {
+             const s = stateRef.current;
+             let blockOccupied = false;
+
+             for (const enemy of s.enemies) {
+                if (enemy.x > gridX - 20 - enemy.radius && enemy.x < gridX + 20 + enemy.radius &&
+                    enemy.y > gridY - 20 - enemy.radius && enemy.y < gridY + 20 + enemy.radius) {
+                   blockOccupied = true;
+                   break;
+                }
+             }
+             if (!blockOccupied) {
+                 for (const b of s.bouncers) {
+                    if (b.x > gridX - 20 - b.radius && b.x < gridX + 20 + b.radius &&
+                        b.y > gridY - 20 - b.radius && b.y < gridY + 20 + b.radius) {
+                       blockOccupied = true;
+                       break;
+                    }
+                 }
+             }
+             if (!blockOccupied) {
+                 for (const spawner of s.spawners) {
+                     if (spawner.hp > 0 && spawner.x > gridX - 20 - spawner.radius && spawner.x < gridX + 20 + spawner.radius &&
+                         spawner.y > gridY - 20 - spawner.radius && spawner.y < gridY + 20 + spawner.radius) {
+                         blockOccupied = true;
+                         break;
+                     }
+                 }
+             }
+             if (!blockOccupied) {
+                 const players = Object.values(s.multiplayerPlayers) as any[];
+                 for (const p of players) {
+                    if (!p.isDead && p.x > gridX - 20 - p.radius && p.x < gridX + 20 + p.radius &&
+                        p.y > gridY - 20 - p.radius && p.y < gridY + 20 + p.radius) {
+                       blockOccupied = true;
+                       break;
+                    }
+                 }
+             }
+             if (blockOccupied) return;
+
+             for (let i = s.bullets.length - 1; i >= 0; i--) {
+                const b = s.bullets[i];
+                if (b.x > gridX - 20 && b.x < gridX + 20 && b.y > gridY - 20 && b.y < gridY + 20) {
+                   s.bullets.splice(i, 1);
+                }
+             }
+
+             const existingIdx = s.blocks.findIndex(b => b.x === gridX && b.y === gridY);
+             if (existingIdx !== -1) {
+                if (s.blocks[existingIdx].colorIdx === cIdx) {
+                   return;
+                } else {
+                   s.blocks.splice(existingIdx, 1);
+                }
+             }
+
+             s.blocks.push({ x: gridX, y: gridY, size: 40, createdAt: currentTime, colorIdx: cIdx, ownerId: 'local' });
+             return;
          }
 
-         s.blocks.push({ x: gridX, y: gridY, size: 40, createdAt: currentTime, colorIdx: cIdx, ownerId: mpRef.current.roomId ? (socketRef.current?.id || 'local') : 'local' });
-         if (socketRef.current && mpRef.current.roomId && !mpRef.current.isHost) {
-            socketRef.current.emit('client_action', mpRef.current.roomId, { roundId: activeMultiplayerRoundIdRef.current, type: 'build', x: gridX, y: gridY, colorIdx: cIdx });
+         // B. Multiplayer host
+         if (mpRef.current.isHost) {
+             const hostId = socketRef.current?.id || 'host';
+             const hostPos = { x: stateRef.current.player.x, y: stateRef.current.player.y };
+             const hostColorIdx = playerProfileRef.current.colorIdx;
+             authMultiplayerPlaceBlock(hostId, hostPos, gridX, gridY, hostColorIdx, currentTime);
+             return;
+         }
+
+         // C. Multiplayer guest
+         const socket = socketRef.current;
+         const roundId = activeMultiplayerRoundIdRef.current;
+         if (socket && socket.connected && roomId && typeof roundId === 'number' && roundId > 0) {
+             socket.emit('client_action', roomId, {
+                 roundId,
+                 type: 'build',
+                 x: gridX,
+                 y: gridY
+             });
          }
      } catch(e) {
          console.error("Error in tryPlaceBuildBlock:", e);
      }
-  }, []);
+  }, [authMultiplayerPlaceBlock]);
 
   const applySpecialAbility = useCallback((x: number, y: number, colorIdx: number, ownerId: string) => {
      if (isOpeningProtectionActiveLocal()) return;
@@ -5513,118 +5676,16 @@ export default function GameCanvas() {
               if (action.x === undefined || typeof action.x !== 'number' || !Number.isFinite(action.x) ||
                   action.y === undefined || typeof action.y !== 'number' || !Number.isFinite(action.y)) return;
 
-              if (action.x % 40 !== 0 || action.y % 40 !== 0) return;
-
-              const dx = action.x - clientPlayer.x;
-              const dy = action.y - clientPlayer.y;
-              if (dx * dx + dy * dy > 160 * 160) return;
-
-              let blockOccupied = false;
-              // Check occupancy by enemies
-              for (const enemy of stateRef.current.enemies) {
-                 if (enemy.x > action.x - 20 - enemy.radius && enemy.x < action.x + 20 + enemy.radius &&
-                     enemy.y > action.y - 20 - enemy.radius && enemy.y < action.y + 20 + enemy.radius) {
-                    blockOccupied = true;
-                    break;
-                 }
-              }
-              // Check occupancy by bouncers
-              if (!blockOccupied) {
-                  for (const b of stateRef.current.bouncers) {
-                     if (b.x > action.x - 20 - b.radius && b.x < action.x + 20 + b.radius &&
-                         b.y > action.y - 20 - b.radius && b.y < action.y + 20 + b.radius) {
-                        blockOccupied = true;
-                        break;
-                     }
-                  }
-              }
-              // Check occupancy by spawners
-              if (!blockOccupied) {
-                  for (const spawner of stateRef.current.spawners) {
-                      if (spawner.hp > 0 && spawner.x > action.x - 20 - spawner.radius && spawner.x < action.x + 20 + spawner.radius &&
-                          spawner.y > action.y - 20 - spawner.radius && spawner.y < action.y + 20 + spawner.radius) {
-                          blockOccupied = true;
-                          break;
-                      }
-                  }
-              }
-              // Check occupancy by local player
-              if (!blockOccupied) {
-                  const lp = stateRef.current.player;
-                  const status = uiRef.current.status;
-                  if (status === 'PLAYING' && lp.x > action.x - 20 - lp.radius && lp.x < action.x + 20 + lp.radius &&
-                      lp.y > action.y - 20 - lp.radius && lp.y < action.y + 20 + lp.radius) {
-                     blockOccupied = true;
-                  }
-              }
-              // Check occupancy by multiplayer players
-              if (!blockOccupied) {
-                  for (const pid in stateRef.current.multiplayerPlayers) {
-                     if (pid === clientId) continue;
-                     const p = stateRef.current.multiplayerPlayers[pid];
-                     if (!p.isDead && p.x > action.x - 20 - p.radius && p.x < action.x + 20 + p.radius &&
-                         p.y > action.y - 20 - p.radius && p.y < action.y + 20 + p.radius) {
-                        blockOccupied = true;
-                        break;
-                     }
-                  }
-              }
-              // Check overlap with static walls of the map
-              if (!blockOccupied) {
-                  const walls = (MAPS[uiRef.current.mapId] || MAPS.medium).walls;
-                  for (const w of walls) {
-                     if (action.x > w.x - 20 && action.x < w.x + w.w + 20 &&
-                         action.y > w.y - 20 && action.y < w.y + w.h + 20) {
-                        blockOccupied = true;
-                        break;
-                     }
-                  }
-              }
-
-              if (blockOccupied) return;
-
-              // Check existing block at same location
-              const existingIdx = stateRef.current.blocks.findIndex(b => b.x === action.x && b.y === action.y);
-              if (existingIdx !== -1) {
-                  return;
-              }
-
-              stateRef.current.blocks.push({
-                  x: action.x,
-                  y: action.y,
-                  size: 40,
-                  createdAt: currentTime,
-                  colorIdx: matchPlayer.colorIdx,
-                  ownerId: clientId
-              });
-
-              for (let i = stateRef.current.bullets.length - 1; i >= 0; i--) {
-                 const b = stateRef.current.bullets[i];
-                 if (b.x > action.x - 20 && b.x < action.x + 20 && b.y > action.y - 20 && b.y < action.y + 20) {
-                    stateRef.current.bullets.splice(i, 1);
-                 }
-              }
+              authMultiplayerPlaceBlock(
+                  clientId,
+                  clientPlayer,
+                  action.x,
+                  action.y,
+                  matchPlayer.colorIdx,
+                  currentTime
+              );
           } else if (action.type === 'build_remove') {
-              const currentTime = performance.now();
-              const auth = getOrInitializeAuthority(clientId);
-              if (currentTime >= auth.buildActiveUntil) return;
-
-              if (action.x === undefined || typeof action.x !== 'number' || !Number.isFinite(action.x) ||
-                  action.y === undefined || typeof action.y !== 'number' || !Number.isFinite(action.y)) return;
-
-              if (action.x % 40 !== 0 || action.y % 40 !== 0) return;
-
-              const dx = action.x - clientPlayer.x;
-              const dy = action.y - clientPlayer.y;
-              if (dx * dx + dy * dy > 160 * 160) return;
-
-              const idx = stateRef.current.blocks.findIndex(b => b.x === action.x && b.y === action.y);
-              if (idx !== -1) {
-                  const targetBlock = stateRef.current.blocks[idx];
-                  if (targetBlock.ownerId === clientId) {
-                      stateRef.current.blocks.splice(idx, 1);
-                  }
-              }
+              // Harmless ignored legacy action: do not mutate authoritative game state
           }
         }
     });
