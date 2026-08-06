@@ -1382,6 +1382,83 @@ function distSqLinePoint(v: {x:number, y:number}, w: {x:number, y:number}, p: {x
   return (p.x - (v.x + t * (w.x - v.x))) ** 2 + (p.y - (v.y + t * (w.y - v.y))) ** 2;
 }
 
+function segmentVersusCircle(
+  startX: number,
+  startY: number,
+  endX: number,
+  endY: number,
+  circleX: number,
+  circleY: number,
+  combinedRadius: number
+): { t: number; x: number; y: number } | null {
+  if (
+    !Number.isFinite(startX) ||
+    !Number.isFinite(startY) ||
+    !Number.isFinite(endX) ||
+    !Number.isFinite(endY) ||
+    !Number.isFinite(circleX) ||
+    !Number.isFinite(circleY) ||
+    !Number.isFinite(combinedRadius)
+  ) {
+    return null;
+  }
+  if (combinedRadius <= 0) {
+    return null;
+  }
+
+  const fx = startX - circleX;
+  const fy = startY - circleY;
+  const distSq = fx * fx + fy * fy;
+  const rSq = combinedRadius * combinedRadius;
+
+  if (distSq <= rSq) {
+    return { t: 0, x: startX, y: startY };
+  }
+
+  const dx = endX - startX;
+  const dy = endY - startY;
+  const a = dx * dx + dy * dy;
+
+  if (a < 1e-9) {
+    return null;
+  }
+
+  const b = 2 * (fx * dx + fy * dy);
+  const c = distSq - rSq;
+
+  const discriminant = b * b - 4 * a * c;
+  if (discriminant < 0) {
+    return null;
+  }
+
+  const sqrtDisc = Math.sqrt(discriminant);
+  const t1 = (-b - sqrtDisc) / (2 * a);
+  const t2 = (-b + sqrtDisc) / (2 * a);
+
+  const validT: number[] = [];
+  const eps = 1e-9;
+  if (t1 >= -eps && t1 <= 1 + eps) {
+    validT.push(Math.max(0, Math.min(1, t1)));
+  }
+  if (t2 >= -eps && t2 <= 1 + eps) {
+    validT.push(Math.max(0, Math.min(1, t2)));
+  }
+
+  if (validT.length === 0) {
+    return null;
+  }
+
+  const minT = Math.min(...validT);
+  const hitX = startX + minT * dx;
+  const hitY = startY + minT * dy;
+
+  return {
+    t: minT,
+    x: hitX,
+    y: hitY
+  };
+}
+
 function isPositionSafe(
   x: number,
   y: number,
@@ -8665,63 +8742,173 @@ export default function GameCanvas() {
             }
           }
 
-          // Check hit Player (host local player avatar)
+          // Check hit Player/Remote Players
           if (!bulletDestroyed) {
-            const hostColorIdx = playerProfileRef.current.colorIdx;
-            const hostColor = PLAYER_COLORS[hostColorIdx]?.n || '#00f0ff';
+            if (isAuthoritativeMultiplayerBullet) {
+              // Authoritative multiplayer swept player hit detection candidate pass
+              const candidates: {
+                id: string;
+                isHost: boolean;
+                x: number;
+                y: number;
+                radius: number;
+              }[] = [];
 
-            if (bulletColor !== hostColor) {
-              const dx = state.player.x - bullet.x;
-              const dy = state.player.y - bullet.y;
-              const isProtected = state.player.dash.active || isOpeningProtectionActiveForHost(currentTime);
-              if (!isProtected && dx * dx + dy * dy < (state.player.radius + bullet.radius * 0.5) ** 2) {
-                let label = 'HOSTILE FIRE';
-                let causeCode = 'hostile_fire';
-                if (bullet.isNeutral) {
-                  label = 'NEUTRAL RICOCHET';
-                  causeCode = 'neutral_ricochet';
-                } else if (bullet.isPlayer) {
-                  causeCode = 'player_shot';
-                  const attackerName = resolvePlayerName(bullet.ownerId);
-                  label = attackerName ? `SHOT BY ${attackerName}` : 'SHOT BY RIVAL PLAYER';
-                }
+              // Host candidate
+              const hostColorIdx = playerProfileRef.current.colorIdx;
+              const hostColor = PLAYER_COLORS[hostColorIdx]?.n || '#00f0ff';
+              const isHostProtected = state.player.dash.active || isOpeningProtectionActiveForHost(currentTime);
+              const hostAlive = STATUS === 'PLAYING';
 
-                triggerEndPresentation({
-                  outcome: 'defeat',
-                  causeCode,
-                  label,
-                  impactPos: { x: bullet.x, y: bullet.y },
-                  markerColor: '#ff003c',
-                  startTimestamp: performance.now(),
+              if (hostAlive && bulletColor !== hostColor && !isHostProtected) {
+                candidates.push({
+                  id: 'host',
+                  isHost: true,
+                  x: state.player.x,
+                  y: state.player.y,
+                  radius: state.player.radius + bullet.radius * 0.5
                 });
-
-                setUiState(prev => {
-                  uiRef.current = { ...prev, status: 'GAME_OVER' };
-                  return uiRef.current;
-                });
-                bulletDestroyed = true;
               }
-            }
-          }
 
-          // Check hit Remote Players (multiplayer players tracked by host)
-          if (!bulletDestroyed) {
-            for (const pid in state.multiplayerPlayers) {
-              const mpPlayer = state.multiplayerPlayers[pid];
-              if (mpPlayer && !mpPlayer.isDead) {
+              // Remote candidates
+              for (const pid in state.multiplayerPlayers) {
+                const mpPlayer = state.multiplayerPlayers[pid];
+                if (!mpPlayer) continue;
+
+                const mPlayer = state.matchPlayers ? state.matchPlayers[pid] : null;
+                if (!mPlayer || mPlayer.isDead || mPlayer.isDisconnected) continue;
+
+                if (mpPlayer.isDead) continue;
+
                 const mpColorIdx = mpPlayer.colorIdx;
                 const mpColor = PLAYER_COLORS[mpColorIdx]?.n || '#00f0ff';
 
                 if (bulletColor !== mpColor) {
-                  const dx = mpPlayer.x - bullet.x;
-                  const dy = mpPlayer.y - bullet.y;
                   const isProtected = mpPlayer.isDash || isOpeningProtectionActiveForHost(currentTime);
-                  if (!isProtected && dx * dx + dy * dy < (mpPlayer.radius + bullet.radius * 0.5) ** 2) {
-                    // Call the elimination helper
-                    eliminateRemotePlayerRef.current?.(pid, { x: bullet.x, y: bullet.y }, currentTime);
-                    bulletDestroyed = true;
-                    break;
+                  if (!isProtected) {
+                    candidates.push({
+                      id: pid,
+                      isHost: false,
+                      x: mpPlayer.x,
+                      y: mpPlayer.y,
+                      radius: mpPlayer.radius + bullet.radius * 0.5
+                    });
                   }
+                }
+              }
+
+              // Find earliest intersection for each candidate along the actual reachable path
+              const hits: {
+                id: string;
+                isHost: boolean;
+                t: number;
+                x: number;
+                y: number;
+              }[] = [];
+
+              for (const cand of candidates) {
+                const hit = segmentVersusCircle(
+                  bulletBeforeX,
+                  bulletBeforeY,
+                  bullet.x,
+                  bullet.y,
+                  cand.x,
+                  cand.y,
+                  cand.radius
+                );
+                if (hit !== null) {
+                  hits.push({
+                    id: cand.id,
+                    isHost: cand.isHost,
+                    t: hit.t,
+                    x: hit.x,
+                    y: hit.y
+                  });
+                }
+              }
+
+              if (hits.length > 0) {
+                // Select exactly one player hit: smallest t, then deterministic tie-break on player ID
+                hits.sort((a, b) => {
+                  if (Math.abs(a.t - b.t) < 1e-9) {
+                    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+                  }
+                  return a.t - b.t;
+                });
+
+                const winner = hits[0];
+
+                // Set bullet.x and bullet.y to the returned hit position
+                bullet.x = winner.x;
+                bullet.y = winner.y;
+                bulletDestroyed = true;
+                state.forceBroadcast = true;
+
+                if (winner.isHost) {
+                  let label = 'HOSTILE FIRE';
+                  let causeCode = 'hostile_fire';
+                  if (bullet.isNeutral) {
+                    label = 'NEUTRAL RICOCHET';
+                    causeCode = 'neutral_ricochet';
+                  } else if (bullet.isPlayer) {
+                    causeCode = 'player_shot';
+                    const attackerName = resolvePlayerName(bullet.ownerId);
+                    label = attackerName ? `SHOT BY ${attackerName}` : 'SHOT BY RIVAL PLAYER';
+                  }
+
+                  triggerEndPresentation({
+                    outcome: 'defeat',
+                    causeCode,
+                    label,
+                    impactPos: { x: winner.x, y: winner.y },
+                    markerColor: '#ff003c',
+                    startTimestamp: performance.now(),
+                  });
+
+                  setUiState(prev => {
+                    uiRef.current = { ...prev, status: 'GAME_OVER' };
+                    return uiRef.current;
+                  });
+                } else {
+                  // Call eliminateRemotePlayerRef.current exactly once with the chosen remote player
+                  eliminateRemotePlayerRef.current?.(winner.id, { x: winner.x, y: winner.y }, currentTime);
+                }
+              }
+            } else {
+              // Single-player behavior: Keep the existing single-player host-local endpoint collision code exactly as it was.
+              const hostColorIdx = playerProfileRef.current.colorIdx;
+              const hostColor = PLAYER_COLORS[hostColorIdx]?.n || '#00f0ff';
+
+              if (bulletColor !== hostColor) {
+                const dx = state.player.x - bullet.x;
+                const dy = state.player.y - bullet.y;
+                const isProtected = state.player.dash.active || isOpeningProtectionActiveForHost(currentTime);
+                if (!isProtected && dx * dx + dy * dy < (state.player.radius + bullet.radius * 0.5) ** 2) {
+                  let label = 'HOSTILE FIRE';
+                  let causeCode = 'hostile_fire';
+                  if (bullet.isNeutral) {
+                    label = 'NEUTRAL RICOCHET';
+                    causeCode = 'neutral_ricochet';
+                  } else if (bullet.isPlayer) {
+                    causeCode = 'player_shot';
+                    const attackerName = resolvePlayerName(bullet.ownerId);
+                    label = attackerName ? `SHOT BY ${attackerName}` : 'SHOT BY RIVAL PLAYER';
+                  }
+
+                  triggerEndPresentation({
+                    outcome: 'defeat',
+                    causeCode,
+                    label,
+                    impactPos: { x: bullet.x, y: bullet.y },
+                    markerColor: '#ff003c',
+                    startTimestamp: performance.now(),
+                  });
+
+                  setUiState(prev => {
+                    uiRef.current = { ...prev, status: 'GAME_OVER' };
+                    return uiRef.current;
+                  });
+                  bulletDestroyed = true;
                 }
               }
             }
