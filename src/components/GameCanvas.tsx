@@ -2620,6 +2620,23 @@ export default function GameCanvas() {
     }
   }, [uiState.status, invalidateQuickSave]);
   const socketRef = useRef<Socket | null>(null);
+  const resumeSessionRef = useRef<{ roomId: string; resumeToken: string } | null>(null);
+  const resumeInFlightRef = useRef<boolean>(false);
+  const awaitingResumeSnapshotRef = useRef<boolean>(false);
+
+  const clearResumeSession = useCallback(() => {
+    resumeSessionRef.current = null;
+    resumeInFlightRef.current = false;
+    awaitingResumeSnapshotRef.current = false;
+  }, []);
+
+  const emitLeaveRoom = useCallback(() => {
+    if (mpRef.current.roomId) {
+      socketRef.current?.emit('leave_room', mpRef.current.roomId);
+    }
+    clearResumeSession();
+  }, [clearResumeSession]);
+
   const lastReceivedGameStateTimeRef = useRef<number>(0);
   const triggerEliminationRef = useRef<((x: number, y: number, colorIdx: number, label?: string) => void) | null>(null);
   const eliminateRemotePlayerRef = useRef<((victimId: string, impactPos: { x: number, y: number }, currentTime: number) => void) | null>(null);
@@ -3223,10 +3240,63 @@ export default function GameCanvas() {
   }, []);
 
   useEffect(() => {
-    if (uiState.status !== 'PLAYING' || mpMenuOpen || confirmResign) {
+    const isDisconnected = mpState.roomId && !mpState.isConnected;
+    if (uiState.status !== 'PLAYING' || mpMenuOpen || confirmResign || isDisconnected) {
       releaseAllInputs();
     }
-  }, [uiState.status, mpMenuOpen, confirmResign, releaseAllInputs]);
+  }, [uiState.status, mpMenuOpen, confirmResign, mpState.roomId, mpState.isConnected, releaseAllInputs]);
+
+  const remapPlayerId = useCallback((oldId: string, newId: string) => {
+    const state = stateRef.current;
+    if (!state) return;
+
+    console.log(`Remapping player reference from ${oldId} to ${newId}`);
+
+    // 1. multiplayerPlayers
+    if (state.multiplayerPlayers && state.multiplayerPlayers[oldId]) {
+      state.multiplayerPlayers[newId] = state.multiplayerPlayers[oldId];
+      delete state.multiplayerPlayers[oldId];
+    }
+
+    // 2. matchPlayers
+    if (state.matchPlayers && state.matchPlayers[oldId]) {
+      state.matchPlayers[newId] = state.matchPlayers[oldId];
+      delete state.matchPlayers[oldId];
+    }
+
+    // 3. playerActionAuthority
+    if (state.playerActionAuthority && state.playerActionAuthority[oldId]) {
+      state.playerActionAuthority[newId] = state.playerActionAuthority[oldId];
+      delete state.playerActionAuthority[oldId];
+    }
+
+    // 4. blocks
+    if (state.blocks) {
+      state.blocks.forEach((block: any) => {
+        if (block.ownerId === oldId) {
+          block.ownerId = newId;
+        }
+      });
+    }
+
+    // 5. bullets
+    if (state.bullets) {
+      state.bullets.forEach((bullet: any) => {
+        if (bullet.ownerId === oldId) {
+          bullet.ownerId = newId;
+        }
+      });
+    }
+
+    // 6. zones
+    if (state.zones) {
+      state.zones.forEach((zone: any) => {
+        if (zone.ownerId === oldId) {
+          zone.ownerId = newId;
+        }
+      });
+    }
+  }, []);
 
   const handleCopyCode = () => {
     if (mpState.roomId) {
@@ -4477,6 +4547,12 @@ export default function GameCanvas() {
       (res: any) => {
         if (res && res.roomId) {
           setMpState(prev => ({ ...prev, roomId: res.roomId, isHost: true }));
+          if (res.resumeToken) {
+            resumeSessionRef.current = {
+              roomId: res.roomId,
+              resumeToken: res.resumeToken
+            };
+          }
           const applied = applyAuthoritativeMatchSettings(res.matchSettings);
           if (!applied) {
             applyAuthoritativeMatchSettings(initialSettings);
@@ -4502,6 +4578,12 @@ export default function GameCanvas() {
     socketRef.current?.emit('join_room', cleanRoom, { name: playerProfileRef.current.name }, (res: any) => {
       if (res && res.success) {
         setMpState(prev => ({ ...prev, roomId: cleanRoom, isHost: false, error: '' }));
+        if (res.resumeToken) {
+          resumeSessionRef.current = {
+            roomId: cleanRoom,
+            resumeToken: res.resumeToken
+          };
+        }
         applyAuthoritativeMatchSettings(res.matchSettings);
         setActiveLobbyTab('players');
         setUiState(prev => ({ ...prev, status: 'LOBBY' }));
@@ -5623,6 +5705,42 @@ export default function GameCanvas() {
 
     socket.on('connect', () => {
       setMpState(prev => ({ ...prev, isConnected: true }));
+
+      if (resumeSessionRef.current && !resumeInFlightRef.current) {
+        const session = resumeSessionRef.current;
+        resumeInFlightRef.current = true;
+        awaitingResumeSnapshotRef.current = true;
+        socket.emit('resume_room', session.roomId, session.resumeToken, (res: any) => {
+          resumeInFlightRef.current = false;
+          if (res && res.success) {
+            console.log("resume_room succeeded. Remapping references", res);
+            remapPlayerId(res.oldId, res.newId);
+            setMpState(prev => ({
+              ...prev,
+              roomId: res.roomId,
+              isHost: res.isHost,
+              error: ''
+            }));
+            if (res.resumeToken) {
+              resumeSessionRef.current = {
+                roomId: res.roomId,
+                resumeToken: res.resumeToken
+              };
+            }
+          } else {
+            console.error("resume_room failed:", res?.error);
+            clearResumeSession();
+            setMpState(prev => ({
+              ...prev,
+              roomId: null,
+              isHost: false,
+              error: res?.error || 'Failed to resume session'
+            }));
+            setUiState(prev => ({ ...prev, status: 'MENU' }));
+          }
+          awaitingResumeSnapshotRef.current = false;
+        });
+      }
     });
 
     socket.on('disconnect', () => {
@@ -5633,6 +5751,12 @@ export default function GameCanvas() {
       cancelPendingMatchSettingsUpdate();
       closeMpMapSelector();
       setMpState(prev => ({ ...prev, isConnected: false }));
+    });
+
+    socket.on('player_reconnected', (data: any) => {
+      if (data && data.oldId && data.newId) {
+        remapPlayerId(data.oldId, data.newId);
+      }
     });
 
     socket.on('player_joined', (id) => {
@@ -6627,6 +6751,12 @@ export default function GameCanvas() {
         socketRef.current?.emit('join_room', cleanRoom, { name: playerProfileRef.current.name }, (res: any) => {
           if (res && res.success) {
             setMpState(prev => ({ ...prev, roomId: cleanRoom, joinCode: cleanRoom, isHost: false, error: '' }));
+            if (res.resumeToken) {
+              resumeSessionRef.current = {
+                roomId: cleanRoom,
+                resumeToken: res.resumeToken
+              };
+            }
             applyAuthoritativeMatchSettings(res.matchSettings);
             setActiveLobbyTab('players');
 
@@ -6710,7 +6840,11 @@ export default function GameCanvas() {
     }
     handleResize();
 
-    const canAcceptGameplayInput = () => !document.hidden && document.hasFocus();
+    const canAcceptGameplayInput = () => {
+      if (document.hidden || !document.hasFocus()) return false;
+      if (mpRef.current.roomId && !mpRef.current.isConnected) return false;
+      return true;
+    };
 
     const handleKeyDown = (e: KeyboardEvent) => {
       const key = e.key.toLowerCase();
@@ -6820,6 +6954,7 @@ export default function GameCanvas() {
     const handleTouchStart = (e: TouchEvent) => {
       if (document.hidden) return;
       if (uiRef.current.status !== 'PLAYING') return; // let normal touches pass
+      if (mpRef.current.roomId && !mpRef.current.isConnected) return;
       if (mpRef.current.roomId && (mpMenuOpenRef.current || confirmResignRef.current)) {
          return;
       }
@@ -6945,6 +7080,7 @@ export default function GameCanvas() {
 
     const handleTouchMove = (e: TouchEvent) => {
       if (uiRef.current.status !== 'PLAYING') return;
+      if (mpRef.current.roomId && !mpRef.current.isConnected) return;
       const isMobile = uiRef.current.deviceType === 'mobile';
       const rect = canvas.getBoundingClientRect();
       const maxDist = 40;
@@ -11916,7 +12052,7 @@ export default function GameCanvas() {
               )}
 
               <button onClick={() => {
-                if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
+                emitLeaveRoom();
                 clearPendingGuestShots(true);
                 clearPendingAbilityRequests();
                 activeMultiplayerRoundIdRef.current = 0;
@@ -12292,7 +12428,7 @@ export default function GameCanvas() {
                       setMpMenuOpen(false);
                       mpMenuOpenRef.current = false;
                       stateRef.current.shake = 20;
-                      if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
+                      emitLeaveRoom();
                       clearPendingGuestShots(true);
                       clearPendingAbilityRequests();
                       activeMultiplayerRoundIdRef.current = 0;
@@ -12447,7 +12583,7 @@ export default function GameCanvas() {
               </button>
               <button
                 onClick={() => {
-                  if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
+                  emitLeaveRoom();
                   clearPendingGuestShots(true);
                   clearPendingAbilityRequests();
                   activeMultiplayerRoundIdRef.current = 0;
@@ -12514,7 +12650,7 @@ export default function GameCanvas() {
               </button>
               <button
                 onClick={() => {
-                  if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
+                  emitLeaveRoom();
                   clearPendingGuestShots(true);
                   clearPendingAbilityRequests();
                   activeMultiplayerRoundIdRef.current = 0;
@@ -12710,7 +12846,7 @@ export default function GameCanvas() {
                     <div className="flex gap-3 w-full">
                       <button
                         onClick={() => {
-                          if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
+                          emitLeaveRoom();
                           clearPendingGuestShots(true);
                           clearPendingAbilityRequests();
                           activeMultiplayerRoundIdRef.current = 0;
