@@ -979,6 +979,120 @@ function resolveWallCollisions(
 }
 
 
+function sweptMultiplayerPlayerResolve(
+  startX: number,
+  startY: number,
+  targetX: number,
+  targetY: number,
+  radius: number,
+  walls: { x: number; y: number; w: number; h: number }[]
+): { x: number; y: number; normals: { nx: number; ny: number }[]; collided: boolean; clamped: boolean } {
+  if (!Number.isFinite(startX) || !Number.isFinite(startY) || !Number.isFinite(targetX) || !Number.isFinite(targetY)) {
+    const fallbackX = Number.isFinite(startX) ? startX : 0;
+    const fallbackY = Number.isFinite(startY) ? startY : 0;
+    const resolved = resolveWallCollisions(fallbackX, fallbackY, radius, walls);
+    return {
+      x: resolved.x,
+      y: resolved.y,
+      normals: resolved.normals,
+      collided: resolved.collided,
+      clamped: false
+    };
+  }
+
+  // First check whether the starting position is embedded in a wall using resolveWallCollisions.
+  const resolvedStart = resolveWallCollisions(startX, startY, radius, walls);
+  
+  // If the starting position required recovery, return the recovered position for this update instead of continuing the movement.
+  let isEmbedded = false;
+  for (const wall of walls) {
+    if (circleOverlapsWall(startX, startY, radius - 0.05, wall)) {
+      isEmbedded = true;
+      break;
+    }
+  }
+  
+  if (isEmbedded || Math.hypot(resolvedStart.x - startX, resolvedStart.y - startY) > 0.01 || resolvedStart.collided) {
+    return {
+      x: resolvedStart.x,
+      y: resolvedStart.y,
+      normals: resolvedStart.normals,
+      collided: resolvedStart.collided,
+      clamped: false
+    };
+  }
+
+  // Limit one accepted movement segment to 260 world units.
+  const dx = targetX - startX;
+  const dy = targetY - startY;
+  const dist = Math.hypot(dx, dy);
+  
+  let clamped = false;
+  let endX = targetX;
+  let endY = targetY;
+  let segmentDist = dist;
+  if (dist > 260) {
+    clamped = true;
+    endX = startX + (dx / dist) * 260;
+    endY = startY + (dy / dist) * 260;
+    segmentDist = 260;
+  }
+
+  // Split the resulting movement into substeps no larger than max(2, radius * 0.5)
+  const maxSubstep = Math.max(2, radius * 0.5);
+  
+  if (segmentDist <= 0.001) {
+    return {
+      x: startX,
+      y: startY,
+      normals: [],
+      collided: false,
+      clamped
+    };
+  }
+
+  const numSubsteps = Math.ceil(segmentDist / maxSubstep);
+  const stepX = (endX - startX) / numSubsteps;
+  const stepY = (endY - startY) / numSubsteps;
+
+  let currentX = startX;
+  let currentY = startY;
+  let anyCollision = false;
+  const normals: { nx: number; ny: number }[] = [];
+
+  for (let i = 1; i <= numSubsteps; i++) {
+    // Move incrementally from the latest resolved position
+    const candidateX = currentX + stepX;
+    const candidateY = currentY + stepY;
+    const prevX = currentX;
+    const prevY = currentY;
+
+    // Pass the candidate position through resolveWallCollisions
+    const resolved = resolveWallCollisions(candidateX, candidateY, radius, walls, prevX, prevY);
+    currentX = resolved.x;
+    currentY = resolved.y;
+
+    if (resolved.collided) {
+      anyCollision = true;
+      for (const n of resolved.normals) {
+        const isDup = normals.some(existing => Math.abs(existing.nx - n.nx) < 0.1 && Math.abs(existing.ny - n.ny) < 0.1);
+        if (!isDup) {
+          normals.push(n);
+        }
+      }
+    }
+  }
+
+  return {
+    x: currentX,
+    y: currentY,
+    normals,
+    collided: anyCollision,
+    clamped
+  };
+}
+
+
 function getConnectedComponent(startBlock: { x: number; y: number }, allBlocks: { x: number; y: number }[]): { x: number; y: number }[] {
   const component: { x: number; y: number }[] = [startBlock];
   const visited = new Set<string>();
@@ -5691,9 +5805,13 @@ export default function GameCanvas() {
       if (typeof input.x !== 'number' || !Number.isFinite(input.x)) return;
       if (typeof input.y !== 'number' || !Number.isFinite(input.y)) return;
 
-      const resolved = resolveWallCollisions(input.x, input.y, PLAYER_RADIUS, activeWalls, prevPlayer.x, prevPlayer.y);
+      const resolved = sweptMultiplayerPlayerResolve(prevPlayer.x, prevPlayer.y, input.x, input.y, PLAYER_RADIUS, activeWalls);
       const clampedX = resolved.x;
       const clampedY = resolved.y;
+
+      if (resolved.clamped || resolved.collided) {
+        stateRef.current.forceBroadcast = true;
+      }
 
       const currentTime = performance.now();
 
@@ -6847,7 +6965,9 @@ export default function GameCanvas() {
         }
 
         // Core Player Wall Collisions & Clamping (Run locally on BOTH Client and Host to prevent wall-phasing)
-        const playerResolved = resolveWallCollisions(state.player.x, state.player.y, state.player.radius, activeWalls, pBeforeX, pBeforeY);
+        const playerResolved = mpRef.current.roomId
+          ? sweptMultiplayerPlayerResolve(pBeforeX, pBeforeY, state.player.x, state.player.y, state.player.radius, activeWalls)
+          : resolveWallCollisions(state.player.x, state.player.y, state.player.radius, activeWalls, pBeforeX, pBeforeY);
         state.player.x = playerResolved.x;
         state.player.y = playerResolved.y;
 
