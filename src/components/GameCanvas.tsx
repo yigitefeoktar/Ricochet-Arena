@@ -1995,6 +1995,78 @@ function getBulletRelicCollision(
   return null;
 }
 
+function sweptMultiplayerBulletRelicCollision(
+  startX: number,
+  startY: number,
+  endX: number,
+  endY: number,
+  bulletRadius: number,
+  spawners: any[],
+  startPhaseTime: number,
+  endPhaseTime: number
+): {
+  x: number;
+  y: number;
+  nx: number;
+  ny: number;
+  overlap: number;
+  t: number;
+  spawner: any;
+  specialType: string;
+} | null {
+  if (
+    !Number.isFinite(startX) ||
+    !Number.isFinite(startY) ||
+    !Number.isFinite(endX) ||
+    !Number.isFinite(endY) ||
+    !Number.isFinite(bulletRadius) ||
+    !Number.isFinite(startPhaseTime) ||
+    !Number.isFinite(endPhaseTime) ||
+    !Array.isArray(spawners)
+  ) {
+    return null;
+  }
+
+  const dx = endX - startX;
+  const dy = endY - startY;
+  const dist = Math.hypot(dx, dy);
+
+  const maxDistStep = Math.max(1, bulletRadius * 0.5);
+  const bulletSteps = Math.ceil(dist / maxDistStep);
+
+  const phaseDiff = Math.abs(endPhaseTime - startPhaseTime);
+  const phaseSteps = Math.ceil(phaseDiff / 5);
+
+  const numSteps = Math.max(1, Math.max(bulletSteps, phaseSteps));
+
+  for (let i = 0; i <= numSteps; i++) {
+    const t = i / numSteps;
+    const curX = startX + dx * t;
+    const curY = startY + dy * t;
+    const curPhase = startPhaseTime + (endPhaseTime - startPhaseTime) * t;
+
+    for (const spawner of spawners) {
+      if (!spawner || !spawner.specialType) continue;
+
+      const collision = getBulletRelicCollision(curX, curY, bulletRadius, spawner, curPhase);
+      if (collision) {
+        return {
+          x: curX + collision.nx * collision.overlap,
+          y: curY + collision.ny * collision.overlap,
+          nx: collision.nx,
+          ny: collision.ny,
+          overlap: collision.overlap,
+          t: t,
+          spawner: spawner,
+          specialType: spawner.specialType
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
 const DashStatus = ({ stateRef }: { stateRef: any }) => {
   const [text, setText] = useState('READY');
   const [color, setColor] = useState('#fff');
@@ -8394,10 +8466,10 @@ export default function GameCanvas() {
           let trailY = bullet.y;
 
           if (isAuthoritativeMultiplayerBullet) {
-            // Move the bullet with the new bullet wall-sweep helper.
+            // A. Run sweptMultiplayerBulletResolve from bulletBeforeX/Y to targetX/Y.
             const bulletResolved = sweptMultiplayerBulletResolve(bulletBeforeX, bulletBeforeY, targetX, targetY, bullet.radius, activeWalls);
             
-            // Sweep Build blocks from bulletBeforeX/Y to that wall-resolved endpoint.
+            // B. Run sweptBuildBlockCollision from bulletBeforeX/Y to the wall-resolved endpoint.
             const blockCollision = sweptBuildBlockCollision(
               bulletBeforeX,
               bulletBeforeY,
@@ -8408,45 +8480,80 @@ export default function GameCanvas() {
               bullet.allowedBlockKeys || []
             );
 
-            if (blockCollision !== null) {
-              // Assign bullet.x and bullet.y to the block collision’s resolved position.
-              bullet.x = blockCollision.x;
-              bullet.y = blockCollision.y;
-              
-              // Set the multiplayer trail coordinates to this resolved block-impact position.
-              trailX = blockCollision.x;
-              trailY = blockCollision.y;
+            // C. Define the maximum statically reachable endpoint:
+            const staticEndX = blockCollision !== null ? blockCollision.x : bulletResolved.x;
+            const staticEndY = blockCollision !== null ? blockCollision.y : bulletResolved.y;
 
-              // Reflect bullet.dx and bullet.dy
-              const dot = bullet.dx * blockCollision.nx + bullet.dy * blockCollision.ny;
+            // D. Run the new relic sweep from bulletBeforeX/Y to that statically reachable endpoint.
+            const startPhaseTime = Math.max(0, worldPhaseTime - dt * 1000);
+            const relicCollision = sweptMultiplayerBulletRelicCollision(
+              bulletBeforeX,
+              bulletBeforeY,
+              staticEndX,
+              staticEndY,
+              bullet.radius,
+              state.spawners,
+              startPhaseTime,
+              worldPhaseTime
+            );
+
+            // Choose and apply winning collision
+            const hasPendingStaticCollision = blockCollision !== null || bulletResolved.collided;
+            const relicWins = relicCollision !== null && (!hasPendingStaticCollision || relicCollision.t < 1 - 1e-6);
+
+            if (relicWins && relicCollision !== null) {
+              // The relic wins
+              bullet.x = relicCollision.x;
+              bullet.y = relicCollision.y;
+              trailX = relicCollision.x;
+              trailY = relicCollision.y;
+
+              const dot = bullet.dx * relicCollision.nx + bullet.dy * relicCollision.ny;
               if (dot < 0) {
-                bullet.dx = bullet.dx - 2 * dot * blockCollision.nx;
-                bullet.dy = bullet.dy - 2 * dot * blockCollision.ny;
+                bullet.dx = bullet.dx - 2 * dot * relicCollision.nx;
+                bullet.dy = bullet.dy - 2 * dot * relicCollision.ny;
+                bullet.bounceCount++;
               }
 
-              // Increment bounceCount exactly once.
-              bullet.bounceCount++;
+              let pColor = '#aaaaaa';
+              if (relicCollision.specialType === 'shield') pColor = '#00f0ff';
+              else if (relicCollision.specialType === 'kinetic') pColor = '#ffcc00';
+              else if (relicCollision.specialType === 'singularity') pColor = '#b500ff';
+              else if (relicCollision.specialType === 'magma_gates') pColor = '#ff5500';
+              else if (relicCollision.specialType === 'crystal') pColor = '#00ffaa';
 
-              // Set bullet.isNeutral = true.
-              bullet.isNeutral = true;
-
-              // Spawn the existing block-impact particles using the struck block’s player colour and returned contact point.
-              const blockColorIdx = blockCollision.block.colorIdx !== undefined ? blockCollision.block.colorIdx : 0;
-              const pDef = PLAYER_COLORS[blockColorIdx] || PLAYER_COLORS[0];
-              spawnParticles(blockCollision.contactX, blockCollision.contactY, pDef.n, 5);
-
-              // Set state.forceBroadcast = true.
+              spawnParticles(relicCollision.x, relicCollision.y, pColor, 8);
               state.forceBroadcast = true;
-
-              // Do not process wall normals from a wall farther along the original path.
-              normalsToProcess = [];
+              normalsToProcess = []; // Clear to prevent wall reflection loop
             } else {
-              // No block collision: preserve the current multiplayer wall result and wall-normal processing exactly.
-              bullet.x = bulletResolved.x;
-              bullet.y = bulletResolved.y;
-              normalsToProcess = bulletResolved.normals;
-              trailX = bulletResolved.x;
-              trailY = bulletResolved.y;
+              // No earlier relic collision: apply static collision (Build block or wall)
+              if (blockCollision !== null) {
+                bullet.x = blockCollision.x;
+                bullet.y = blockCollision.y;
+                trailX = blockCollision.x;
+                trailY = blockCollision.y;
+
+                const dot = bullet.dx * blockCollision.nx + bullet.dy * blockCollision.ny;
+                if (dot < 0) {
+                  bullet.dx = bullet.dx - 2 * dot * blockCollision.nx;
+                  bullet.dy = bullet.dy - 2 * dot * blockCollision.ny;
+                }
+                bullet.bounceCount++;
+                bullet.isNeutral = true;
+
+                const blockColorIdx = blockCollision.block.colorIdx !== undefined ? blockCollision.block.colorIdx : 0;
+                const pDef = PLAYER_COLORS[blockColorIdx] || PLAYER_COLORS[0];
+                spawnParticles(blockCollision.contactX, blockCollision.contactY, pDef.n, 5);
+
+                state.forceBroadcast = true;
+                normalsToProcess = [];
+              } else {
+                bullet.x = bulletResolved.x;
+                bullet.y = bulletResolved.y;
+                normalsToProcess = bulletResolved.normals;
+                trailX = bulletResolved.x;
+                trailY = bulletResolved.y;
+              }
             }
           } else {
             // Outside authoritative multiplayer: direct movement and direct resolveWallCollisions
@@ -8495,28 +8602,30 @@ export default function GameCanvas() {
           }
 
           // Special Relic Collisions
-          for (const spawner of state.spawners) {
-            if (spawner.specialType) {
-              const collision = getBulletRelicCollision(bullet.x, bullet.y, bullet.radius, spawner, worldPhaseTime);
-              if (collision) {
-                const { nx, ny, overlap } = collision;
-                bullet.x += nx * overlap;
-                bullet.y += ny * overlap;
+          if (!isAuthoritativeMultiplayerBullet) {
+            for (const spawner of state.spawners) {
+              if (spawner.specialType) {
+                const collision = getBulletRelicCollision(bullet.x, bullet.y, bullet.radius, spawner, worldPhaseTime);
+                if (collision) {
+                  const { nx, ny, overlap } = collision;
+                  bullet.x += nx * overlap;
+                  bullet.y += ny * overlap;
 
-                const dot = bullet.dx * nx + bullet.dy * ny;
-                if (dot < 0) {
-                  bullet.dx = bullet.dx - 2 * dot * nx;
-                  bullet.dy = bullet.dy - 2 * dot * ny;
-                  bullet.bounceCount++;
+                  const dot = bullet.dx * nx + bullet.dy * ny;
+                  if (dot < 0) {
+                    bullet.dx = bullet.dx - 2 * dot * nx;
+                    bullet.dy = bullet.dy - 2 * dot * ny;
+                    bullet.bounceCount++;
 
-                  let pColor = '#aaaaaa';
-                  if (spawner.specialType === 'shield') pColor = '#00f0ff';
-                  else if (spawner.specialType === 'kinetic') pColor = '#ffcc00';
-                  else if (spawner.specialType === 'singularity') pColor = '#b500ff';
-                  else if (spawner.specialType === 'magma_gates') pColor = '#ff5500';
-                  else if (spawner.specialType === 'crystal') pColor = '#00ffaa';
+                    let pColor = '#aaaaaa';
+                    if (spawner.specialType === 'shield') pColor = '#00f0ff';
+                    else if (spawner.specialType === 'kinetic') pColor = '#ffcc00';
+                    else if (spawner.specialType === 'singularity') pColor = '#b500ff';
+                    else if (spawner.specialType === 'magma_gates') pColor = '#ff5500';
+                    else if (spawner.specialType === 'crystal') pColor = '#00ffaa';
 
-                  spawnParticles(bullet.x, bullet.y, pColor, 8);
+                    spawnParticles(bullet.x, bullet.y, pColor, 8);
+                  }
                 }
               }
             }
