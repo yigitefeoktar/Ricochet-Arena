@@ -2624,6 +2624,10 @@ export default function GameCanvas() {
   const resumeInFlightRef = useRef<boolean>(false);
   const awaitingResumeSnapshotRef = useRef<boolean>(false);
 
+  const isValidResumeToken = useCallback((token: any): boolean => {
+    return typeof token === 'string' && token.length >= 20 && token.length <= 128;
+  }, []);
+
   const clearResumeSession = useCallback(() => {
     resumeSessionRef.current = null;
     resumeInFlightRef.current = false;
@@ -2631,10 +2635,11 @@ export default function GameCanvas() {
   }, []);
 
   const emitLeaveRoom = useCallback(() => {
-    if (mpRef.current.roomId) {
-      socketRef.current?.emit('leave_room', mpRef.current.roomId);
-    }
+    const roomId = mpRef.current.roomId;
     clearResumeSession();
+    if (roomId) {
+      socketRef.current?.emit('leave_room', roomId);
+    }
   }, [clearResumeSession]);
 
   const lastReceivedGameStateTimeRef = useRef<number>(0);
@@ -3247,30 +3252,49 @@ export default function GameCanvas() {
   }, [uiState.status, mpMenuOpen, confirmResign, mpState.roomId, mpState.isConnected, releaseAllInputs]);
 
   const remapPlayerId = useCallback((oldId: string, newId: string) => {
+    if (!oldId || !newId) return;
     const state = stateRef.current;
     if (!state) return;
 
-    console.log(`Remapping player reference from ${oldId} to ${newId}`);
+    const localSocketId = socketRef.current?.id;
 
-    // 1. multiplayerPlayers
-    if (state.multiplayerPlayers && state.multiplayerPlayers[oldId]) {
-      state.multiplayerPlayers[newId] = state.multiplayerPlayers[oldId];
-      delete state.multiplayerPlayers[oldId];
+    // 1. matchPlayers
+    if (state.matchPlayers) {
+      if (state.matchPlayers[oldId]) {
+        const p = state.matchPlayers[oldId];
+        p.id = newId;
+        state.matchPlayers[newId] = p;
+        if (oldId !== newId) {
+          delete state.matchPlayers[oldId];
+        }
+      } else if (state.matchPlayers[newId]) {
+        state.matchPlayers[newId].id = newId;
+      }
     }
 
-    // 2. matchPlayers
-    if (state.matchPlayers && state.matchPlayers[oldId]) {
-      state.matchPlayers[newId] = state.matchPlayers[oldId];
-      delete state.matchPlayers[oldId];
+    // 2. multiplayerPlayers
+    if (state.multiplayerPlayers) {
+      if (newId === localSocketId) {
+        // Local player should NOT be in multiplayerPlayers
+        delete state.multiplayerPlayers[oldId];
+        delete state.multiplayerPlayers[newId];
+      } else if (state.multiplayerPlayers[oldId]) {
+        state.multiplayerPlayers[newId] = state.multiplayerPlayers[oldId];
+        if (oldId !== newId) {
+          delete state.multiplayerPlayers[oldId];
+        }
+      }
     }
 
     // 3. playerActionAuthority
     if (state.playerActionAuthority && state.playerActionAuthority[oldId]) {
       state.playerActionAuthority[newId] = state.playerActionAuthority[oldId];
-      delete state.playerActionAuthority[oldId];
+      if (oldId !== newId) {
+        delete state.playerActionAuthority[oldId];
+      }
     }
 
-    // 4. blocks
+    // 4. Ownership in blocks, bullets, zones
     if (state.blocks) {
       state.blocks.forEach((block: any) => {
         if (block.ownerId === oldId) {
@@ -3279,7 +3303,6 @@ export default function GameCanvas() {
       });
     }
 
-    // 5. bullets
     if (state.bullets) {
       state.bullets.forEach((bullet: any) => {
         if (bullet.ownerId === oldId) {
@@ -3288,7 +3311,6 @@ export default function GameCanvas() {
       });
     }
 
-    // 6. zones
     if (state.zones) {
       state.zones.forEach((zone: any) => {
         if (zone.ownerId === oldId) {
@@ -3296,6 +3318,25 @@ export default function GameCanvas() {
         }
       });
     }
+
+    // 5. Match Identity & Lobby State
+    if (state.finalRunnerId === oldId) {
+      state.finalRunnerId = newId;
+    }
+    if (state.winnerId === oldId) {
+      state.winnerId = newId;
+    }
+
+    setLobbyPlayers(prev => {
+      if (prev && prev[oldId]) {
+        const next = { ...prev, [newId]: prev[oldId] };
+        if (oldId !== newId) {
+          delete next[oldId];
+        }
+        return next;
+      }
+      return prev;
+    });
   }, []);
 
   const handleCopyCode = () => {
@@ -4532,6 +4573,7 @@ export default function GameCanvas() {
 
   const createRoom = () => {
     setMpError(null);
+    clearResumeSession();
     clearPendingGuestShots();
     clearPendingAbilityRequests();
     cancelPendingMatchSettingsUpdate();
@@ -4547,11 +4589,15 @@ export default function GameCanvas() {
       (res: any) => {
         if (res && res.roomId) {
           setMpState(prev => ({ ...prev, roomId: res.roomId, isHost: true }));
-          if (res.resumeToken) {
+          mpRef.current.roomId = res.roomId;
+          mpRef.current.isHost = true;
+          if (isValidResumeToken(res.resumeToken)) {
             resumeSessionRef.current = {
               roomId: res.roomId,
               resumeToken: res.resumeToken
             };
+          } else {
+            resumeSessionRef.current = null;
           }
           const applied = applyAuthoritativeMatchSettings(res.matchSettings);
           if (!applied) {
@@ -4566,6 +4612,7 @@ export default function GameCanvas() {
 
   const joinRoom = () => {
     setMpError(null);
+    clearResumeSession();
     clearPendingGuestShots();
     clearPendingAbilityRequests();
     cancelPendingMatchSettingsUpdate();
@@ -4578,11 +4625,15 @@ export default function GameCanvas() {
     socketRef.current?.emit('join_room', cleanRoom, { name: playerProfileRef.current.name }, (res: any) => {
       if (res && res.success) {
         setMpState(prev => ({ ...prev, roomId: cleanRoom, isHost: false, error: '' }));
-        if (res.resumeToken) {
+        mpRef.current.roomId = cleanRoom;
+        mpRef.current.isHost = false;
+        if (isValidResumeToken(res.resumeToken)) {
           resumeSessionRef.current = {
             roomId: cleanRoom,
             resumeToken: res.resumeToken
           };
+        } else {
+          resumeSessionRef.current = null;
         }
         applyAuthoritativeMatchSettings(res.matchSettings);
         setActiveLobbyTab('players');
@@ -5537,6 +5588,7 @@ export default function GameCanvas() {
   }, []);
 
   const requestSpecialActivation = useCallback((currentTime: number) => {
+     if (mpRef.current.roomId && !mpRef.current.isConnected) return;
      const isLocalMenuOpen = mpRef.current.roomId && (mpMenuOpenRef.current || confirmResignRef.current);
      if (isLocalMenuOpen) return;
 
@@ -5608,6 +5660,7 @@ export default function GameCanvas() {
   }, [applySpecialAbility, isGuestSpecialReady]);
 
   const requestBuildActivation = useCallback((currentTime: number) => {
+     if (mpRef.current.roomId && !mpRef.current.isConnected) return;
      const isLocalMenuOpen = mpRef.current.roomId && (mpMenuOpenRef.current || confirmResignRef.current);
      if (isLocalMenuOpen) return;
 
@@ -5704,42 +5757,70 @@ export default function GameCanvas() {
     };
 
     socket.on('connect', () => {
-      setMpState(prev => ({ ...prev, isConnected: true }));
+      const session = resumeSessionRef.current;
+      const hasValidSession = session && session.roomId && isValidResumeToken(session.resumeToken);
 
-      if (resumeSessionRef.current && !resumeInFlightRef.current) {
-        const session = resumeSessionRef.current;
+      if (hasValidSession && !resumeInFlightRef.current) {
         resumeInFlightRef.current = true;
         awaitingResumeSnapshotRef.current = true;
+
         socket.emit('resume_room', session.roomId, session.resumeToken, (res: any) => {
           resumeInFlightRef.current = false;
           if (res && res.success) {
-            console.log("resume_room succeeded. Remapping references", res);
             remapPlayerId(res.oldId, res.newId);
+
+            const tokenToSave = isValidResumeToken(res.resumeToken) ? res.resumeToken : session.resumeToken;
+            resumeSessionRef.current = {
+              roomId: res.roomId,
+              resumeToken: tokenToSave
+            };
+
+            if (typeof res.roundId === 'number') {
+              activeMultiplayerRoundIdRef.current = res.roundId;
+            }
+
+            mpRef.current.isConnected = true;
+            mpRef.current.roomId = res.roomId;
+            mpRef.current.isHost = !!res.isHost;
+
             setMpState(prev => ({
               ...prev,
+              isConnected: true,
               roomId: res.roomId,
-              isHost: res.isHost,
+              isHost: !!res.isHost,
               error: ''
             }));
-            if (res.resumeToken) {
-              resumeSessionRef.current = {
-                roomId: res.roomId,
-                resumeToken: res.resumeToken
-              };
-            }
+            // awaitingResumeSnapshotRef.current remains true until game_state reconciles position
           } else {
-            console.error("resume_room failed:", res?.error);
             clearResumeSession();
+            releaseAllInputs();
+            activeMultiplayerRoundIdRef.current = 0;
+            setLobbyPlayers({});
+
+            mpRef.current.isConnected = true;
+            mpRef.current.roomId = null;
+            mpRef.current.isHost = false;
+
+            const errorMsg = res?.error || 'RESUME_FAILED';
             setMpState(prev => ({
               ...prev,
+              isConnected: true,
               roomId: null,
               isHost: false,
-              error: res?.error || 'Failed to resume session'
+              error: errorMsg
             }));
-            setUiState(prev => ({ ...prev, status: 'MENU' }));
+
+            setUiState(prev => {
+              if (prev.status === 'PLAYING' || prev.status === 'LOBBY') {
+                return { ...prev, status: 'LOBBY' };
+              }
+              return prev;
+            });
           }
-          awaitingResumeSnapshotRef.current = false;
         });
+      } else {
+        mpRef.current.isConnected = true;
+        setMpState(prev => ({ ...prev, isConnected: true }));
       }
     });
 
@@ -5750,13 +5831,21 @@ export default function GameCanvas() {
       setMultiplayerStartPending(false);
       cancelPendingMatchSettingsUpdate();
       closeMpMapSelector();
+      releaseAllInputs();
+      mpRef.current.isConnected = false;
       setMpState(prev => ({ ...prev, isConnected: false }));
     });
 
     socket.on('player_reconnected', (data: any) => {
-      if (data && data.oldId && data.newId) {
-        remapPlayerId(data.oldId, data.newId);
+      if (!data || typeof data !== 'object') return;
+      const { oldId, newId, roundId } = data;
+      if (typeof oldId !== 'string' || !oldId || typeof newId !== 'string' || !newId || oldId === newId) {
+        return;
       }
+      if (roundId !== undefined && activeMultiplayerRoundIdRef.current > 0 && roundId !== activeMultiplayerRoundIdRef.current) {
+        return;
+      }
+      remapPlayerId(oldId, newId);
     });
 
     socket.on('player_joined', (id) => {
@@ -5921,6 +6010,25 @@ export default function GameCanvas() {
       if (!mpRef.current.isHost) {
         if (!state || typeof state.roundId !== 'number' || state.roundId !== activeMultiplayerRoundIdRef.current) {
           return;
+        }
+
+        if (awaitingResumeSnapshotRef.current) {
+          awaitingResumeSnapshotRef.current = false;
+          const myId = socket.id;
+          if (myId) {
+            let hostSnap: any = null;
+            if (state.multiplayerPlayers && state.multiplayerPlayers[myId]) {
+              hostSnap = state.multiplayerPlayers[myId];
+            } else if (state.hostPlayer && state.hostId === myId) {
+              hostSnap = state.hostPlayer;
+            }
+            if (hostSnap) {
+              if (typeof hostSnap.x === 'number' && Number.isFinite(hostSnap.x)) stateRef.current.player.x = hostSnap.x;
+              if (typeof hostSnap.y === 'number' && Number.isFinite(hostSnap.y)) stateRef.current.player.y = hostSnap.y;
+              if (typeof hostSnap.kbvx === 'number' && Number.isFinite(hostSnap.kbvx)) stateRef.current.player.kbvx = hostSnap.kbvx;
+              if (typeof hostSnap.kbvy === 'number' && Number.isFinite(hostSnap.kbvy)) stateRef.current.player.kbvy = hostSnap.kbvy;
+            }
+          }
         }
         if (typeof state.worldPhaseTime === 'number' && Number.isFinite(state.worldPhaseTime) && state.worldPhaseTime >= 0) {
           multiplayerWorldPhaseAnchorRef.current = {
@@ -6733,6 +6841,7 @@ export default function GameCanvas() {
       if (roomParam) {
         const cleanRoom = roomParam.trim().toUpperCase();
 
+        clearResumeSession();
         cancelPendingMatchSettingsUpdate();
         // Show status LOBBY immediately and set state to show join attempt
         setUiState(prev => ({ ...prev, status: 'LOBBY' }));
@@ -6751,11 +6860,15 @@ export default function GameCanvas() {
         socketRef.current?.emit('join_room', cleanRoom, { name: playerProfileRef.current.name }, (res: any) => {
           if (res && res.success) {
             setMpState(prev => ({ ...prev, roomId: cleanRoom, joinCode: cleanRoom, isHost: false, error: '' }));
-            if (res.resumeToken) {
+            mpRef.current.roomId = cleanRoom;
+            mpRef.current.isHost = false;
+            if (isValidResumeToken(res.resumeToken)) {
               resumeSessionRef.current = {
                 roomId: cleanRoom,
                 resumeToken: res.resumeToken
               };
+            } else {
+              resumeSessionRef.current = null;
             }
             applyAuthoritativeMatchSettings(res.matchSettings);
             setActiveLobbyTab('players');
@@ -7352,7 +7465,8 @@ export default function GameCanvas() {
         }
       }
       lastStatus = STATUS;
-      const shouldRunUpdates = (STATUS === 'PLAYING' && !bannerShowingRef.current) || (STATUS === 'GAME_OVER' && mpRef.current.isConnected && mpRef.current.roomId && mpRef.current.isHost);
+      const isMultiplayerDisconnected = Boolean(mpRef.current.roomId && !mpRef.current.isConnected);
+      const shouldRunUpdates = !isMultiplayerDisconnected && ((STATUS === 'PLAYING' && !bannerShowingRef.current) || (STATUS === 'GAME_OVER' && mpRef.current.isConnected && mpRef.current.roomId && mpRef.current.isHost));
 
       // Auto Host-Migration claiming protocol
       if (
