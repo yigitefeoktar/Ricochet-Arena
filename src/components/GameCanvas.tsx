@@ -6372,7 +6372,15 @@ export default function GameCanvas() {
           };
 
           if (winner.type === 'bullet' && winner.ref) {
-            stateRef.current.bullets = (stateRef.current.bullets || []).filter((b: any) => b !== winner.ref && b.id !== winner.ref.id);
+            const currentBullets = stateRef.current.bullets || [];
+            let removeIndex = currentBullets.findIndex((b: any) => b === winner.ref);
+            if (removeIndex === -1 && winner.ref.id !== undefined && winner.ref.id !== null && String(winner.ref.id).trim() !== '') {
+              const targetId = String(winner.ref.id);
+              removeIndex = currentBullets.findIndex((b: any) => b && b.id !== undefined && b.id !== null && String(b.id) === targetId);
+            }
+            if (removeIndex !== -1) {
+              currentBullets.splice(removeIndex, 1);
+            }
           }
 
           stateRef.current.forceBroadcast = true;
