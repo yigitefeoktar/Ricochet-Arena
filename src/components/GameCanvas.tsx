@@ -5120,65 +5120,157 @@ export default function GameCanvas() {
         const myId = socket.id || socketRef.current?.id || 'local';
         const prevBullets = stateRef.current.bullets || [];
 
-        // Track which local bullets successfully matched an incoming packet
-        const matchedLocalIds = new Set<string>();
+        // 6. Check for accepted shots absent from the snapshot
+        const removedLocalIds = new Set<string>();
+        for (const [shotId, pending] of pendingGuestShotsRef.current.entries()) {
+          if (pending.status === 'accepted' && pending.roundId === activeMultiplayerRoundIdRef.current) {
+            const isPresent = (state.bullets || []).some((ib: any) => 
+              ib.clientShotId === pending.clientShotId || 
+              (pending.authoritativeBulletId !== null && ib.id === pending.authoritativeBulletId)
+            );
+            if (!isPresent) {
+              if (pending.localBulletId) {
+                removedLocalIds.add(pending.localBulletId);
+              }
+              pendingGuestShotsRef.current.delete(shotId);
+            }
+          }
+        }
 
-        const incomingBullets = (state.bullets || []).map((ib: any) => {
+        // Track which previous bullets successfully matched an incoming packet
+        const matchedPreviousIds = new Set<string>();
+        const seenAuthoritativeIds = new Set<string>();
+        const incomingBullets: any[] = [];
+
+        for (const ib of (state.bullets || [])) {
+          if (ib.id === undefined || ib.id === null) continue;
+          const authoritativeIdStr = ib.id.toString();
+          if (seenAuthoritativeIds.has(authoritativeIdStr)) continue;
+          seenAuthoritativeIds.add(authoritativeIdStr);
+
           // Calculate the relative age of the bullet on the host
           const age = Math.max(0, hostTime - ib.spawnTime);
           // Map to local timeline so that timeAlive aligns perfectly with local performance.now()
           const mappedSpawnTime = now - age;
 
-          // Reconcile client's own local pre-spawns, or any already active/predicted bullet, to prevent snapping or micro-jitters
           let matchedLocal: any = undefined;
 
-          if (ib.clientShotId) {
-            matchedLocal = prevBullets.find((pb: any) => pb.clientShotId === ib.clientShotId);
-            if (!matchedLocal) {
-              const pending = pendingGuestShotsRef.current.get(ib.clientShotId);
-              if (pending) {
-                matchedLocal = prevBullets.find((pb: any) => pb.id === pending.localBulletId);
+          // 1. Exact authoritative bullet ID
+          matchedLocal = prevBullets.find((pb: any) => 
+            pb.id !== undefined && pb.id !== null &&
+            !matchedPreviousIds.has(pb.id) && 
+            pb.id === ib.id
+          );
+
+          // 2. Exact pending-shot identity
+          if (!matchedLocal && ib.clientShotId) {
+            const pending = pendingGuestShotsRef.current.get(ib.clientShotId);
+            if (pending && pending.roundId === activeMultiplayerRoundIdRef.current) {
+              matchedLocal = prevBullets.find((pb: any) => 
+                pb.id !== undefined && pb.id !== null &&
+                !matchedPreviousIds.has(pb.id) && 
+                pb.id === pending.localBulletId
+              );
+            }
+          }
+
+          // 3. Exact client shot ID
+          if (!matchedLocal && ib.clientShotId) {
+            matchedLocal = prevBullets.find((pb: any) => 
+              pb.id !== undefined && pb.id !== null &&
+              !matchedPreviousIds.has(pb.id) && 
+              pb.clientShotId === ib.clientShotId
+            );
+          }
+
+          // 4. Acknowledgement supplied authoritativeBulletId matching localBulletId
+          if (!matchedLocal) {
+            for (const pending of pendingGuestShotsRef.current.values()) {
+              if (pending.roundId === activeMultiplayerRoundIdRef.current && pending.authoritativeBulletId === ib.id) {
+                const candidate = prevBullets.find((pb: any) => 
+                  pb.id !== undefined && pb.id !== null &&
+                  !matchedPreviousIds.has(pb.id) && 
+                  pb.id === pending.localBulletId
+                );
+                if (candidate) {
+                  matchedLocal = candidate;
+                  break;
+                }
               }
             }
           }
 
-          if (!matchedLocal) {
-            matchedLocal = prevBullets.find((pb: any) =>
-              pb.id && (
-                (pb.id === ib.id && Math.sqrt((pb.x - ib.x) ** 2 + (pb.y - ib.y) ** 2) < 150) ||
-                (ib.ownerId === myId && pb.id.toString().startsWith('local_') &&
-                 Math.abs(pb.dx - ib.dx) < 1 &&
-                 Math.abs(pb.dy - ib.dy) < 1 &&
-                 Math.sqrt((pb.x - ib.x) ** 2 + (pb.y - ib.y) ** 2) < 250)
-              )
-            );
-          }
+          if (matchedLocal) {
+            matchedPreviousIds.add(matchedLocal.id);
 
-          if (matchedLocal && matchedLocal.id) {
-            matchedLocalIds.add(matchedLocal.id);
-            if (ib.clientShotId) {
-              pendingGuestShotsRef.current.delete(ib.clientShotId);
+            if (matchedLocal.id.toString().startsWith('local_')) {
+              // Promote predicted bullets to authoritative identity (first promotion)
+              if (ib.clientShotId) {
+                pendingGuestShotsRef.current.delete(ib.clientShotId);
+              }
+              if (matchedLocal.clientShotId && matchedLocal.clientShotId !== ib.clientShotId) {
+                pendingGuestShotsRef.current.delete(matchedLocal.clientShotId);
+              }
+              for (const [shotId, pending] of pendingGuestShotsRef.current.entries()) {
+                if (pending.localBulletId === matchedLocal.id) {
+                  pendingGuestShotsRef.current.delete(shotId);
+                }
+              }
+
+              const distance = Math.hypot(matchedLocal.x - ib.x, matchedLocal.y - ib.y);
+              const useVisualXY = distance <= 120;
+
+              incomingBullets.push({
+                ...ib,
+                x: useVisualXY ? matchedLocal.x : ib.x,
+                y: useVisualXY ? matchedLocal.y : ib.y,
+                spawnTime: mappedSpawnTime
+              });
+            } else {
+              // Reconcile already-authoritative bullets smoothly
+              const error = Math.hypot(matchedLocal.x - ib.x, matchedLocal.y - ib.y);
+              let finalX = ib.x;
+              let finalY = ib.y;
+              if (error <= 160) {
+                finalX = matchedLocal.x + 0.35 * (ib.x - matchedLocal.x);
+                finalY = matchedLocal.y + 0.35 * (ib.y - matchedLocal.y);
+              }
+
+              incomingBullets.push({
+                ...ib,
+                x: finalX,
+                y: finalY,
+                spawnTime: mappedSpawnTime
+              });
             }
-            return {
+          } else {
+            // Brand new bullet from host
+            incomingBullets.push({
               ...ib,
-              x: matchedLocal.x,
-              y: matchedLocal.y,
-              spawnTime: matchedLocal.spawnTime
-            };
+              spawnTime: mappedSpawnTime
+            });
           }
-
-          return {
-            ...ib,
-            spawnTime: mappedSpawnTime
-          };
-        });
+        }
 
         // Retain fresh unmatched local-only bullets so they fly smoothly until acknowledged
-        const unmatchedLocals = prevBullets.filter((pb: any) =>
-          pb.id && pb.id.toString().startsWith('local_') &&
-          (now - pb.spawnTime < 1500) &&
-          !matchedLocalIds.has(pb.id)
-        );
+        const unmatchedLocals = prevBullets.filter((pb: any) => {
+          if (!pb.id || !pb.id.toString().startsWith('local_')) return false;
+          if (matchedPreviousIds.has(pb.id)) return false;
+          if (removedLocalIds.has(pb.id)) return false;
+
+          const age = now - pb.spawnTime;
+          if (age >= 1500) return false;
+
+          if (!pb.clientShotId) return false;
+
+          const pending = pendingGuestShotsRef.current.get(pb.clientShotId);
+          if (!pending) return false;
+          if (pending.localBulletId !== pb.id) return false;
+          if (pending.roundId !== activeMultiplayerRoundIdRef.current) return false;
+          if (pending.status !== 'pending') return false;
+
+          return true;
+        });
 
         stateRef.current.bullets = [...incomingBullets, ...unmatchedLocals];
 
