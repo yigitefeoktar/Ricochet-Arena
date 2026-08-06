@@ -8279,6 +8279,19 @@ export default function GameCanvas() {
           const prevX = bullet.x;
           const prevY = bullet.y;
 
+          const sweepWasNeutral = !!bullet.isNeutral;
+          const sweepWasPlayer = !!bullet.isPlayer;
+          const sweepOwnerId = bullet.ownerId;
+          const sweepColorIdx = bullet.colorIdx !== undefined ? bullet.colorIdx : 0;
+
+          let sweepBulletColor = '#ff0066';
+          if (sweepWasNeutral) {
+            sweepBulletColor = '#aaaaaa';
+          } else if (sweepWasPlayer) {
+            const pDef = PLAYER_COLORS[sweepColorIdx] || PLAYER_COLORS[0];
+            sweepBulletColor = pDef?.n || '#00f0ff';
+          }
+
           // Initialize connected-area tracking arrays
           if (!bullet.allowedBlockKeys) {
             bullet.allowedBlockKeys = [];
@@ -8755,14 +8768,16 @@ export default function GameCanvas() {
               }[] = [];
 
               // Host candidate
+              const hostId = socketRef.current?.id;
+              const hostMatchPlayer = hostId && state.matchPlayers ? state.matchPlayers[hostId] : null;
               const hostColorIdx = playerProfileRef.current.colorIdx;
               const hostColor = PLAYER_COLORS[hostColorIdx]?.n || '#00f0ff';
               const isHostProtected = state.player.dash.active || isOpeningProtectionActiveForHost(currentTime);
-              const hostAlive = STATUS === 'PLAYING';
+              const hostAlive = STATUS === 'PLAYING' && !!hostId && !!hostMatchPlayer && !hostMatchPlayer.isDead && !hostMatchPlayer.isDisconnected;
 
-              if (hostAlive && bulletColor !== hostColor && !isHostProtected) {
+              if (hostAlive && hostId && sweepBulletColor !== hostColor && !isHostProtected) {
                 candidates.push({
-                  id: 'host',
+                  id: hostId,
                   isHost: true,
                   x: state.player.x,
                   y: state.player.y,
@@ -8783,7 +8798,7 @@ export default function GameCanvas() {
                 const mpColorIdx = mpPlayer.colorIdx;
                 const mpColor = PLAYER_COLORS[mpColorIdx]?.n || '#00f0ff';
 
-                if (bulletColor !== mpColor) {
+                if (sweepBulletColor !== mpColor) {
                   const isProtected = mpPlayer.isDash || isOpeningProtectionActiveForHost(currentTime);
                   if (!isProtected) {
                     candidates.push({
@@ -8847,12 +8862,12 @@ export default function GameCanvas() {
                 if (winner.isHost) {
                   let label = 'HOSTILE FIRE';
                   let causeCode = 'hostile_fire';
-                  if (bullet.isNeutral) {
+                  if (sweepWasNeutral) {
                     label = 'NEUTRAL RICOCHET';
                     causeCode = 'neutral_ricochet';
-                  } else if (bullet.isPlayer) {
+                  } else if (sweepWasPlayer) {
                     causeCode = 'player_shot';
-                    const attackerName = resolvePlayerName(bullet.ownerId);
+                    const attackerName = resolvePlayerName(sweepOwnerId);
                     label = attackerName ? `SHOT BY ${attackerName}` : 'SHOT BY RIVAL PLAYER';
                   }
 
