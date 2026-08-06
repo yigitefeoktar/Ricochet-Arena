@@ -1207,6 +1207,153 @@ function sweptMultiplayerBulletResolve(
 }
 
 
+function sweptBuildBlockCollision(
+  startX: number,
+  startY: number,
+  endX: number,
+  endY: number,
+  radius: number,
+  blocks: { x: number; y: number; size: number; createdAt: number; colorIdx?: number; ownerId?: string }[],
+  allowedBlockKeys: string[]
+): {
+  x: number;
+  y: number;
+  nx: number;
+  ny: number;
+  contactX: number;
+  contactY: number;
+  blockIndex: number;
+  block: { x: number; y: number; size: number; createdAt: number; colorIdx?: number; ownerId?: string };
+} | null {
+  if (
+    !Number.isFinite(startX) ||
+    !Number.isFinite(startY) ||
+    !Number.isFinite(endX) ||
+    !Number.isFinite(endY) ||
+    !Number.isFinite(radius)
+  ) {
+    return null;
+  }
+
+  const allowedSet = new Set(allowedBlockKeys);
+  const dx = endX - startX;
+  const dy = endY - startY;
+  const dist = Math.hypot(dx, dy);
+  const maxSubstep = Math.max(1, radius * 0.5);
+  const numSubsteps = dist <= 0.001 ? 1 : Math.ceil(dist / maxSubstep);
+  const stepX = dx / numSubsteps;
+  const stepY = dy / numSubsteps;
+
+  const epsilon = 0.05;
+
+  for (let i = 0; i <= numSubsteps; i++) {
+    const cx = startX + i * stepX;
+    const cy = startY + i * stepY;
+    const prevX = i > 0 ? (startX + (i - 1) * stepX) : undefined;
+    const prevY = i > 0 ? (startY + (i - 1) * stepY) : undefined;
+
+    for (let b = blocks.length - 1; b >= 0; b--) {
+      const block = blocks[b];
+      const key = `${block.x}_${block.y}`;
+      if (allowedSet.has(key)) {
+        continue;
+      }
+
+      const halfSize = block.size / 2;
+      const closestX = Math.max(block.x - halfSize, Math.min(cx, block.x + halfSize));
+      const closestY = Math.max(block.y - halfSize, Math.min(cy, block.y + halfSize));
+      const bdx = cx - closestX;
+      const bdy = cy - closestY;
+      const distSq = bdx * bdx + bdy * bdy;
+
+      const isInside = cx >= block.x - halfSize && cx <= block.x + halfSize &&
+                       cy >= block.y - halfSize && cy <= block.y + halfSize;
+
+      if (isInside || distSq < radius * radius) {
+        if (isInside) {
+          const distL = cx - (block.x - halfSize);
+          const distR = (block.x + halfSize) - cx;
+          const distT = cy - (block.y - halfSize);
+          const distB = (block.y + halfSize) - cy;
+
+          let chosenSide: string | null = null;
+          if (prevX !== undefined && prevY !== undefined) {
+            if (prevX <= block.x - halfSize) {
+              chosenSide = 'left';
+            } else if (prevX >= block.x + halfSize) {
+              chosenSide = 'right';
+            } else if (prevY <= block.y - halfSize) {
+              chosenSide = 'top';
+            } else if (prevY >= block.y + halfSize) {
+              chosenSide = 'bottom';
+            }
+          }
+
+          const candidates = [
+            { x: block.x - halfSize - radius - epsilon, y: cy, nx: -1, ny: 0, dist: distL, side: 'left', contactX: block.x - halfSize, contactY: cy },
+            { x: block.x + halfSize + radius + epsilon, y: cy, nx: 1, ny: 0, dist: distR, side: 'right', contactX: block.x + halfSize, contactY: cy },
+            { x: cx, y: block.y - halfSize - radius - epsilon, nx: 0, ny: -1, dist: distT, side: 'top', contactX: cx, contactY: block.y - halfSize },
+            { x: cx, y: block.y + halfSize + radius + epsilon, nx: 0, ny: 1, dist: distB, side: 'bottom', contactX: cx, contactY: block.y + halfSize }
+          ];
+
+          let chosen = candidates[0];
+          if (chosenSide) {
+            const matched = candidates.find(c => c.side === chosenSide);
+            if (matched) {
+              chosen = matched;
+            } else {
+              candidates.sort((a, b) => a.dist - b.dist);
+              chosen = candidates[0];
+            }
+          } else {
+            candidates.sort((a, b) => a.dist - b.dist);
+            chosen = candidates[0];
+          }
+
+          return {
+            x: chosen.x,
+            y: chosen.y,
+            nx: chosen.nx,
+            ny: chosen.ny,
+            contactX: chosen.contactX,
+            contactY: chosen.contactY,
+            blockIndex: b,
+            block: block
+          };
+        } else {
+          const distVal = Math.sqrt(distSq);
+          let nx = 0;
+          let ny = 0;
+          if (distVal > 0.0001) {
+            nx = bdx / distVal;
+            ny = bdy / distVal;
+          } else {
+            nx = 1;
+            ny = 0;
+          }
+          const overlap = radius - distVal;
+          const rx = cx + nx * (overlap + epsilon);
+          const ry = cy + ny * (overlap + epsilon);
+
+          return {
+            x: rx,
+            y: ry,
+            nx: nx,
+            ny: ny,
+            contactX: closestX,
+            contactY: closestY,
+            blockIndex: b,
+            block: block
+          };
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+
 function getConnectedComponent(startBlock: { x: number; y: number }, allBlocks: { x: number; y: number }[]): { x: number; y: number }[] {
   const component: { x: number; y: number }[] = [startBlock];
   const visited = new Set<string>();
@@ -8159,11 +8306,58 @@ export default function GameCanvas() {
           if (isAuthoritativeMultiplayerBullet) {
             // Move the bullet with the new bullet wall-sweep helper.
             const bulletResolved = sweptMultiplayerBulletResolve(bulletBeforeX, bulletBeforeY, targetX, targetY, bullet.radius, activeWalls);
-            bullet.x = bulletResolved.x;
-            bullet.y = bulletResolved.y;
-            normalsToProcess = bulletResolved.normals;
-            trailX = bulletResolved.x;
-            trailY = bulletResolved.y;
+            
+            // Sweep Build blocks from bulletBeforeX/Y to that wall-resolved endpoint.
+            const blockCollision = sweptBuildBlockCollision(
+              bulletBeforeX,
+              bulletBeforeY,
+              bulletResolved.x,
+              bulletResolved.y,
+              bullet.radius,
+              state.blocks,
+              bullet.allowedBlockKeys || []
+            );
+
+            if (blockCollision !== null) {
+              // Assign bullet.x and bullet.y to the block collision’s resolved position.
+              bullet.x = blockCollision.x;
+              bullet.y = blockCollision.y;
+              
+              // Set the multiplayer trail coordinates to this resolved block-impact position.
+              trailX = blockCollision.x;
+              trailY = blockCollision.y;
+
+              // Reflect bullet.dx and bullet.dy
+              const dot = bullet.dx * blockCollision.nx + bullet.dy * blockCollision.ny;
+              if (dot < 0) {
+                bullet.dx = bullet.dx - 2 * dot * blockCollision.nx;
+                bullet.dy = bullet.dy - 2 * dot * blockCollision.ny;
+              }
+
+              // Increment bounceCount exactly once.
+              bullet.bounceCount++;
+
+              // Set bullet.isNeutral = true.
+              bullet.isNeutral = true;
+
+              // Spawn the existing block-impact particles using the struck block’s player colour and returned contact point.
+              const blockColorIdx = blockCollision.block.colorIdx !== undefined ? blockCollision.block.colorIdx : 0;
+              const pDef = PLAYER_COLORS[blockColorIdx] || PLAYER_COLORS[0];
+              spawnParticles(blockCollision.contactX, blockCollision.contactY, pDef.n, 5);
+
+              // Set state.forceBroadcast = true.
+              state.forceBroadcast = true;
+
+              // Do not process wall normals from a wall farther along the original path.
+              normalsToProcess = [];
+            } else {
+              // No block collision: preserve the current multiplayer wall result and wall-normal processing exactly.
+              bullet.x = bulletResolved.x;
+              bullet.y = bulletResolved.y;
+              normalsToProcess = bulletResolved.normals;
+              trailX = bulletResolved.x;
+              trailY = bulletResolved.y;
+            }
           } else {
             // Outside authoritative multiplayer: direct movement and direct resolveWallCollisions
             bullet.x = targetX;
@@ -8246,7 +8440,7 @@ export default function GameCanvas() {
           }
 
           // Block Collisions
-          if (!bulletDestroyed) {
+          if (!bulletDestroyed && !isAuthoritativeMultiplayerBullet) {
              for (let b = state.blocks.length - 1; b >= 0; b--) {
                const block = state.blocks[b];
 
