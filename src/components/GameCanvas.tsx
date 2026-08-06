@@ -1093,6 +1093,120 @@ function sweptMultiplayerPlayerResolve(
 }
 
 
+function sweptMultiplayerBulletResolve(
+  startX: number,
+  startY: number,
+  targetX: number,
+  targetY: number,
+  radius: number,
+  walls: { x: number; y: number; w: number; h: number }[]
+): { x: number; y: number; normals: { nx: number; ny: number }[]; collided: boolean } {
+  // Validate all coordinates and radius as finite values.
+  if (!Number.isFinite(startX) || !Number.isFinite(startY) || !Number.isFinite(radius) || !Number.isFinite(targetX) || !Number.isFinite(targetY)) {
+    const fallbackX = Number.isFinite(startX) ? startX : 0;
+    const fallbackY = Number.isFinite(startY) ? startY : 0;
+    const fallbackRadius = Number.isFinite(radius) ? radius : 5;
+    const resolved = resolveWallCollisions(fallbackX, fallbackY, fallbackRadius, walls);
+    return {
+      x: resolved.x,
+      y: resolved.y,
+      normals: resolved.normals,
+      collided: resolved.collided
+    };
+  }
+
+  // Resolve the starting position first with resolveWallCollisions.
+  const resolvedStart = resolveWallCollisions(startX, startY, radius, walls);
+
+  // If the bullet starts embedded and requires recovery, return that recovered position immediately for this frame.
+  let isEmbedded = false;
+  for (const wall of walls) {
+    if (circleOverlapsWall(startX, startY, radius - 0.05, wall)) {
+      isEmbedded = true;
+      break;
+    }
+  }
+
+  if (isEmbedded || Math.hypot(resolvedStart.x - startX, resolvedStart.y - startY) > 0.01 || resolvedStart.collided) {
+    return {
+      x: resolvedStart.x,
+      y: resolvedStart.y,
+      normals: resolvedStart.normals,
+      collided: resolvedStart.collided
+    };
+  }
+
+  // Include a defensive maximum intended segment length of 128 world units.
+  const dx = targetX - startX;
+  const dy = targetY - startY;
+  const dist = Math.hypot(dx, dy);
+
+  let endX = targetX;
+  let endY = targetY;
+  let segmentDist = dist;
+  if (dist > 128) {
+    endX = startX + (dx / dist) * 128;
+    endY = startY + (dy / dist) * 128;
+    segmentDist = 128;
+  }
+
+  if (segmentDist <= 0.001) {
+    return {
+      x: startX,
+      y: startY,
+      normals: [],
+      collided: false
+    };
+  }
+
+  // Divide the intended movement into incremental substeps no larger than max(1, radius * 0.5).
+  const maxSubstep = Math.max(1, radius * 0.5);
+  const numSubsteps = Math.ceil(segmentDist / maxSubstep);
+  const stepX = (endX - startX) / numSubsteps;
+  const stepY = (endY - startY) / numSubsteps;
+
+  let currentX = startX;
+  let currentY = startY;
+  let anyCollision = false;
+  const normals: { nx: number; ny: number }[] = [];
+
+  for (let i = 1; i <= numSubsteps; i++) {
+    // Move each substep from the latest resolved position.
+    const candidateX = currentX + stepX;
+    const candidateY = currentY + stepY;
+    const prevX = currentX;
+    const prevY = currentY;
+
+    // Pass every candidate through resolveWallCollisions using the previous substep position as prevX/prevY.
+    const resolved = resolveWallCollisions(candidateX, candidateY, radius, walls, prevX, prevY);
+
+    if (resolved.collided) {
+      currentX = resolved.x;
+      currentY = resolved.y;
+      anyCollision = true;
+      for (const n of resolved.normals) {
+        const isDup = normals.some(existing => Math.abs(existing.nx - n.nx) < 0.1 && Math.abs(existing.ny - n.ny) < 0.1);
+        if (!isDup) {
+          normals.push(n);
+        }
+      }
+      // Stop movement for the frame on the first wall collision. Do not continue the unused movement after reflecting.
+      break;
+    } else {
+      currentX = resolved.x;
+      currentY = resolved.y;
+    }
+  }
+
+  return {
+    x: currentX,
+    y: currentY,
+    normals,
+    collided: anyCollision
+  };
+}
+
+
 function getConnectedComponent(startBlock: { x: number; y: number }, allBlocks: { x: number; y: number }[]): { x: number; y: number }[] {
   const component: { x: number; y: number }[] = [startBlock];
   const visited = new Set<string>();
@@ -8032,9 +8146,28 @@ export default function GameCanvas() {
           const bulletBeforeX = bullet.x;
           const bulletBeforeY = bullet.y;
 
-          bullet.x += bullet.dx * speedMultiplier * dt;
-          bullet.y += bullet.dy * speedMultiplier * dt;
+          const targetX = bulletBeforeX + bullet.dx * speedMultiplier * dt;
+          const targetY = bulletBeforeY + bullet.dy * speedMultiplier * dt;
 
+          let normalsToProcess: { nx: number; ny: number }[] = [];
+
+          if (mpRef.current && mpRef.current.roomId && mpRef.current.isHost) {
+            // Move the bullet with the new bullet wall-sweep helper.
+            const bulletResolved = sweptMultiplayerBulletResolve(bulletBeforeX, bulletBeforeY, targetX, targetY, bullet.radius, activeWalls);
+            bullet.x = bulletResolved.x;
+            bullet.y = bulletResolved.y;
+            normalsToProcess = bulletResolved.normals;
+          } else {
+            // Outside authoritative multiplayer: direct movement and direct resolveWallCollisions
+            bullet.x = targetX;
+            bullet.y = targetY;
+            const bulletResolved = resolveWallCollisions(bullet.x, bullet.y, bullet.radius, activeWalls, bulletBeforeX, bulletBeforeY);
+            bullet.x = bulletResolved.x;
+            bullet.y = bulletResolved.y;
+            normalsToProcess = bulletResolved.normals;
+          }
+
+          // Keep trail creation at the bullet’s final resolved position rather than the unreachable intended endpoint behind the wall.
           if (Math.random() > 0.3) {
             let trailColor = '#ff0066';
             if (bullet.isNeutral) {
@@ -8050,21 +8183,25 @@ export default function GameCanvas() {
             });
           }
 
-          // Wall Collisions
-          const bulletResolved = resolveWallCollisions(bullet.x, bullet.y, bullet.radius, activeWalls, bulletBeforeX, bulletBeforeY);
-          bullet.x = bulletResolved.x;
-          bullet.y = bulletResolved.y;
-
-          for (const n of bulletResolved.normals) {
+          let collidedWithWall = false;
+          for (const n of normalsToProcess) {
             const dot = bullet.dx * n.nx + bullet.dy * n.ny;
             if (dot < 0) {
               bullet.dx = bullet.dx - 2 * dot * n.nx;
               bullet.dy = bullet.dy - 2 * dot * n.ny;
               bullet.bounceCount++;
               bullet.isNeutral = true;
+              collidedWithWall = true;
               const pColor = bullet.isNeutral ? '#aaaaaa' : (!bullet.isPlayer ? '#ff0066' : '#00ccff');
               spawnParticles(bullet.x, bullet.y, pColor, 5);
             }
+          }
+
+          if (collidedWithWall && mpRef.current && mpRef.current.roomId && mpRef.current.isHost) {
+            if (stateRef.current) {
+              stateRef.current.forceBroadcast = true;
+            }
+            state.forceBroadcast = true;
           }
 
           // Special Relic Collisions
