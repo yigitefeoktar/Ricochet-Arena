@@ -2623,6 +2623,7 @@ export default function GameCanvas() {
   const resumeSessionRef = useRef<{ roomId: string; resumeToken: string } | null>(null);
   const resumeInFlightRef = useRef<boolean>(false);
   const awaitingResumeSnapshotRef = useRef<boolean>(false);
+  const resumeAttemptGenerationRef = useRef<number>(0);
 
   const isValidResumeToken = useCallback((token: any): boolean => {
     return typeof token === 'string' && token.length >= 20 && token.length <= 128;
@@ -2632,10 +2633,12 @@ export default function GameCanvas() {
     resumeSessionRef.current = null;
     resumeInFlightRef.current = false;
     awaitingResumeSnapshotRef.current = false;
+    resumeAttemptGenerationRef.current++;
   }, []);
 
   const emitLeaveRoom = useCallback(() => {
     const roomId = mpRef.current.roomId;
+    resumeAttemptGenerationRef.current++;
     clearResumeSession();
     if (roomId) {
       socketRef.current?.emit('leave_room', roomId);
@@ -5760,39 +5763,83 @@ export default function GameCanvas() {
       const session = resumeSessionRef.current;
       const hasValidSession = session && session.roomId && isValidResumeToken(session.resumeToken);
 
-      if (hasValidSession && !resumeInFlightRef.current) {
+      if (hasValidSession) {
+        if (resumeInFlightRef.current) {
+          return;
+        }
         resumeInFlightRef.current = true;
-        awaitingResumeSnapshotRef.current = true;
+        awaitingResumeSnapshotRef.current = false;
+        const currentGen = ++resumeAttemptGenerationRef.current;
+        const expectedRoom = session.roomId.trim().toUpperCase();
 
         socket.emit('resume_room', session.roomId, session.resumeToken, (res: any) => {
-          resumeInFlightRef.current = false;
-          if (res && res.success) {
+          if (resumeAttemptGenerationRef.current !== currentGen || !socket.connected) {
+            return;
+          }
+
+          const isServerSuccess = res && typeof res === 'object' && res.success === true;
+          let isValidSuccess = false;
+
+          if (isServerSuccess) {
+            const isRoomMatch = typeof res.roomId === 'string' && res.roomId.trim().toUpperCase() === expectedRoom;
+            const isOldIdValid = typeof res.oldId === 'string' && res.oldId.length > 0;
+            const isNewIdValid = typeof res.newId === 'string' && res.newId.length > 0 && res.newId === socket.id;
+            const isDifferentIds = res.oldId !== res.newId;
+            const isHostBool = typeof res.isHost === 'boolean';
+            const isMatchActiveBool = typeof res.matchActive === 'boolean';
+            const isRoundIdValid = typeof res.roundId === 'number' && Number.isInteger(res.roundId) && res.roundId >= 0;
+            const isTokenValid = isValidResumeToken(res.resumeToken);
+            const isMatchSettingsValid = applyAuthoritativeMatchSettings(res.matchSettings);
+
+            isValidSuccess = isRoomMatch && isOldIdValid && isNewIdValid && isDifferentIds && isHostBool && isMatchActiveBool && isRoundIdValid && isTokenValid && isMatchSettingsValid;
+          }
+
+          if (isValidSuccess) {
+            clearPendingGuestShots();
+            clearPendingAbilityRequests();
+            releaseAllInputs();
+            cancelPendingMatchSettingsUpdate();
+
             remapPlayerId(res.oldId, res.newId);
 
-            const tokenToSave = isValidResumeToken(res.resumeToken) ? res.resumeToken : session.resumeToken;
             resumeSessionRef.current = {
-              roomId: res.roomId,
-              resumeToken: tokenToSave
+              roomId: expectedRoom,
+              resumeToken: res.resumeToken
             };
 
-            if (typeof res.roundId === 'number') {
-              activeMultiplayerRoundIdRef.current = res.roundId;
-            }
+            activeMultiplayerRoundIdRef.current = res.roundId;
+            lastReceivedGameStateTimeRef.current = performance.now();
+            resumeInFlightRef.current = false;
 
             mpRef.current.isConnected = true;
-            mpRef.current.roomId = res.roomId;
-            mpRef.current.isHost = !!res.isHost;
+            mpRef.current.roomId = expectedRoom;
+            mpRef.current.isHost = res.isHost;
 
             setMpState(prev => ({
               ...prev,
               isConnected: true,
-              roomId: res.roomId,
-              isHost: !!res.isHost,
+              roomId: expectedRoom,
+              isHost: res.isHost,
               error: ''
             }));
-            // awaitingResumeSnapshotRef.current remains true until game_state reconciles position
+
+            awaitingResumeSnapshotRef.current = res.matchActive === true && res.isHost === false;
+
+            if (res.matchActive === false) {
+              setUiState(prev => {
+                const nextUi = { ...prev, status: 'LOBBY' as const };
+                uiRef.current = nextUi;
+                return nextUi;
+              });
+            }
           } else {
+            if (isServerSuccess) {
+              socket.emit('leave_room', expectedRoom);
+            }
+
             clearResumeSession();
+            clearPendingGuestShots();
+            clearPendingAbilityRequests();
             releaseAllInputs();
             activeMultiplayerRoundIdRef.current = 0;
             setLobbyPlayers({});
@@ -5801,7 +5848,7 @@ export default function GameCanvas() {
             mpRef.current.roomId = null;
             mpRef.current.isHost = false;
 
-            const errorMsg = res?.error || 'RESUME_FAILED';
+            const errorMsg = isServerSuccess ? 'INVALID RESUME RESPONSE' : (res?.error || 'RECONNECT FAILED');
             setMpState(prev => ({
               ...prev,
               isConnected: true,
@@ -5811,10 +5858,9 @@ export default function GameCanvas() {
             }));
 
             setUiState(prev => {
-              if (prev.status === 'PLAYING' || prev.status === 'LOBBY') {
-                return { ...prev, status: 'LOBBY' };
-              }
-              return prev;
+              const nextUi = { ...prev, status: 'LOBBY' as const };
+              uiRef.current = nextUi;
+              return nextUi;
             });
           }
         });
@@ -5825,6 +5871,9 @@ export default function GameCanvas() {
     });
 
     socket.on('disconnect', () => {
+      resumeAttemptGenerationRef.current++;
+      resumeInFlightRef.current = false;
+      awaitingResumeSnapshotRef.current = false;
       clearPendingGuestShots(true);
       clearPendingAbilityRequests();
       multiplayerStartPendingRef.current = false;
@@ -6013,22 +6062,26 @@ export default function GameCanvas() {
         }
 
         if (awaitingResumeSnapshotRef.current) {
-          awaitingResumeSnapshotRef.current = false;
           const myId = socket.id;
-          if (myId) {
-            let hostSnap: any = null;
-            if (state.multiplayerPlayers && state.multiplayerPlayers[myId]) {
-              hostSnap = state.multiplayerPlayers[myId];
-            } else if (state.hostPlayer && state.hostId === myId) {
-              hostSnap = state.hostPlayer;
-            }
-            if (hostSnap) {
-              if (typeof hostSnap.x === 'number' && Number.isFinite(hostSnap.x)) stateRef.current.player.x = hostSnap.x;
-              if (typeof hostSnap.y === 'number' && Number.isFinite(hostSnap.y)) stateRef.current.player.y = hostSnap.y;
-              if (typeof hostSnap.kbvx === 'number' && Number.isFinite(hostSnap.kbvx)) stateRef.current.player.kbvx = hostSnap.kbvx;
-              if (typeof hostSnap.kbvy === 'number' && Number.isFinite(hostSnap.kbvy)) stateRef.current.player.kbvy = hostSnap.kbvy;
-            }
+          if (!myId) return;
+          let hostSnap: any = null;
+          if (state.multiplayerPlayers && state.multiplayerPlayers[myId]) {
+            hostSnap = state.multiplayerPlayers[myId];
+          } else if (state.hostPlayer && state.hostId === myId) {
+            hostSnap = state.hostPlayer;
           }
+          if (!hostSnap || typeof hostSnap.x !== 'number' || !Number.isFinite(hostSnap.x) || typeof hostSnap.y !== 'number' || !Number.isFinite(hostSnap.y)) {
+            return;
+          }
+          stateRef.current.player.x = hostSnap.x;
+          stateRef.current.player.y = hostSnap.y;
+          if (typeof hostSnap.kbvx === 'number' && Number.isFinite(hostSnap.kbvx)) {
+            stateRef.current.player.kbvx = hostSnap.kbvx;
+          }
+          if (typeof hostSnap.kbvy === 'number' && Number.isFinite(hostSnap.kbvy)) {
+            stateRef.current.player.kbvy = hostSnap.kbvy;
+          }
+          awaitingResumeSnapshotRef.current = false;
         }
         if (typeof state.worldPhaseTime === 'number' && Number.isFinite(state.worldPhaseTime) && state.worldPhaseTime >= 0) {
           multiplayerWorldPhaseAnchorRef.current = {
@@ -7477,7 +7530,6 @@ export default function GameCanvas() {
       ) {
         if (currentTime - lastReceivedGameStateTimeRef.current > 1500) {
           lastReceivedGameStateTimeRef.current = currentTime; // throttle requests
-          console.log("No update from host received, claiming host status.");
           socketRef.current?.emit('claim_host', mpRef.current.roomId);
         }
       }
