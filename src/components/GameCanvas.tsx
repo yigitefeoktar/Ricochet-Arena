@@ -2638,7 +2638,6 @@ export default function GameCanvas() {
 
   const emitLeaveRoom = useCallback(() => {
     const roomId = mpRef.current.roomId;
-    resumeAttemptGenerationRef.current++;
     clearResumeSession();
     if (roomId) {
       socketRef.current?.emit('leave_room', roomId);
@@ -3255,7 +3254,10 @@ export default function GameCanvas() {
   }, [uiState.status, mpMenuOpen, confirmResign, mpState.roomId, mpState.isConnected, releaseAllInputs]);
 
   const remapPlayerId = useCallback((oldId: string, newId: string) => {
-    if (!oldId || !newId) return;
+    if (typeof oldId !== 'string' || oldId.length < 1 || oldId.length > 128) return;
+    if (typeof newId !== 'string' || newId.length < 1 || newId.length > 128) return;
+    if (oldId === newId) return;
+
     const state = stateRef.current;
     if (!state) return;
 
@@ -3340,6 +3342,10 @@ export default function GameCanvas() {
       }
       return prev;
     });
+
+    state.forceBroadcast = true;
+    state.lastBroadcastTime = 0;
+    setMpTick(t => t + 1);
   }, []);
 
   const handleCopyCode = () => {
@@ -5531,7 +5537,7 @@ export default function GameCanvas() {
          // C. Multiplayer guest
          const socket = socketRef.current;
          const roundId = activeMultiplayerRoundIdRef.current;
-         if (socket && socket.connected && roomId && typeof roundId === 'number' && Number.isFinite(roundId) && Number.isInteger(roundId) && roundId > 0) {
+         if (socket && socket.connected && roomId && typeof roundId === 'number' && Number.isFinite(roundId) && Number.isInteger(roundId) && roundId > 0 && !awaitingResumeSnapshotRef.current) {
              socket.emit('client_action', roomId, {
                  roundId,
                  type: 'build',
@@ -5591,7 +5597,7 @@ export default function GameCanvas() {
   }, []);
 
   const requestSpecialActivation = useCallback((currentTime: number) => {
-     if (mpRef.current.roomId && !mpRef.current.isConnected) return;
+     if (mpRef.current.roomId && (!mpRef.current.isConnected || awaitingResumeSnapshotRef.current)) return;
      const isLocalMenuOpen = mpRef.current.roomId && (mpMenuOpenRef.current || confirmResignRef.current);
      if (isLocalMenuOpen) return;
 
@@ -5663,7 +5669,7 @@ export default function GameCanvas() {
   }, [applySpecialAbility, isGuestSpecialReady]);
 
   const requestBuildActivation = useCallback((currentTime: number) => {
-     if (mpRef.current.roomId && !mpRef.current.isConnected) return;
+     if (mpRef.current.roomId && (!mpRef.current.isConnected || awaitingResumeSnapshotRef.current)) return;
      const isLocalMenuOpen = mpRef.current.roomId && (mpMenuOpenRef.current || confirmResignRef.current);
      if (isLocalMenuOpen) return;
 
@@ -5761,7 +5767,13 @@ export default function GameCanvas() {
 
     socket.on('connect', () => {
       const session = resumeSessionRef.current;
-      const hasValidSession = session && session.roomId && isValidResumeToken(session.resumeToken);
+      const expectedRoom = session?.roomId ? session.roomId.trim().toUpperCase() : '';
+      const isRoomCodeValid = /^[A-Z0-9]{4}$/.test(expectedRoom);
+      const hasValidSession = session && isRoomCodeValid && isValidResumeToken(session.resumeToken);
+
+      if (session && !isRoomCodeValid) {
+        clearResumeSession();
+      }
 
       if (hasValidSession) {
         if (resumeInFlightRef.current) {
@@ -5770,9 +5782,8 @@ export default function GameCanvas() {
         resumeInFlightRef.current = true;
         awaitingResumeSnapshotRef.current = false;
         const currentGen = ++resumeAttemptGenerationRef.current;
-        const expectedRoom = session.roomId.trim().toUpperCase();
 
-        socket.emit('resume_room', session.roomId, session.resumeToken, (res: any) => {
+        socket.emit('resume_room', expectedRoom, session.resumeToken, (res: any) => {
           if (resumeAttemptGenerationRef.current !== currentGen || !socket.connected) {
             return;
           }
@@ -5782,20 +5793,25 @@ export default function GameCanvas() {
 
           if (isServerSuccess) {
             const isRoomMatch = typeof res.roomId === 'string' && res.roomId.trim().toUpperCase() === expectedRoom;
-            const isOldIdValid = typeof res.oldId === 'string' && res.oldId.length > 0;
-            const isNewIdValid = typeof res.newId === 'string' && res.newId.length > 0 && res.newId === socket.id;
+            const isOldIdValid = typeof res.oldId === 'string' && res.oldId.length >= 1 && res.oldId.length <= 128;
+            const isNewIdValid = typeof res.newId === 'string' && res.newId.length >= 1 && res.newId.length <= 128 && res.newId === socket.id;
             const isDifferentIds = res.oldId !== res.newId;
             const isHostBool = typeof res.isHost === 'boolean';
             const isMatchActiveBool = typeof res.matchActive === 'boolean';
             const isRoundIdValid = typeof res.roundId === 'number' && Number.isInteger(res.roundId) && res.roundId >= 0;
             const isTokenValid = isValidResumeToken(res.resumeToken);
-            const isMatchSettingsValid = applyAuthoritativeMatchSettings(res.matchSettings);
+            const isMatchSettingsValid = Boolean(
+              res.matchSettings &&
+              typeof res.matchSettings === 'object' &&
+              isValidMapId(res.matchSettings.mapId) &&
+              isValidGameMode(res.matchSettings.gameMode)
+            );
 
             isValidSuccess = isRoomMatch && isOldIdValid && isNewIdValid && isDifferentIds && isHostBool && isMatchActiveBool && isRoundIdValid && isTokenValid && isMatchSettingsValid;
           }
 
           if (isValidSuccess) {
-            clearPendingGuestShots();
+            clearPendingGuestShots(true);
             clearPendingAbilityRequests();
             releaseAllInputs();
             cancelPendingMatchSettingsUpdate();
@@ -5808,6 +5824,7 @@ export default function GameCanvas() {
             };
 
             activeMultiplayerRoundIdRef.current = res.roundId;
+            applyAuthoritativeMatchSettings(res.matchSettings);
             lastReceivedGameStateTimeRef.current = performance.now();
             resumeInFlightRef.current = false;
 
@@ -5838,7 +5855,7 @@ export default function GameCanvas() {
             }
 
             clearResumeSession();
-            clearPendingGuestShots();
+            clearPendingGuestShots(true);
             clearPendingAbilityRequests();
             releaseAllInputs();
             activeMultiplayerRoundIdRef.current = 0;
