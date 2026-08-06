@@ -2627,6 +2627,7 @@ export default function GameCanvas() {
 
   const roomRequestGenerationRef = useRef<number>(0);
   const roomRequestInFlightRef = useRef<boolean>(false);
+  const inviteJoinHandledRef = useRef<boolean>(false);
   const [pendingRoomRequest, setPendingRoomRequest] = useState<'create' | 'join' | null>(null);
 
   const isValidResumeToken = useCallback((token: any): boolean => {
@@ -4587,18 +4588,43 @@ export default function GameCanvas() {
     }, 50);
   };
 
-  const isValidRoomResponse = useCallback((res: any): boolean => {
+  const isValidRoomResponse = useCallback((
+    res: any,
+    capturedSocket: Socket | null,
+    expectedRoom: string | null,
+    type: 'create' | 'join'
+  ): boolean => {
     if (!res || typeof res !== 'object') return false;
     if (res.success !== true) return false;
-    if (typeof res.roomId !== 'string' || !/^[A-Z0-9]{4}$/.test(res.roomId.trim().toUpperCase())) return false;
+    if (!capturedSocket || typeof capturedSocket.id !== 'string' || capturedSocket.id.length === 0) return false;
+
+    if (typeof res.roomId !== 'string') return false;
+    const normRoomId = res.roomId.trim().toUpperCase();
+    if (!/^[A-Z0-9]{4}$/.test(normRoomId)) return false;
+
+    if (type === 'join') {
+      if (!expectedRoom || normRoomId !== expectedRoom) return false;
+    }
+
     if (typeof res.hostId !== 'string' || res.hostId.length < 1 || res.hostId.length > 128) return false;
     if (typeof res.isHost !== 'boolean') return false;
-    if (typeof res.colorIdx !== 'number' || !Number.isInteger(res.colorIdx) || res.colorIdx < 0 || res.colorIdx >= PLAYER_COLORS.length) return false;
+    if (res.isHost !== (res.hostId === capturedSocket.id)) return false;
+
+    if (type === 'create') {
+      if (res.isHost !== true || res.hostId !== capturedSocket.id) return false;
+    }
+
+    if (typeof res.colorIdx !== 'number' || !Number.isInteger(res.colorIdx) || res.colorIdx < 0 || res.colorIdx > 4) return false;
     if (!isValidResumeToken(res.resumeToken)) return false;
     if (!res.matchSettings || typeof res.matchSettings !== 'object') return false;
     if (!isValidMapId(res.matchSettings.mapId) || !isValidGameMode(res.matchSettings.gameMode)) return false;
     return true;
   }, [isValidResumeToken]);
+
+  const finishRoomRequest = useCallback(() => {
+    roomRequestInFlightRef.current = false;
+    setPendingRoomRequest(null);
+  }, []);
 
   const executeRoomRequest = useCallback((
     type: 'create' | 'join',
@@ -4625,60 +4651,110 @@ export default function GameCanvas() {
     cancelPendingMatchSettingsUpdate();
     closeMpMapSelector();
 
+    const expectedRoom = type === 'join' && typeof payload?.code === 'string'
+      ? payload.code.trim().toUpperCase()
+      : null;
+
     const handleResponse = (res: any) => {
-      if (currentGen !== roomRequestGenerationRef.current || !socketRef.current?.connected) {
-        if (res && res.success === true && typeof res.roomId === 'string' && /^[A-Z0-9]{4}$/.test(res.roomId.trim().toUpperCase())) {
-          socketRef.current?.emit('leave_room', res.roomId.trim().toUpperCase());
+      const isStale = currentGen !== roomRequestGenerationRef.current ||
+        socketRef.current !== socket ||
+        !socket.connected;
+
+      if (isStale) {
+        if (
+          res &&
+          res.success === true &&
+          typeof res.roomId === 'string' &&
+          /^[A-Z0-9]{4}$/.test(res.roomId.trim().toUpperCase()) &&
+          socket.connected
+        ) {
+          const normResRoom = res.roomId.trim().toUpperCase();
+          const isMyHost = socket.id === res.hostId || res.isHost === true;
+          const isMyActiveRoom = mpRef.current.roomId === normResRoom;
+          const isMySessionRoom = resumeSessionRef.current?.roomId === normResRoom;
+
+          if (isMyHost || isMyActiveRoom || isMySessionRoom) {
+            socket.emit('leave_room', normResRoom);
+          }
         }
         return;
       }
 
       if (res && res.success === true) {
-        if (isValidRoomResponse(res)) {
+        if (isValidRoomResponse(res, socket, expectedRoom, type)) {
           const cleanRoom = res.roomId.trim().toUpperCase();
-          mpRef.current.roomId = cleanRoom;
-          mpRef.current.isHost = res.isHost;
 
-          setMpState(prev => ({
-            ...prev,
-            roomId: cleanRoom,
-            joinCode: cleanRoom,
-            isHost: res.isHost,
-            error: ''
-          }));
+          if (mpRef.current.roomId === cleanRoom) {
+            mpRef.current.isHost = res.isHost;
+            setMpState(prev => ({
+              ...prev,
+              roomId: cleanRoom,
+              joinCode: cleanRoom,
+              isHost: res.isHost,
+              error: ''
+            }));
 
-          resumeSessionRef.current = {
-            roomId: cleanRoom,
-            resumeToken: res.resumeToken
-          };
+            resumeSessionRef.current = {
+              roomId: cleanRoom,
+              resumeToken: res.resumeToken
+            };
 
-          applyAuthoritativeMatchSettings(res.matchSettings);
+            applyAuthoritativeMatchSettings(res.matchSettings);
 
-          if (res.colorIdx !== undefined) {
-            setPlayerProfile(prev => ({ ...prev, colorIdx: res.colorIdx }));
-          }
+            if (typeof res.colorIdx === 'number' && Number.isInteger(res.colorIdx)) {
+              setPlayerProfile(prev => ({ ...prev, colorIdx: res.colorIdx }));
+            }
 
-          if (type === 'create') {
-            setActiveLobbyTab('invite');
+            handleHostRoleTransitionRef.current(res.isHost);
           } else {
-            setActiveLobbyTab('players');
+            if (mpRef.current.roomId && mpRef.current.roomId !== cleanRoom) {
+              socket.emit('leave_room', mpRef.current.roomId);
+            }
+
+            mpRef.current.roomId = cleanRoom;
+            mpRef.current.isHost = res.isHost;
+
+            setMpState(prev => ({
+              ...prev,
+              roomId: cleanRoom,
+              joinCode: cleanRoom,
+              isHost: res.isHost,
+              error: ''
+            }));
+
+            resumeSessionRef.current = {
+              roomId: cleanRoom,
+              resumeToken: res.resumeToken
+            };
+
+            applyAuthoritativeMatchSettings(res.matchSettings);
+
+            if (typeof res.colorIdx === 'number' && Number.isInteger(res.colorIdx)) {
+              setPlayerProfile(prev => ({ ...prev, colorIdx: res.colorIdx }));
+            }
+
+            if (type === 'create') {
+              setActiveLobbyTab('invite');
+            } else {
+              setActiveLobbyTab('players');
+            }
+
+            setUiState(prev => {
+              const nextUi = { ...prev, status: 'LOBBY' as const };
+              uiRef.current = nextUi;
+              return nextUi;
+            });
+
+            handleHostRoleTransitionRef.current(res.isHost);
           }
 
-          setUiState(prev => {
-            const nextUi = { ...prev, status: 'LOBBY' as const };
-            uiRef.current = nextUi;
-            return nextUi;
-          });
-
-          roomRequestInFlightRef.current = false;
-          setPendingRoomRequest(null);
+          finishRoomRequest();
         } else {
-          if (typeof res.roomId === 'string' && /^[A-Z0-9]{4}$/.test(res.roomId.trim().toUpperCase())) {
-            socketRef.current?.emit('leave_room', res.roomId.trim().toUpperCase());
+          if (typeof res.roomId === 'string' && /^[A-Z0-9]{4}$/.test(res.roomId.trim().toUpperCase()) && socket.connected) {
+            socket.emit('leave_room', res.roomId.trim().toUpperCase());
           }
 
-          roomRequestInFlightRef.current = false;
-          setPendingRoomRequest(null);
+          finishRoomRequest();
 
           setMpState(prev => ({
             ...prev,
@@ -4686,19 +4762,22 @@ export default function GameCanvas() {
           }));
         }
       } else {
-        roomRequestInFlightRef.current = false;
-        setPendingRoomRequest(null);
+        finishRoomRequest();
 
         const rawErr = res?.error;
-        const mappedMsg = rawErr === 'ROOM_NOT_FOUND'
-          ? 'ROOM NOT FOUND'
-          : rawErr === 'ROOM_FULL'
-          ? 'ROOM IS FULL'
-          : rawErr === 'MATCH_IN_PROGRESS'
-          ? 'MATCH ALREADY IN PROGRESS'
-          : rawErr === 'INVALID_ROOM_CODE'
-          ? 'INVALID ROOM CODE'
-          : (rawErr || (type === 'create' ? 'CREATE FAILED' : 'JOIN FAILED'));
+        let mappedMsg = type === 'create' ? 'CREATE FAILED' : 'JOIN FAILED';
+
+        if (rawErr === 'ROOM_NOT_FOUND') {
+          mappedMsg = 'ROOM NOT FOUND';
+        } else if (rawErr === 'ROOM_FULL') {
+          mappedMsg = 'ROOM IS FULL';
+        } else if (rawErr === 'MATCH_IN_PROGRESS') {
+          mappedMsg = 'MATCH ALREADY IN PROGRESS';
+        } else if (rawErr === 'INVALID_ROOM_CODE') {
+          mappedMsg = 'INVALID ROOM CODE';
+        } else if (typeof rawErr === 'string' && rawErr.trim().length > 0) {
+          mappedMsg = rawErr.trim().toUpperCase().slice(0, 64);
+        }
 
         setMpState(prev => ({ ...prev, error: mappedMsg }));
       }
@@ -4709,7 +4788,7 @@ export default function GameCanvas() {
     } else {
       socket.emit('join_room', payload.code, payload.profile, handleResponse);
     }
-  }, [isValidRoomResponse, applyAuthoritativeMatchSettings, cancelPendingMatchSettingsUpdate, closeMpMapSelector]);
+  }, [isValidRoomResponse, finishRoomRequest, applyAuthoritativeMatchSettings, cancelPendingMatchSettingsUpdate, closeMpMapSelector]);
 
   const createRoom = useCallback(() => {
     const initialMode: GameMode = uiState.hardMode ? 'hard' : 'normal';
@@ -5888,6 +5967,9 @@ export default function GameCanvas() {
     }
   }, [clearPendingGuestShots, clearPendingAbilityRequests, releaseAllInputs, getMultiplayerWorldPhaseTime]);
 
+  const handleHostRoleTransitionRef = useRef(handleHostRoleTransition);
+  handleHostRoleTransitionRef.current = handleHostRoleTransition;
+
   useEffect(() => {
     const socket = io();
     socketRef.current = socket;
@@ -6035,6 +6117,10 @@ export default function GameCanvas() {
     });
 
     socket.on('disconnect', () => {
+      roomRequestGenerationRef.current++;
+      roomRequestInFlightRef.current = false;
+      setPendingRoomRequest(null);
+
       resumeAttemptGenerationRef.current++;
       resumeInFlightRef.current = false;
       awaitingResumeSnapshotRef.current = false;
@@ -7011,6 +7097,10 @@ export default function GameCanvas() {
     });
 
     return () => {
+      roomRequestGenerationRef.current++;
+      roomRequestInFlightRef.current = false;
+      setPendingRoomRequest(null);
+
       cancelPendingMatchSettingsUpdate();
       clearPendingGuestShots(true);
       clearPendingAbilityRequests();
@@ -7023,11 +7113,20 @@ export default function GameCanvas() {
       const params = new URLSearchParams(window.location.search);
       const roomParam = params.get('room') || params.get('join');
       if (roomParam) {
-        const cleanRoom = roomParam.trim().toUpperCase();
+        if (inviteJoinHandledRef.current) {
+          return;
+        }
+        inviteJoinHandledRef.current = true;
 
         if (window.history.replaceState) {
           window.history.replaceState({}, document.title, window.location.pathname);
         }
+
+        if (roomRequestInFlightRef.current) {
+          return;
+        }
+
+        const cleanRoom = roomParam.trim().toUpperCase();
 
         if (!/^[A-Z0-9]{4}$/.test(cleanRoom)) {
           setMpState(prev => ({
@@ -12314,7 +12413,8 @@ export default function GameCanvas() {
                   <input
                     type="text"
                     value={mpState.joinCode}
-                    onChange={(e) => setMpState(prev => ({ ...prev, joinCode: e.target.value.toUpperCase() }))}
+                    onChange={(e) => setMpState(prev => ({ ...prev, joinCode: e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4) }))}
+                    maxLength={4}
                     placeholder="ENTER CODE"
                     disabled={pendingRoomRequest !== null || !mpState.isConnected}
                     className="w-full py-3 px-4 bg-black border border-white/10 text-white font-mono tracking-widest text-center text-xl outline-none focus:border-[#ffcc00]/50 mb-4 uppercase placeholder-white/20 disabled:opacity-50"
@@ -12322,9 +12422,9 @@ export default function GameCanvas() {
                   {mpState.error && <p className="text-red-500 font-bold mb-4 text-xs">{mpState.error}</p>}
                   <button
                     onClick={joinRoom}
-                    disabled={pendingRoomRequest !== null || !mpState.isConnected}
+                    disabled={pendingRoomRequest !== null || !mpState.isConnected || !/^[A-Z0-9]{4}$/.test(mpState.joinCode.trim().toUpperCase())}
                     className={`w-full py-4 bg-[#ffcc00] hover:bg-white text-black font-black tracking-widest transition-all duration-200 uppercase text-sm cursor-pointer shadow-[3px_3px_0_rgba(255,204,0,0.15)] hover:shadow-[5px_5px_0_#fff] active:translate-x-1 active:translate-y-1 active:shadow-none mb-2 ${
-                      pendingRoomRequest !== null || !mpState.isConnected ? 'opacity-50 cursor-not-allowed' : ''
+                      pendingRoomRequest !== null || !mpState.isConnected || !/^[A-Z0-9]{4}$/.test(mpState.joinCode.trim().toUpperCase()) ? 'opacity-50 cursor-not-allowed' : ''
                     }`}
                   >
                     {pendingRoomRequest === 'join' ? 'JOINING...' : 'JOIN MATCH'}
