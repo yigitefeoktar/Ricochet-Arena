@@ -6098,6 +6098,7 @@ export default function GameCanvas() {
           if (typeof hostSnap.kbvy === 'number' && Number.isFinite(hostSnap.kbvy)) {
             stateRef.current.player.kbvy = hostSnap.kbvy;
           }
+          releaseAllInputs();
           awaitingResumeSnapshotRef.current = false;
         }
         if (typeof state.worldPhaseTime === 'number' && Number.isFinite(state.worldPhaseTime) && state.worldPhaseTime >= 0) {
@@ -7536,7 +7537,20 @@ export default function GameCanvas() {
       }
       lastStatus = STATUS;
       const isMultiplayerDisconnected = Boolean(mpRef.current.roomId && !mpRef.current.isConnected);
-      const shouldRunUpdates = !isMultiplayerDisconnected && ((STATUS === 'PLAYING' && !bannerShowingRef.current) || (STATUS === 'GAME_OVER' && mpRef.current.isConnected && mpRef.current.roomId && mpRef.current.isHost));
+      const isAwaitingResumeSnapshot =
+        Boolean(mpRef.current.roomId && awaitingResumeSnapshotRef.current);
+      const shouldRunUpdates =
+        !isMultiplayerDisconnected &&
+        !isAwaitingResumeSnapshot &&
+        (
+          (STATUS === 'PLAYING' && !bannerShowingRef.current) ||
+          (
+            STATUS === 'GAME_OVER' &&
+            mpRef.current.isConnected &&
+            mpRef.current.roomId &&
+            mpRef.current.isHost
+          )
+        );
 
       // Auto Host-Migration claiming protocol
       if (
@@ -7552,7 +7566,7 @@ export default function GameCanvas() {
       }
 
       // Direct high-performance input/status sync (runs even when client status is GAME_OVER)
-      if (currentTime - state.lastBroadcastTime > 16 && mpRef.current.isConnected && mpRef.current.roomId && !mpRef.current.isHost && (STATUS === 'PLAYING' || STATUS === 'GAME_OVER')) {
+      if (currentTime - state.lastBroadcastTime > 16 && mpRef.current.isConnected && mpRef.current.roomId && !mpRef.current.isHost && !awaitingResumeSnapshotRef.current && (STATUS === 'PLAYING' || STATUS === 'GAME_OVER')) {
         state.lastBroadcastTime = currentTime;
         socketRef.current?.emit('client_input', mpRef.current.roomId, {
           roundId: activeMultiplayerRoundIdRef.current,
