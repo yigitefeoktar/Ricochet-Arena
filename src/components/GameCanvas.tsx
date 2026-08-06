@@ -7857,18 +7857,119 @@ export default function GameCanvas() {
           enemy.y = enemyResolved.y;
 
           // B2: Host-side enemy contact collision checks against living remote players
-          if (mpRef.current.roomId && mpRef.current.isHost) {
+          if (isAuthoritativeMultiplayerSimulation) {
+            const hostId = socketRef.current?.id;
+            const hostMatchPlayer = hostId ? state.matchPlayers[hostId] : null;
+
+            const hits: { pid: string; t: number; impactX: number; impactY: number; isHost: boolean }[] = [];
+
+            // Host candidate
+            const isHostCandidateEligible = !!hostId && 
+              !!hostMatchPlayer && 
+              !hostMatchPlayer.isDead && 
+              !hostMatchPlayer.isDisconnected && 
+              uiRef.current.status === 'PLAYING' && 
+              !state.player.dash.active && 
+              !isOpeningProtectionActiveForHost(currentTime);
+
+            if (isHostCandidateEligible) {
+              const relStartX = enemyBeforeX - pBeforeX;
+              const relStartY = enemyBeforeY - pBeforeY;
+              const relEndX = enemy.x - state.player.x;
+              const relEndY = enemy.y - state.player.y;
+              const combRadius = enemy.radius + state.player.radius;
+
+              const sweepResult = segmentVersusCircle(
+                relStartX,
+                relStartY,
+                relEndX,
+                relEndY,
+                0,
+                0,
+                combRadius
+              );
+
+              if (sweepResult !== null) {
+                const impactX = enemyBeforeX + sweepResult.t * (enemy.x - enemyBeforeX);
+                const impactY = enemyBeforeY + sweepResult.t * (enemy.y - enemyBeforeY);
+                hits.push({
+                  pid: hostId!,
+                  t: sweepResult.t,
+                  impactX,
+                  impactY,
+                  isHost: true
+                });
+              }
+            }
+
+            // Remote candidates
             for (const pid in state.multiplayerPlayers) {
               const mpPlayer = state.multiplayerPlayers[pid];
-              if (mpPlayer && !mpPlayer.isDead) {
-                const isProtected = mpPlayer.isDash || isOpeningProtectionActiveForHost(currentTime);
-                if (!isProtected) {
-                  const edx = mpPlayer.x - enemy.x;
-                  const edy = mpPlayer.y - enemy.y;
-                  if (edx * edx + edy * edy < (mpPlayer.radius + enemy.radius) ** 2) {
-                    eliminateRemotePlayerRef.current?.(pid, { x: enemy.x, y: enemy.y }, currentTime);
-                  }
+              const mPlayer = state.matchPlayers[pid];
+
+              const isRemoteEligible = !!mpPlayer && 
+                !!mPlayer && 
+                !mpPlayer.isDead && 
+                !mPlayer.isDead && 
+                !mPlayer.isDisconnected && 
+                !mpPlayer.isDash && 
+                !isOpeningProtectionActiveForHost(currentTime);
+
+              if (isRemoteEligible) {
+                const sweepResult = segmentVersusCircle(
+                  enemyBeforeX,
+                  enemyBeforeY,
+                  enemy.x,
+                  enemy.y,
+                  mpPlayer.x,
+                  mpPlayer.y,
+                  enemy.radius + mpPlayer.radius
+                );
+
+                if (sweepResult !== null) {
+                  const impactX = enemyBeforeX + sweepResult.t * (enemy.x - enemyBeforeX);
+                  const impactY = enemyBeforeY + sweepResult.t * (enemy.y - enemyBeforeY);
+                  hits.push({
+                    pid,
+                    t: sweepResult.t,
+                    impactX,
+                    impactY,
+                    isHost: false
+                  });
                 }
+              }
+            }
+
+            if (hits.length > 0) {
+              hits.sort((a, b) => {
+                if (Math.abs(a.t - b.t) > 1e-9) {
+                  return a.t - b.t;
+                }
+                return a.pid.localeCompare(b.pid);
+              });
+
+              const winner = hits[0];
+              enemy.x = winner.impactX;
+              enemy.y = winner.impactY;
+              state.forceBroadcast = true;
+
+              if (winner.isHost) {
+                if (uiRef.current.status === 'PLAYING') {
+                  triggerEndPresentation({
+                    outcome: 'defeat',
+                    causeCode: 'enemy_contact',
+                    label: 'ENEMY CONTACT',
+                    impactPos: { x: winner.impactX, y: winner.impactY },
+                    markerColor: '#ff003c',
+                    startTimestamp: performance.now(),
+                  });
+                  setUiState(prev => {
+                    uiRef.current = { ...prev, status: 'GAME_OVER' };
+                    return uiRef.current;
+                  });
+                }
+              } else {
+                eliminateRemotePlayerRef.current?.(winner.pid, { x: winner.impactX, y: winner.impactY }, currentTime);
               }
             }
           }
@@ -8118,27 +8219,137 @@ export default function GameCanvas() {
           }
 
           // B3: Host-side bouncer contact collision checks against living remote players
-          if (mpRef.current.roomId && mpRef.current.isHost) {
+          if (isAuthoritativeMultiplayerSimulation) {
+            const hostId = socketRef.current?.id;
+            const hostMatchPlayer = hostId ? state.matchPlayers[hostId] : null;
+
+            const hits: { pid: string; t: number; impactX: number; impactY: number; isHost: boolean; isDash: boolean }[] = [];
+
+            // Host candidate
+            const isHostCandidateEligible = !!hostId && 
+              !!hostMatchPlayer && 
+              !hostMatchPlayer.isDead && 
+              !hostMatchPlayer.isDisconnected && 
+              uiRef.current.status === 'PLAYING' && 
+              !isOpeningProtectionActiveForHost(currentTime);
+
+            if (isHostCandidateEligible) {
+              const relStartX = bBeforeX - pBeforeX;
+              const relStartY = bBeforeY - pBeforeY;
+              const relEndX = b.x - state.player.x;
+              const relEndY = b.y - state.player.y;
+              const combRadius = b.radius + state.player.radius;
+
+              const sweepResult = segmentVersusCircle(
+                relStartX,
+                relStartY,
+                relEndX,
+                relEndY,
+                0,
+                0,
+                combRadius
+              );
+
+              if (sweepResult !== null) {
+                const impactX = bBeforeX + sweepResult.t * (b.x - bBeforeX);
+                const impactY = bBeforeY + sweepResult.t * (b.y - bBeforeY);
+                hits.push({
+                  pid: hostId!,
+                  t: sweepResult.t,
+                  impactX,
+                  impactY,
+                  isHost: true,
+                  isDash: state.player.dash.active
+                });
+              }
+            }
+
+            // Remote candidates
             for (const pid in state.multiplayerPlayers) {
               const mpPlayer = state.multiplayerPlayers[pid];
-              if (mpPlayer && !mpPlayer.isDead) {
-                const pdx = mpPlayer.x - b.x;
-                const pdy = mpPlayer.y - b.y;
-                if (pdx * pdx + pdy * pdy < (mpPlayer.radius + b.radius) ** 2) {
-                  if (mpPlayer.isDash) {
-                    // Dashing player vs bouncer -> bounce behavior
-                    b.dx *= -1;
-                    b.dy *= -1;
-                  } else if (!isOpeningProtectionActiveForHost(currentTime)) {
-                    eliminateRemotePlayerRef.current?.(pid, { x: b.x, y: b.y }, currentTime);
+              const mPlayer = state.matchPlayers[pid];
+
+              const isRemoteEligible = !!mpPlayer && 
+                !!mPlayer && 
+                !mpPlayer.isDead && 
+                !mPlayer.isDead && 
+                !mPlayer.isDisconnected && 
+                !isOpeningProtectionActiveForHost(currentTime);
+
+              if (isRemoteEligible) {
+                const sweepResult = segmentVersusCircle(
+                  bBeforeX,
+                  bBeforeY,
+                  b.x,
+                  b.y,
+                  mpPlayer.x,
+                  mpPlayer.y,
+                  b.radius + mpPlayer.radius
+                );
+
+                if (sweepResult !== null) {
+                  const impactX = bBeforeX + sweepResult.t * (b.x - bBeforeX);
+                  const impactY = bBeforeY + sweepResult.t * (b.y - bBeforeY);
+                  hits.push({
+                    pid,
+                    t: sweepResult.t,
+                    impactX,
+                    impactY,
+                    isHost: false,
+                    isDash: mpPlayer.isDash
+                  });
+                }
+              }
+            }
+
+            if (hits.length > 0) {
+              hits.sort((a, b) => {
+                if (Math.abs(a.t - b.t) > 1e-9) {
+                  return a.t - b.t;
+                }
+                return a.pid.localeCompare(b.pid);
+              });
+
+              const winner = hits[0];
+              b.x = winner.impactX;
+              b.y = winner.impactY;
+              state.forceBroadcast = true;
+
+              if (winner.isDash) {
+                if (winner.isHost) {
+                  spawnParticles(winner.impactX, winner.impactY, '#ff3333', 30);
+                  b.size = 0;
+                  b.dx *= -1;
+                  b.dy *= -1;
+                } else {
+                  b.dx *= -1;
+                  b.dy *= -1;
+                }
+              } else {
+                if (winner.isHost) {
+                  if (uiRef.current.status === 'PLAYING') {
+                    triggerEndPresentation({
+                      outcome: 'defeat',
+                      causeCode: 'bouncer_collision',
+                      label: 'BOUNCER COLLISION',
+                      impactPos: { x: winner.impactX, y: winner.impactY },
+                      markerColor: '#ff003c',
+                      startTimestamp: performance.now(),
+                    });
+                    setUiState(prev => {
+                      uiRef.current = { ...prev, status: 'GAME_OVER' };
+                      return uiRef.current;
+                    });
                   }
+                } else {
+                  eliminateRemotePlayerRef.current?.(winner.pid, { x: winner.impactX, y: winner.impactY }, currentTime);
                 }
               }
             }
           }
 
           // Collision with Player
-          if (uiRef.current.status === 'PLAYING') {
+          if (!isAuthoritativeMultiplayerSimulation && uiRef.current.status === 'PLAYING') {
             const pdx = state.player.x - b.x;
             const pdy = state.player.y - b.y;
             if (pdx * pdx + pdy * pdy < (state.player.radius + b.radius) ** 2) {
