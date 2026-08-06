@@ -42,6 +42,17 @@ async function startServer() {
   const rooms = new Map<string, RoomInfo>();
 
   const DISCONNECT_GRACE_MS = 5000;
+  const MAX_ROOM_PLAYERS = 5;
+  const ROOM_CODE_REGEX = /^[A-Z0-9]{4}$/;
+
+  function normalizeRoomCode(input: unknown): string | null {
+    if (typeof input !== "string") return null;
+    const trimmed = input.trim().toUpperCase();
+    if (ROOM_CODE_REGEX.test(trimmed)) {
+      return trimmed;
+    }
+    return null;
+  }
 
   function generateResumeToken(): string {
     return randomBytes(24).toString("base64url");
@@ -76,43 +87,70 @@ async function startServer() {
     }
   }
 
-  function removePlayerFromRoom(room: RoomInfo, playerId: string) {
-    const playerIndex = room.players.findIndex(p => p.id === playerId);
-    if (playerIndex === -1) return;
+  function normalizeHostOwnership(room: RoomInfo) {
+    if (room.players.length === 0) return;
 
-    const player = room.players[playerIndex];
-    if (player.disconnectTimer) {
-      clearTimeout(player.disconnectTimer);
-      player.disconnectTimer = undefined;
+    const previousHostId = room.players.find(p => p.isHost)?.id;
+
+    let newHost: Player | undefined = room.players.find(p => p.isHost && io.sockets.sockets.has(p.id));
+    if (!newHost) {
+      newHost = room.players.find(p => io.sockets.sockets.has(p.id));
+    }
+    if (!newHost) {
+      newHost = room.players.find(p => p.isHost);
+    }
+    if (!newHost) {
+      newHost = room.players[0];
     }
 
-    room.players.splice(playerIndex, 1);
+    let hostChanged = false;
+    room.players.forEach(p => {
+      const shouldBeHost = (p === newHost);
+      if (p.isHost !== shouldBeHost) {
+        p.isHost = shouldBeHost;
+        hostChanged = true;
+      }
+    });
+
+    if (hostChanged || previousHostId !== newHost?.id) {
+      room.lastHostStateTime = Date.now();
+    }
+  }
+
+  function removePlayerFromRoom(room: RoomInfo, playerId: string) {
+    const matchingPlayers = room.players.filter(p => p.id === playerId);
+    if (matchingPlayers.length === 0) return;
+
+    matchingPlayers.forEach(p => {
+      if (p.disconnectTimer) {
+        clearTimeout(p.disconnectTimer);
+        p.disconnectTimer = undefined;
+      }
+      p.previousResumeToken = undefined;
+      p.previousResumeTokenExpiresAt = undefined;
+    });
+
+    room.players = room.players.filter(p => p.id !== playerId);
     const roomIdUpper = room.roomId.trim().toUpperCase();
 
     if (room.players.length === 0) {
       deleteRoom(roomIdUpper);
     } else {
-      let hostChanged = false;
-      let foundHost = false;
-      room.players.forEach(p => {
-        if (p.isHost) {
-          if (foundHost) {
-            p.isHost = false; // Never allow multiple hosts
-            hostChanged = true;
-          } else {
-            foundHost = true;
-          }
-        }
-      });
-      if (!foundHost && room.players.length > 0) {
-        room.players[0].isHost = true;
-        hostChanged = true;
-      }
-      if (hostChanged) {
-        room.lastHostStateTime = Date.now();
-      }
+      normalizeHostOwnership(room);
       io.to(roomIdUpper).emit("lobby_players", serializePublicRoster(room.players));
       io.to(roomIdUpper).emit("player_left", playerId);
+    }
+  }
+
+  function leaveOtherRooms(socket: any, exceptRoomId?: string) {
+    const targetRoomUpper = exceptRoomId ? exceptRoomId.trim().toUpperCase() : undefined;
+    for (const [rId, room] of Array.from(rooms.entries())) {
+      if (rId !== targetRoomUpper) {
+        if (room.players.some(p => p.id === socket.id)) {
+          socket.leave(rId);
+          removePlayerFromRoom(room, socket.id);
+        }
+      }
     }
   }
 
@@ -162,6 +200,8 @@ async function startServer() {
     socket.on("create_room", (arg1, arg2) => {
       const cb = typeof arg1 === "function" ? arg1 : arg2;
       const clientData = typeof arg1 === "object" && arg1 !== null ? arg1 : { name: "PLAYER" };
+
+      leaveOtherRooms(socket);
 
       let roomId = "";
       const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
@@ -236,15 +276,30 @@ async function startServer() {
     socket.on("join_room", (roomId, arg2, arg3) => {
       const cb = typeof arg2 === "function" ? arg2 : arg3;
       const clientData = typeof arg2 === "object" && arg2 !== null ? arg2 : { name: "PLAYER" };
-      if (!roomId || typeof roomId !== "string") {
+
+      const roomIdUpper = normalizeRoomCode(roomId);
+      if (!roomIdUpper) {
         if (cb) cb({ success: false, error: "ROOM_NOT_FOUND" });
         return;
       }
-      const roomIdUpper = roomId.trim().toUpperCase();
-      const room = rooms.get(roomIdUpper);
 
+      const room = rooms.get(roomIdUpper);
       if (!room) {
         if (cb) cb({ success: false, error: "ROOM_NOT_FOUND" });
+        return;
+      }
+
+      const existingPlayer = room.players.find(p => p.id === socket.id);
+      if (existingPlayer) {
+        socket.join(roomIdUpper);
+        io.to(roomIdUpper).emit("lobby_players", serializePublicRoster(room.players));
+        if (cb) cb({
+          success: true,
+          hostId: room.players.find(p => p.isHost)?.id || socket.id,
+          colorIdx: existingPlayer.colorIdx,
+          matchSettings: room.matchSettings,
+          resumeToken: existingPlayer.resumeToken
+        });
         return;
       }
 
@@ -253,30 +308,25 @@ async function startServer() {
         return;
       }
 
+      if (room.players.length >= MAX_ROOM_PLAYERS) {
+        if (cb) cb({ success: false, error: "ROOM_FULL" });
+        return;
+      }
+
+      leaveOtherRooms(socket, roomIdUpper);
       socket.join(roomIdUpper);
 
       const isHost = room.players.length === 0 || !room.players.some(p => p.isHost);
 
-      // Calculate available colors
       const usedColors = room.players.map(p => p.colorIdx);
       const availableColors = [0, 1, 2, 3, 4].filter(c => !usedColors.includes(c));
-      let chosenColor = 0;
+      let chosenColor = availableColors[0];
 
       if (clientData && typeof clientData === "object" && clientData.colorIdx !== undefined) {
         const requestedColor = sanitizeColor(clientData.colorIdx, room.players);
         if (requestedColor !== -1) {
           chosenColor = requestedColor;
-        } else if (availableColors.length > 0) {
-          chosenColor = availableColors[0];
-        } else {
-          chosenColor = Math.floor(Math.random() * 5);
         }
-      } else if (isHost) {
-        chosenColor = 0;
-      } else if (availableColors.length > 0) {
-        chosenColor = availableColors[0];
-      } else {
-        chosenColor = Math.floor(Math.random() * 5);
       }
 
       const defaultName = getUniqueDefaultName(room.players);
@@ -310,7 +360,8 @@ async function startServer() {
     socket.on("resume_room", (roomId, resumeToken, callback) => {
       const cb = typeof callback === "function" ? callback : () => {};
 
-      if (!roomId || typeof roomId !== "string") {
+      const roomIdUpper = normalizeRoomCode(roomId);
+      if (!roomIdUpper) {
         cb({ success: false, error: "INVALID_RESUME_REQUEST" });
         return;
       }
@@ -320,7 +371,6 @@ async function startServer() {
         return;
       }
 
-      const roomIdUpper = roomId.trim().toUpperCase();
       const room = rooms.get(roomIdUpper);
       if (!room) {
         cb({ success: false, error: "ROOM_NOT_FOUND" });
@@ -355,11 +405,18 @@ async function startServer() {
         return;
       }
 
+      if (room.players.some(p => p.id === socket.id && p !== player)) {
+        cb({ success: false, error: "SESSION_STILL_ACTIVE" });
+        return;
+      }
+
       const isOldSocketConnected = io.sockets.sockets.has(player.id);
       if (isOldSocketConnected) {
         cb({ success: false, error: "SESSION_STILL_ACTIVE" });
         return;
       }
+
+      leaveOtherRooms(socket, roomIdUpper);
 
       const oldId = player.id;
       const newId = socket.id;
@@ -411,9 +468,9 @@ async function startServer() {
     });
 
     socket.on("confirm_resume", (roomId, resumeToken) => {
-      if (!roomId || typeof roomId !== "string") return;
+      const roomIdUpper = normalizeRoomCode(roomId);
+      if (!roomIdUpper) return;
       if (typeof resumeToken !== "string" || resumeToken.length < 20 || resumeToken.length > 128) return;
-      const roomIdUpper = roomId.trim().toUpperCase();
       const room = rooms.get(roomIdUpper);
       if (!room) return;
 
@@ -429,12 +486,12 @@ async function startServer() {
     socket.on("update_match_settings", (roomId, proposedSettings, callback) => {
       const cb = typeof callback === "function" ? callback : undefined;
 
-      if (!roomId || typeof roomId !== "string") {
+      const roomIdUpper = normalizeRoomCode(roomId);
+      if (!roomIdUpper) {
         if (cb) cb({ success: false, error: "INVALID_ROOM_ID" });
         return;
       }
 
-      const roomIdUpper = roomId.trim().toUpperCase();
       const room = rooms.get(roomIdUpper);
       if (!room) {
         if (cb) cb({ success: false, error: "ROOM_NOT_FOUND" });
@@ -480,8 +537,8 @@ async function startServer() {
     });
     
     socket.on("update_profile", (roomId, data) => {
-      if (!roomId || typeof roomId !== "string" || !data || typeof data !== "object") return;
-      const roomIdUpper = roomId.trim().toUpperCase();
+      const roomIdUpper = normalizeRoomCode(roomId);
+      if (!roomIdUpper || !data || typeof data !== "object") return;
       const room = rooms.get(roomIdUpper);
       if (room) {
         const player = room.players.find(p => p.id === socket.id);
@@ -505,8 +562,8 @@ async function startServer() {
     });
 
     socket.on("leave_room", (roomId) => {
-      if (!roomId || typeof roomId !== "string") return;
-      const roomIdUpper = roomId.trim().toUpperCase();
+      const roomIdUpper = normalizeRoomCode(roomId);
+      if (!roomIdUpper) return;
       socket.leave(roomIdUpper);
       const room = rooms.get(roomIdUpper);
       if (room) {
@@ -517,40 +574,42 @@ async function startServer() {
     socket.on("disconnecting", () => {
       for (const room of socket.rooms) {
         if (room !== socket.id) {
-          const roomIdUpper = room.trim().toUpperCase();
-          const activeRoom = rooms.get(roomIdUpper);
-          if (activeRoom) {
-            const player = activeRoom.players.find(p => p.id === socket.id);
-            if (player) {
-              if (player.previousResumeToken !== undefined) {
-                player.previousResumeTokenExpiresAt = Date.now() + DISCONNECT_GRACE_MS;
-              }
-              if (!player.disconnectTimer) {
-                const socketIdToDisconnect = socket.id;
-                const roundIdAtDisconnect = activeRoom.roundId;
+          const roomIdUpper = normalizeRoomCode(room);
+          if (roomIdUpper) {
+            const activeRoom = rooms.get(roomIdUpper);
+            if (activeRoom) {
+              const player = activeRoom.players.find(p => p.id === socket.id);
+              if (player) {
+                if (player.previousResumeToken !== undefined) {
+                  player.previousResumeTokenExpiresAt = Date.now() + DISCONNECT_GRACE_MS;
+                }
+                if (!player.disconnectTimer) {
+                  const socketIdToDisconnect = socket.id;
+                  const roundIdAtDisconnect = activeRoom.roundId;
 
-                const disconnectTimer = setTimeout(() => {
-                  const currentRoom = rooms.get(roomIdUpper);
-                  if (!currentRoom) return;
+                  const disconnectTimer = setTimeout(() => {
+                    const currentRoom = rooms.get(roomIdUpper);
+                    if (!currentRoom) return;
 
-                  const currentPlayer = currentRoom.players.find(p => p.id === socketIdToDisconnect);
-                  if (!currentPlayer) return;
+                    const currentPlayer = currentRoom.players.find(p => p.id === socketIdToDisconnect);
+                    if (!currentPlayer) return;
 
-                  if (currentPlayer.disconnectTimer !== disconnectTimer) return;
+                    if (currentPlayer.disconnectTimer !== disconnectTimer) return;
 
-                  const isStillConnected = io.sockets.sockets.has(socketIdToDisconnect);
-                  if (isStillConnected) return;
+                    const isStillConnected = io.sockets.sockets.has(socketIdToDisconnect);
+                    if (isStillConnected) return;
 
-                  removePlayerFromRoom(currentRoom, socketIdToDisconnect);
-                }, DISCONNECT_GRACE_MS);
+                    removePlayerFromRoom(currentRoom, socketIdToDisconnect);
+                  }, DISCONNECT_GRACE_MS);
 
-                player.disconnectTimer = disconnectTimer;
+                  player.disconnectTimer = disconnectTimer;
 
-                io.to(roomIdUpper).emit("player_disconnected", {
-                  playerId: socketIdToDisconnect,
-                  roundId: roundIdAtDisconnect,
-                  graceMs: DISCONNECT_GRACE_MS
-                });
+                  io.to(roomIdUpper).emit("player_disconnected", {
+                    playerId: socketIdToDisconnect,
+                    roundId: roundIdAtDisconnect,
+                    graceMs: DISCONNECT_GRACE_MS
+                  });
+                }
               }
             }
           }
@@ -560,8 +619,8 @@ async function startServer() {
 
     // Host sends complete game state strictly for syncing visuals for clients
     socket.on("host_game_state", (roomId, state) => {
-      if (!roomId || typeof roomId !== "string" || !state || typeof state !== "object") return;
-      const roomIdUpper = roomId.trim().toUpperCase();
+      const roomIdUpper = normalizeRoomCode(roomId);
+      if (!roomIdUpper || !state || typeof state !== "object") return;
       const room = rooms.get(roomIdUpper);
       if (!room) return;
       const player = room.players.find(p => p.id === socket.id);
@@ -578,8 +637,8 @@ async function startServer() {
 
     // Client sends input states (keyboard/mouse) for movement
     socket.on("client_input", (roomId, input) => {
-      if (!roomId || typeof roomId !== "string") return;
-      const roomIdUpper = roomId.trim().toUpperCase();
+      const roomIdUpper = normalizeRoomCode(roomId);
+      if (!roomIdUpper) return;
       const room = rooms.get(roomIdUpper);
       if (!room) return;
       
@@ -613,8 +672,8 @@ async function startServer() {
 
     // Claim room host when current host is inactive/throttled
     socket.on("claim_host", (roomId) => {
-      if (!roomId || typeof roomId !== "string") return;
-      const roomIdUpper = roomId.trim().toUpperCase();
+      const roomIdUpper = normalizeRoomCode(roomId);
+      if (!roomIdUpper) return;
       const room = rooms.get(roomIdUpper);
       if (!room) return;
 
@@ -648,8 +707,8 @@ async function startServer() {
 
     // Client interaction triggers (shoot, build, dash)
     socket.on("client_action", (roomId, action) => {
-      if (!roomId || typeof roomId !== "string" || !action || typeof action !== "object") return;
-      const roomIdUpper = roomId.trim().toUpperCase();
+      const roomIdUpper = normalizeRoomCode(roomId);
+      if (!roomIdUpper || !action || typeof action !== "object") return;
       const room = rooms.get(roomIdUpper);
       if (!room) return;
 
@@ -711,8 +770,8 @@ async function startServer() {
 
     // Host sends explicit action results (e.g. shot acceptance/rejection) to guest
     socket.on("host_action_result", (roomId, result) => {
-      if (!roomId || typeof roomId !== "string" || !result || typeof result !== "object") return;
-      const roomIdUpper = roomId.trim().toUpperCase();
+      const roomIdUpper = normalizeRoomCode(roomId);
+      if (!roomIdUpper || !result || typeof result !== "object") return;
       const room = rooms.get(roomIdUpper);
       if (!room) return;
 
@@ -765,12 +824,12 @@ async function startServer() {
       const cb = typeof config === "function" ? config : (typeof callback === "function" ? callback : undefined);
       const gameConfig = typeof config === "object" && config !== null ? config : {};
 
-      if (!roomId || typeof roomId !== "string") {
+      const roomIdUpper = normalizeRoomCode(roomId);
+      if (!roomIdUpper) {
         if (cb) cb({ success: false, error: "INVALID_ROOM_ID" });
         return;
       }
 
-      const roomIdUpper = roomId.trim().toUpperCase();
       const room = rooms.get(roomIdUpper);
       if (!room) {
         if (cb) cb({ success: false, error: "ROOM_NOT_FOUND" });
@@ -783,10 +842,14 @@ async function startServer() {
         return;
       }
 
-      const ioRoom = io.sockets.adapter.rooms.get(roomIdUpper);
-      const connectedCount = ioRoom ? ioRoom.size : 0;
-      if (connectedCount < 2) {
+      const connectedPlayers = room.players.filter(p => io.sockets.sockets.has(p.id));
+      if (connectedPlayers.length < 2) {
         if (cb) cb({ success: false, error: "NOT_ENOUGH_PLAYERS" });
+        return;
+      }
+
+      if (connectedPlayers.length !== room.players.length) {
+        if (cb) cb({ success: false, error: "ROSTER_NOT_READY" });
         return;
       }
 
