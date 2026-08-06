@@ -8149,25 +8149,34 @@ export default function GameCanvas() {
           const targetX = bulletBeforeX + bullet.dx * speedMultiplier * dt;
           const targetY = bulletBeforeY + bullet.dy * speedMultiplier * dt;
 
-          let normalsToProcess: { nx: number; ny: number }[] = [];
+          const isAuthoritativeMultiplayerBullet =
+            Boolean(mpRef.current.roomId && mpRef.current.isHost);
 
-          if (mpRef.current && mpRef.current.roomId && mpRef.current.isHost) {
+          let normalsToProcess: { nx: number; ny: number }[] = [];
+          let trailX = bullet.x;
+          let trailY = bullet.y;
+
+          if (isAuthoritativeMultiplayerBullet) {
             // Move the bullet with the new bullet wall-sweep helper.
             const bulletResolved = sweptMultiplayerBulletResolve(bulletBeforeX, bulletBeforeY, targetX, targetY, bullet.radius, activeWalls);
             bullet.x = bulletResolved.x;
             bullet.y = bulletResolved.y;
             normalsToProcess = bulletResolved.normals;
+            trailX = bulletResolved.x;
+            trailY = bulletResolved.y;
           } else {
             // Outside authoritative multiplayer: direct movement and direct resolveWallCollisions
             bullet.x = targetX;
             bullet.y = targetY;
+            trailX = targetX;
+            trailY = targetY;
             const bulletResolved = resolveWallCollisions(bullet.x, bullet.y, bullet.radius, activeWalls, bulletBeforeX, bulletBeforeY);
             bullet.x = bulletResolved.x;
             bullet.y = bulletResolved.y;
             normalsToProcess = bulletResolved.normals;
           }
 
-          // Keep trail creation at the bullet’s final resolved position rather than the unreachable intended endpoint behind the wall.
+          // Keep trail creation at the bullet’s final resolved position for MP, but original direct endpoint for SP.
           if (Math.random() > 0.3) {
             let trailColor = '#ff0066';
             if (bullet.isNeutral) {
@@ -8177,7 +8186,7 @@ export default function GameCanvas() {
               trailColor = pDef.n;
             }
             state.trails.push({
-              x: bullet.x, y: bullet.y, age: 0,
+              x: trailX, y: trailY, age: 0,
               color: trailColor,
               radius: bullet.radius * 0.6
             });
@@ -8197,10 +8206,7 @@ export default function GameCanvas() {
             }
           }
 
-          if (collidedWithWall && mpRef.current && mpRef.current.roomId && mpRef.current.isHost) {
-            if (stateRef.current) {
-              stateRef.current.forceBroadcast = true;
-            }
+          if (collidedWithWall && isAuthoritativeMultiplayerBullet) {
             state.forceBroadcast = true;
           }
 
