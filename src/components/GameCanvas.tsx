@@ -6232,6 +6232,156 @@ export default function GameCanvas() {
       // C. Preserve authoritative fields
       const score = (prevPlayer.score !== undefined) ? prevPlayer.score : (matchPlayer.score || 0);
 
+      const isProtected = isOpeningProtectionActiveForHost(currentTime) || isDash;
+
+      if (!isProtected) {
+        const startX = prevPlayer.x;
+        const startY = prevPlayer.y;
+        const endX = clampedX;
+        const endY = clampedY;
+
+        const candidates: {
+          type: 'enemy' | 'bouncer' | 'relic' | 'bullet';
+          t: number;
+          impactX: number;
+          impactY: number;
+          stableKey: string;
+          ref?: any;
+        }[] = [];
+
+        // 1. Enemies
+        const enemies = stateRef.current.enemies || [];
+        enemies.forEach((enemy: any, index: number) => {
+          if (!enemy) return;
+          const combinedRadius = PLAYER_RADIUS + (enemy.radius || 16);
+          const hit = segmentVersusCircle(startX, startY, endX, endY, enemy.x, enemy.y, combinedRadius);
+          if (hit !== null) {
+            const enemyId = enemy.id !== undefined ? String(enemy.id) : `enemy_${index}`;
+            candidates.push({
+              type: 'enemy',
+              t: hit.t,
+              impactX: hit.x,
+              impactY: hit.y,
+              stableKey: enemyId
+            });
+          }
+        });
+
+        // 2. Bouncers
+        const bouncers = stateRef.current.bouncers || [];
+        bouncers.forEach((bouncer: any, index: number) => {
+          if (!bouncer) return;
+          const combinedRadius = PLAYER_RADIUS + (bouncer.radius || 24);
+          const hit = segmentVersusCircle(startX, startY, endX, endY, bouncer.x, bouncer.y, combinedRadius);
+          if (hit !== null) {
+            const bouncerId = bouncer.id !== undefined ? String(bouncer.id) : `bouncer_${index}`;
+            candidates.push({
+              type: 'bouncer',
+              t: hit.t,
+              impactX: hit.x,
+              impactY: hit.y,
+              stableKey: bouncerId
+            });
+          }
+        });
+
+        // 3. Orbiting relic obstacles
+        const spawners = stateRef.current.spawners || [];
+        const currentPhase = getMultiplayerWorldPhaseTime(currentTime);
+        const relicHit = sweptMultiplayerBulletRelicCollision(
+          startX,
+          startY,
+          endX,
+          endY,
+          PLAYER_RADIUS,
+          spawners,
+          currentPhase,
+          currentPhase
+        );
+        if (relicHit !== null) {
+          const t = relicHit.t;
+          const impactX = startX + t * (endX - startX);
+          const impactY = startY + t * (endY - startY);
+          const spawnerIndex = spawners.indexOf(relicHit.spawner);
+          const stableKey = `relic_${spawnerIndex}_${relicHit.specialType}`;
+          candidates.push({
+            type: 'relic',
+            t: t,
+            impactX,
+            impactY,
+            stableKey
+          });
+        }
+
+        // 4. Host-authoritative bullets
+        const bullets = stateRef.current.bullets || [];
+        const remotePlayerColorIdx = matchPlayer.colorIdx !== undefined ? matchPlayer.colorIdx : 0;
+        const remotePlayerColorDef = PLAYER_COLORS[remotePlayerColorIdx] || PLAYER_COLORS[0];
+        const remotePlayerColor = remotePlayerColorDef?.n || '#00f0ff';
+
+        bullets.forEach((bullet: any, index: number) => {
+          if (!bullet) return;
+
+          let bulletColor = '#ff0066';
+          if (bullet.isNeutral) {
+            bulletColor = '#aaaaaa';
+          } else if (bullet.isPlayer) {
+            const pDef = PLAYER_COLORS[bullet.colorIdx !== undefined ? bullet.colorIdx : 0] || PLAYER_COLORS[0];
+            bulletColor = pDef?.n || '#00f0ff';
+          }
+
+          if (bulletColor === remotePlayerColor) {
+            return;
+          }
+
+          const combinedRadius = PLAYER_RADIUS + (bullet.radius || 6) * 0.5;
+          const hit = segmentVersusCircle(startX, startY, endX, endY, bullet.x, bullet.y, combinedRadius);
+          if (hit !== null) {
+            const bulletId = bullet.id !== undefined ? String(bullet.id) : `bullet_${index}`;
+            candidates.push({
+              type: 'bullet',
+              t: hit.t,
+              impactX: hit.x,
+              impactY: hit.y,
+              stableKey: bulletId,
+              ref: bullet
+            });
+          }
+        });
+
+        if (candidates.length > 0) {
+          candidates.sort((a, b) => {
+            if (Math.abs(a.t - b.t) > 1e-9) {
+              return a.t - b.t;
+            }
+            return a.stableKey.localeCompare(b.stableKey);
+          });
+
+          const winner = candidates[0];
+
+          stateRef.current.multiplayerPlayers[clientId] = {
+            ...prevPlayer,
+            x: winner.impactX,
+            y: winner.impactY,
+            isDead: prevPlayer.isDead,
+            isDash,
+            radius: PLAYER_RADIUS,
+            name: matchPlayer.name,
+            colorIdx: matchPlayer.colorIdx,
+            score
+          };
+
+          if (winner.type === 'bullet' && winner.ref) {
+            stateRef.current.bullets = (stateRef.current.bullets || []).filter((b: any) => b !== winner.ref && b.id !== winner.ref.id);
+          }
+
+          stateRef.current.forceBroadcast = true;
+          eliminateRemotePlayerRef.current?.(clientId, { x: winner.impactX, y: winner.impactY }, currentTime);
+          setMpTick(t => t + 1);
+          return;
+        }
+      }
+
       stateRef.current.multiplayerPlayers[clientId] = {
         ...prevPlayer,
         x: clampedX,
