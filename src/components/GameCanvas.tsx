@@ -5745,6 +5745,76 @@ export default function GameCanvas() {
      }
   }, [tryPlaceBuildBlock, authMultiplayerPlaceBlock, isGuestBuildReady]);
 
+  const handleHostRoleTransition = useCallback((newIsHost: boolean) => {
+    const oldIsHost = mpRef.current.isHost;
+    mpRef.current.isHost = newIsHost;
+    setMpState(prev => ({ ...prev, isHost: newIsHost }));
+
+    if (oldIsHost === newIsHost) {
+      return;
+    }
+
+    const roomId = mpRef.current.roomId;
+    const roundId = activeMultiplayerRoundIdRef.current;
+    const isActiveRound = Boolean(
+      roomId &&
+      typeof roundId === 'number' &&
+      Number.isInteger(roundId) &&
+      roundId > 0 &&
+      (uiRef.current.status === 'PLAYING' || uiRef.current.status === 'GAME_OVER')
+    );
+
+    if (!isActiveRound) {
+      return;
+    }
+
+    clearPendingGuestShots(true);
+    clearPendingAbilityRequests();
+    releaseAllInputs();
+    lastReceivedGameStateTimeRef.current = performance.now();
+
+    if (newIsHost) {
+      awaitingResumeSnapshotRef.current = false;
+
+      if (stateRef.current.matchPhase === 'FINAL_RUN') {
+        if (mappedClientDeadlineRef.current !== null) {
+          stateRef.current.finalRunDeadline = mappedClientDeadlineRef.current;
+        }
+      }
+      mappedClientDeadlineRef.current = null;
+
+      const now = performance.now();
+      if (mappedProtectionDeadlineRef.current !== null) {
+        const rem = mappedProtectionDeadlineRef.current - now;
+        if (rem > 0) {
+          stateRef.current.openingProtectionDeadline = now + rem;
+        } else {
+          stateRef.current.openingProtectionDeadline = null;
+        }
+      } else {
+        stateRef.current.openingProtectionDeadline = null;
+      }
+      mappedProtectionDeadlineRef.current = null;
+
+      awaitingOpeningProtectionAuthorityRef.current = false;
+
+      const currentPhase = getMultiplayerWorldPhaseTime(now);
+      multiplayerWorldPhaseAnchorRef.current = {
+        phaseAtAnchor: currentPhase,
+        localTimeAtAnchor: now,
+        initialized: true,
+      };
+
+      stateRef.current.forceBroadcast = true;
+      stateRef.current.lastBroadcastTime = 0;
+      setMpTick(t => t + 1);
+    } else {
+      stateRef.current.forceBroadcast = false;
+      stateRef.current.lastBroadcastTime = 0;
+      awaitingResumeSnapshotRef.current = true;
+    }
+  }, [clearPendingGuestShots, clearPendingAbilityRequests, releaseAllInputs, getMultiplayerWorldPhaseTime]);
+
   useEffect(() => {
     const socket = io();
     socketRef.current = socket;
@@ -5830,17 +5900,21 @@ export default function GameCanvas() {
 
             mpRef.current.isConnected = true;
             mpRef.current.roomId = expectedRoom;
-            mpRef.current.isHost = res.isHost;
+
+            socket.emit('confirm_resume', expectedRoom, res.resumeToken);
 
             setMpState(prev => ({
               ...prev,
               isConnected: true,
               roomId: expectedRoom,
-              isHost: res.isHost,
               error: ''
             }));
 
-            awaitingResumeSnapshotRef.current = res.matchActive === true && res.isHost === false;
+            handleHostRoleTransition(res.isHost);
+
+            if (res.matchActive === true && res.isHost === false) {
+              awaitingResumeSnapshotRef.current = true;
+            }
 
             if (res.matchActive === false) {
               setUiState(prev => {
@@ -5944,8 +6018,10 @@ export default function GameCanvas() {
     });
 
     socket.on('lobby_players', (playersList: any[]) => {
+      if (!Array.isArray(playersList)) return;
       const otherPlayers: Record<string, { name: string, colorIdx: number, isHost: boolean }> = {};
       playersList.forEach((p) => {
+        if (!p || typeof p.id !== 'string') return;
         if (p.id === socket.id) {
           // Sync our local profile if changed/assigned by server
           setPlayerProfile({
@@ -5955,44 +6031,8 @@ export default function GameCanvas() {
           if (!isEditingCallsignRef.current) {
             setCallsignDraft(p.name);
           }
-          // Also set our local host status directly from server-authoritative list!
-          const hostAssigned = p.isHost;
-          if (mpRef.current.isHost !== hostAssigned) {
-            const becameHost = !mpRef.current.isHost && hostAssigned;
-            setMpState(prev => ({ ...prev, isHost: hostAssigned }));
-            mpRef.current.isHost = hostAssigned;
-
-            if (becameHost && stateRef.current.matchPhase === 'FINAL_RUN') {
-              if (mappedClientDeadlineRef.current !== null) {
-                stateRef.current.finalRunDeadline = mappedClientDeadlineRef.current;
-              }
-              mappedClientDeadlineRef.current = null;
-              stateRef.current.forceBroadcast = true;
-            }
-
-            if (becameHost) {
-              clearPendingGuestShots(true);
-              clearPendingAbilityRequests();
-              const currentPhase = getMultiplayerWorldPhaseTime(performance.now());
-              multiplayerWorldPhaseAnchorRef.current = {
-                phaseAtAnchor: currentPhase,
-                localTimeAtAnchor: performance.now(),
-                initialized: true,
-              };
-              awaitingOpeningProtectionAuthorityRef.current = false;
-              if (mappedProtectionDeadlineRef.current !== null) {
-                const rem = mappedProtectionDeadlineRef.current - performance.now();
-                if (rem > 0) {
-                  stateRef.current.openingProtectionDeadline = performance.now() + rem;
-                } else {
-                  stateRef.current.openingProtectionDeadline = null;
-                }
-              } else {
-                stateRef.current.openingProtectionDeadline = null;
-              }
-              mappedProtectionDeadlineRef.current = null;
-              stateRef.current.forceBroadcast = true;
-            }
+          if (typeof p.isHost === 'boolean') {
+            handleHostRoleTransition(p.isHost);
           }
         } else {
           otherPlayers[p.id] = {

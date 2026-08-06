@@ -25,6 +25,8 @@ async function startServer() {
     colorIdx: number;
     isHost: boolean;
     resumeToken: string;
+    previousResumeToken?: string;
+    previousResumeTokenExpiresAt?: number;
     disconnectTimer?: ReturnType<typeof setTimeout>;
   }
 
@@ -325,7 +327,29 @@ async function startServer() {
         return;
       }
 
-      const player = room.players.find(p => p.resumeToken === resumeToken);
+      const now = Date.now();
+      room.players.forEach(p => {
+        if (p.previousResumeTokenExpiresAt !== undefined) {
+          if (!Number.isFinite(p.previousResumeTokenExpiresAt) || now > p.previousResumeTokenExpiresAt) {
+            p.previousResumeToken = undefined;
+            p.previousResumeTokenExpiresAt = undefined;
+          }
+        }
+      });
+
+      let player = room.players.find(p => p.resumeToken === resumeToken);
+      let matchedTokenMode: 'current' | 'previous' = 'current';
+
+      if (!player) {
+        player = room.players.find(p =>
+          p.previousResumeToken === resumeToken &&
+          typeof p.previousResumeTokenExpiresAt === 'number' &&
+          Number.isFinite(p.previousResumeTokenExpiresAt) &&
+          now <= p.previousResumeTokenExpiresAt
+        );
+        matchedTokenMode = 'previous';
+      }
+
       if (!player) {
         cb({ success: false, error: "RESUME_NOT_FOUND" });
         return;
@@ -340,13 +364,20 @@ async function startServer() {
       const oldId = player.id;
       const newId = socket.id;
 
+      if (matchedTokenMode === 'current') {
+        player.previousResumeToken = player.resumeToken;
+        player.previousResumeTokenExpiresAt = now + DISCONNECT_GRACE_MS;
+        player.resumeToken = generateResumeToken();
+      } else {
+        player.previousResumeTokenExpiresAt = now + DISCONNECT_GRACE_MS;
+      }
+
       if (player.disconnectTimer) {
         clearTimeout(player.disconnectTimer);
         player.disconnectTimer = undefined;
       }
 
       player.id = newId;
-      player.resumeToken = generateResumeToken();
 
       socket.join(roomIdUpper);
 
@@ -377,6 +408,22 @@ async function startServer() {
         matchSettings: room.matchSettings,
         resumeToken: player.resumeToken
       });
+    });
+
+    socket.on("confirm_resume", (roomId, resumeToken) => {
+      if (!roomId || typeof roomId !== "string") return;
+      if (typeof resumeToken !== "string" || resumeToken.length < 20 || resumeToken.length > 128) return;
+      const roomIdUpper = roomId.trim().toUpperCase();
+      const room = rooms.get(roomIdUpper);
+      if (!room) return;
+
+      const player = room.players.find(p => p.id === socket.id);
+      if (!player) return;
+
+      if (player.resumeToken === resumeToken) {
+        player.previousResumeToken = undefined;
+        player.previousResumeTokenExpiresAt = undefined;
+      }
     });
 
     socket.on("update_match_settings", (roomId, proposedSettings, callback) => {
@@ -475,6 +522,9 @@ async function startServer() {
           if (activeRoom) {
             const player = activeRoom.players.find(p => p.id === socket.id);
             if (player) {
+              if (player.previousResumeToken !== undefined) {
+                player.previousResumeTokenExpiresAt = Date.now() + DISCONNECT_GRACE_MS;
+              }
               if (!player.disconnectTimer) {
                 const socketIdToDisconnect = socket.id;
                 const roundIdAtDisconnect = activeRoom.roundId;
