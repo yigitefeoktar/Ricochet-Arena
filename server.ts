@@ -270,7 +270,15 @@ async function startServer() {
       });
 
       io.to(roomId).emit("lobby_players", serializePublicRoster([hostPlayer]));
-      if (cb) cb({ roomId, colorIdx: chosenColor, matchSettings, resumeToken: hostPlayer.resumeToken });
+      if (cb) cb({
+        success: true,
+        roomId,
+        hostId: hostPlayer.id,
+        isHost: true,
+        colorIdx: chosenColor,
+        matchSettings,
+        resumeToken: hostPlayer.resumeToken
+      });
     });
 
     socket.on("join_room", (roomId, arg2, arg3) => {
@@ -291,11 +299,14 @@ async function startServer() {
 
       const existingPlayer = room.players.find(p => p.id === socket.id);
       if (existingPlayer) {
+        leaveOtherRooms(socket, roomIdUpper);
         socket.join(roomIdUpper);
         io.to(roomIdUpper).emit("lobby_players", serializePublicRoster(room.players));
         if (cb) cb({
           success: true,
+          roomId: roomIdUpper,
           hostId: room.players.find(p => p.isHost)?.id || socket.id,
+          isHost: existingPlayer.isHost,
           colorIdx: existingPlayer.colorIdx,
           matchSettings: room.matchSettings,
           resumeToken: existingPlayer.resumeToken
@@ -350,8 +361,10 @@ async function startServer() {
 
       if (cb) cb({
         success: true,
+        roomId: roomIdUpper,
         hostId: room.players.find(p => p.isHost)?.id || socket.id,
-        colorIdx: chosenColor,
+        isHost: newPlayer.isHost,
+        colorIdx: newPlayer.colorIdx,
         matchSettings: room.matchSettings,
         resumeToken: newPlayer.resumeToken
       });
