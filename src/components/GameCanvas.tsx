@@ -2508,6 +2508,7 @@ export default function GameCanvas() {
     if (multiplayerStartPendingRef.current) return;
     if (!mpRef.current.roomId || !mpState.isHost) return;
     clearPendingGuestShots();
+    clearPendingAbilityRequests();
 
     if (matchSettingsUpdatePendingRef.current) {
       setMpError("WAITING FOR SETTINGS SYNC");
@@ -3938,6 +3939,7 @@ export default function GameCanvas() {
   const createRoom = () => {
     setMpError(null);
     clearPendingGuestShots();
+    clearPendingAbilityRequests();
     cancelPendingMatchSettingsUpdate();
     closeMpMapSelector();
     const initialMode: GameMode = uiState.hardMode ? 'hard' : 'normal';
@@ -3965,6 +3967,7 @@ export default function GameCanvas() {
   const joinRoom = () => {
     setMpError(null);
     clearPendingGuestShots();
+    clearPendingAbilityRequests();
     cancelPendingMatchSettingsUpdate();
     closeMpMapSelector();
     if (!mpRef.current.joinCode) {
@@ -4911,16 +4914,20 @@ export default function GameCanvas() {
      const socketId = socketRef.current?.id;
      if (!socketId) return false;
      const auth = stateRef.current.playerActionAuthority?.[socketId];
-     if (!auth) return true;
-     return currentTime >= (auth.specialReadyAt || 0);
+     if (!auth) return false;
+     if (typeof auth.specialActiveUntil !== 'number' || !Number.isFinite(auth.specialActiveUntil)) return false;
+     if (typeof auth.specialReadyAt !== 'number' || !Number.isFinite(auth.specialReadyAt)) return false;
+     return currentTime >= auth.specialReadyAt && currentTime >= auth.specialActiveUntil;
   }, []);
 
   const isGuestBuildReady = useCallback((currentTime: number) => {
      const socketId = socketRef.current?.id;
      if (!socketId) return false;
      const auth = stateRef.current.playerActionAuthority?.[socketId];
-     if (!auth) return true;
-     return currentTime >= (auth.buildReadyAt || 0);
+     if (!auth) return false;
+     if (typeof auth.buildActiveUntil !== 'number' || !Number.isFinite(auth.buildActiveUntil)) return false;
+     if (typeof auth.buildReadyAt !== 'number' || !Number.isFinite(auth.buildReadyAt)) return false;
+     return currentTime >= auth.buildReadyAt && currentTime >= auth.buildActiveUntil;
   }, []);
 
   const requestSpecialActivation = useCallback((currentTime: number) => {
@@ -5869,6 +5876,7 @@ export default function GameCanvas() {
                   // Use authoritative player position and frozen color
                   applySpecialAbility(clientPlayer.x, clientPlayer.y, matchPlayer.colorIdx, clientId);
               }
+              stateRef.current.forceBroadcast = true;
           } else if (action.type === 'build_start') {
               const currentTime = performance.now();
               const auth = getOrInitializeAuthority(clientId);
@@ -5877,6 +5885,7 @@ export default function GameCanvas() {
                   auth.buildActiveUntil = currentTime + 8000;
                   auth.buildReadyAt = currentTime + 8000 + BUILD_COOLDOWN;
               }
+              stateRef.current.forceBroadcast = true;
           } else if (action.type === 'build') {
               const currentTime = performance.now();
               const auth = getOrInitializeAuthority(clientId);
@@ -5902,6 +5911,7 @@ export default function GameCanvas() {
     return () => {
       cancelPendingMatchSettingsUpdate();
       clearPendingGuestShots(true);
+      clearPendingAbilityRequests();
       socket.disconnect();
     };
   }, []);
@@ -10634,6 +10644,7 @@ export default function GameCanvas() {
               <button onClick={() => {
                 if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
                 clearPendingGuestShots(true);
+                clearPendingAbilityRequests();
                 activeMultiplayerRoundIdRef.current = 0;
                 multiplayerStartPendingRef.current = false;
                 setMultiplayerStartPending(false);
@@ -11009,6 +11020,7 @@ export default function GameCanvas() {
                       stateRef.current.shake = 20;
                       if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
                       clearPendingGuestShots(true);
+                      clearPendingAbilityRequests();
                       activeMultiplayerRoundIdRef.current = 0;
                       multiplayerStartPendingRef.current = false;
                       setMultiplayerStartPending(false);
@@ -11041,11 +11053,24 @@ export default function GameCanvas() {
                    {(Object.keys(toolsData) as Array<keyof typeof toolsData>).map((toolKey) => {
                      const tool = toolsData[toolKey];
                      const isProtected = isOpeningProtectionActiveLocal(performance.now());
-                     const isReady = !isProtected && uiState.buttonCounters[toolKey as 'special' | 'build'] === 0;
+                     const isGuestMode = Boolean(mpRef.current.roomId && !mpRef.current.isHost);
+                     const socketId = socketRef.current?.id;
+                     const auth = isGuestMode && socketId ? stateRef.current.playerActionAuthority?.[socketId] : null;
+                     const hasValidAuthority = auth &&
+                       typeof auth.specialActiveUntil === 'number' && Number.isFinite(auth.specialActiveUntil) &&
+                       typeof auth.specialReadyAt === 'number' && Number.isFinite(auth.specialReadyAt) &&
+                       typeof auth.buildActiveUntil === 'number' && Number.isFinite(auth.buildActiveUntil) &&
+                       typeof auth.buildReadyAt === 'number' && Number.isFinite(auth.buildReadyAt);
+
+                     const isAuthorityUnknown = isGuestMode && !hasValidAuthority;
+
+                     const isReady = !isAuthorityUnknown && !isProtected && uiState.buttonCounters[toolKey as 'special' | 'build'] === 0;
+                     const showCooldownNumber = !isAuthorityUnknown && uiState.buttonCounters[toolKey as 'special' | 'build'] > 0;
+
                      return (
                        <div key={toolKey} className="relative flex flex-col items-center gap-1 sm:gap-1.5">
                          <div className="h-4 sm:h-5 flex items-end">
-                           {uiState.buttonCounters[toolKey as 'special' | 'build'] > 0 && (
+                           {showCooldownNumber && (
                              <span className="text-[10px] sm:text-xs font-mono font-bold" style={{ color: tool.unusableBorder }}>
                                {uiState.buttonCounters[toolKey as 'special' | 'build']}
                              </span>
@@ -11150,6 +11175,7 @@ export default function GameCanvas() {
                 onClick={() => {
                   if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
                   clearPendingGuestShots(true);
+                  clearPendingAbilityRequests();
                   activeMultiplayerRoundIdRef.current = 0;
                   multiplayerStartPendingRef.current = false;
                   setMultiplayerStartPending(false);
@@ -11216,6 +11242,7 @@ export default function GameCanvas() {
                 onClick={() => {
                   if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
                   clearPendingGuestShots(true);
+                  clearPendingAbilityRequests();
                   activeMultiplayerRoundIdRef.current = 0;
                   multiplayerStartPendingRef.current = false;
                   setMultiplayerStartPending(false);
@@ -11411,6 +11438,7 @@ export default function GameCanvas() {
                         onClick={() => {
                           if (mpState.roomId) socketRef.current?.emit('leave_room', mpState.roomId);
                           clearPendingGuestShots(true);
+                          clearPendingAbilityRequests();
                           activeMultiplayerRoundIdRef.current = 0;
                           multiplayerStartPendingRef.current = false;
                           setMultiplayerStartPending(false);
