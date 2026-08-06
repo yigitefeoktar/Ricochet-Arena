@@ -7856,6 +7856,8 @@ export default function GameCanvas() {
           enemy.x = enemyResolved.x;
           enemy.y = enemyResolved.y;
 
+          let skipKnockbackProjection = false;
+
           // B2: Host-side enemy contact collision checks against living remote players
           if (isAuthoritativeMultiplayerSimulation) {
             const hostId = socketRef.current?.id;
@@ -7949,8 +7951,22 @@ export default function GameCanvas() {
               });
 
               const winner = hits[0];
-              enemy.x = winner.impactX;
-              enemy.y = winner.impactY;
+              const playerContactFirst = winner.t < 1 - 1e-6 && enemyResolved.normals.length > 0;
+
+              if (enemyResolved.normals.length > 0) {
+                if (playerContactFirst) {
+                  enemy.x = winner.impactX;
+                  enemy.y = winner.impactY;
+                  skipKnockbackProjection = true;
+                } else {
+                  enemy.x = enemyResolved.x;
+                  enemy.y = enemyResolved.y;
+                }
+              } else {
+                enemy.x = winner.impactX;
+                enemy.y = winner.impactY;
+              }
+
               state.forceBroadcast = true;
 
               if (winner.isHost) {
@@ -7959,7 +7975,7 @@ export default function GameCanvas() {
                     outcome: 'defeat',
                     causeCode: 'enemy_contact',
                     label: 'ENEMY CONTACT',
-                    impactPos: { x: winner.impactX, y: winner.impactY },
+                    impactPos: { x: enemy.x, y: enemy.y },
                     markerColor: '#ff003c',
                     startTimestamp: performance.now(),
                   });
@@ -7969,16 +7985,18 @@ export default function GameCanvas() {
                   });
                 }
               } else {
-                eliminateRemotePlayerRef.current?.(winner.pid, { x: winner.impactX, y: winner.impactY }, currentTime);
+                eliminateRemotePlayerRef.current?.(winner.pid, { x: enemy.x, y: enemy.y }, currentTime);
               }
             }
           }
 
-          for (const n of enemyResolved.normals) {
-            const dotKb = enemy.kbvx * n.nx + enemy.kbvy * n.ny;
-            if (dotKb < 0) {
-              enemy.kbvx -= dotKb * n.nx;
-              enemy.kbvy -= dotKb * n.ny;
+          if (!skipKnockbackProjection) {
+            for (const n of enemyResolved.normals) {
+              const dotKb = enemy.kbvx * n.nx + enemy.kbvy * n.ny;
+              if (dotKb < 0) {
+                enemy.kbvx -= dotKb * n.nx;
+                enemy.kbvy -= dotKb * n.ny;
+              }
             }
           }
 
@@ -8100,7 +8118,17 @@ export default function GameCanvas() {
 
           let boundaryCollided = false;
 
+          let savedDx = b.dx;
+          let savedDy = b.dy;
+          let savedKbvx = 0;
+          let savedKbvy = 0;
+          let hasStaticResponse = false;
+
           if (isAuthoritativeMultiplayerSimulation) {
+            // Save b.dx and b.dy before any boundary reflection
+            savedDx = b.dx;
+            savedDy = b.dy;
+
             // Calculate bouncer's intended endpoint
             let intendedX = bBeforeX + (b.dx * b.speed + kbvx) * dt;
             let intendedY = bBeforeY + (b.dy * b.speed + kbvy) * dt;
@@ -8153,6 +8181,12 @@ export default function GameCanvas() {
             b.kbvy = kbvy * Math.exp(-8 * dt);
             if (Math.abs(b.kbvx) < 1) b.kbvx = 0;
             if (Math.abs(b.kbvy) < 1) b.kbvy = 0;
+
+            // Save decayed/thresholded knockback values immediately before static wall/Build response is applied
+            savedKbvx = b.kbvx;
+            savedKbvy = b.kbvy;
+
+            hasStaticResponse = boundaryCollided || (winningNormals.length > 0);
 
             if (isCollision || isClamped || boundaryCollided) {
               state.forceBroadcast = true;
@@ -8311,6 +8345,15 @@ export default function GameCanvas() {
               });
 
               const winner = hits[0];
+              const playerContactFirst = winner.t < 1 - 1e-6 && hasStaticResponse;
+
+              if (playerContactFirst) {
+                b.dx = savedDx;
+                b.dy = savedDy;
+                b.kbvx = savedKbvx;
+                b.kbvy = savedKbvy;
+              }
+
               b.x = winner.impactX;
               b.y = winner.impactY;
               state.forceBroadcast = true;
