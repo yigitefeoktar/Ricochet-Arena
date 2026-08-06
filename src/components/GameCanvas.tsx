@@ -7757,6 +7757,9 @@ export default function GameCanvas() {
           }
         }
 
+        const isAuthoritativeMultiplayerSimulation =
+          Boolean(mpRef.current.roomId && mpRef.current.isHost);
+
         // 3. Update Enemies
         for (let i = state.enemies.length - 1; i >= 0; i--) {
           const enemy = state.enemies[i];
@@ -7834,7 +7837,22 @@ export default function GameCanvas() {
           if (Math.abs(enemy.kbvy) < 1) enemy.kbvy = 0;
 
           // Enemy Wall Collisions
-          const enemyResolved = resolveWallCollisions(enemy.x, enemy.y, enemy.radius, activeWalls, enemyBeforeX, enemyBeforeY);
+          let enemyResolved;
+          if (isAuthoritativeMultiplayerSimulation) {
+            enemyResolved = sweptMultiplayerPlayerResolve(
+              enemyBeforeX,
+              enemyBeforeY,
+              enemy.x,
+              enemy.y,
+              enemy.radius,
+              activeWalls
+            );
+            if (enemyResolved.collided || enemyResolved.clamped) {
+              state.forceBroadcast = true;
+            }
+          } else {
+            enemyResolved = resolveWallCollisions(enemy.x, enemy.y, enemy.radius, activeWalls, enemyBeforeX, enemyBeforeY);
+          }
           enemy.x = enemyResolved.x;
           enemy.y = enemyResolved.y;
 
@@ -7978,48 +7996,124 @@ export default function GameCanvas() {
           const kbvy = b.kbvy || 0;
           const bBeforeX = b.x;
           const bBeforeY = b.y;
-          b.x += (b.dx * b.speed + kbvx) * dt;
-          b.y += (b.dy * b.speed + kbvy) * dt;
 
-          b.kbvx = kbvx * Math.exp(-8 * dt);
-          b.kbvy = kbvy * Math.exp(-8 * dt);
-          if (Math.abs(b.kbvx) < 1) b.kbvx = 0;
-          if (Math.abs(b.kbvy) < 1) b.kbvy = 0;
+          let boundaryCollided = false;
 
-          if (b.x < b.radius) { b.x = b.radius; b.dx *= -1; }
-          if (b.x > MAP_WIDTH - b.radius) { b.x = MAP_WIDTH - b.radius; b.dx *= -1; }
-          if (b.y < b.radius) { b.y = b.radius; b.dy *= -1; }
-          if (b.y > MAP_HEIGHT - b.radius) { b.y = MAP_HEIGHT - b.radius; b.dy *= -1; }
+          if (isAuthoritativeMultiplayerSimulation) {
+            // Calculate bouncer's intended endpoint
+            let intendedX = bBeforeX + (b.dx * b.speed + kbvx) * dt;
+            let intendedY = bBeforeY + (b.dy * b.speed + kbvy) * dt;
 
-          // Collision with Walls
-          const bResolved = resolveWallCollisions(b.x, b.y, b.radius, activeWalls, bBeforeX, bBeforeY);
-          b.x = bResolved.x;
-          b.y = bResolved.y;
+            // Preserve existing world-boundary safety checks. Do not allow outside MAP_WIDTH/MAP_HEIGHT.
+            if (intendedX < b.radius) { intendedX = b.radius; b.dx *= -1; boundaryCollided = true; }
+            if (intendedX > MAP_WIDTH - b.radius) { intendedX = MAP_WIDTH - b.radius; b.dx *= -1; boundaryCollided = true; }
+            if (intendedY < b.radius) { intendedY = b.radius; b.dy *= -1; boundaryCollided = true; }
+            if (intendedY > MAP_HEIGHT - b.radius) { intendedY = MAP_HEIGHT - b.radius; b.dy *= -1; boundaryCollided = true; }
 
-          for (const n of bResolved.normals) {
-            const dot = b.dx * n.nx + b.dy * n.ny;
-            if (dot < 0) {
-              b.dx = b.dx - 2 * dot * n.nx;
-              b.dy = b.dy - 2 * dot * n.ny;
+            // Sweep static walls
+            const wallResolved = sweptMultiplayerPlayerResolve(
+              bBeforeX,
+              bBeforeY,
+              intendedX,
+              intendedY,
+              b.radius,
+              activeWalls
+            );
+
+            // Sweep Build blocks only along the wall-reachable segment
+            const blockResolved = sweptBuildBlockCollision(
+              bBeforeX,
+              bBeforeY,
+              wallResolved.x,
+              wallResolved.y,
+              b.radius,
+              state.blocks,
+              []
+            );
+
+            // Select static collision winner
+            let finalX = wallResolved.x;
+            let finalY = wallResolved.y;
+            let winningNormals = wallResolved.normals;
+            let isCollision = wallResolved.collided;
+            let isClamped = wallResolved.clamped;
+
+            if (blockResolved !== null) {
+              finalX = blockResolved.x;
+              finalY = blockResolved.y;
+              winningNormals = [{ nx: blockResolved.nx, ny: blockResolved.ny }];
+              isCollision = true;
             }
-            const dotKb = b.kbvx * n.nx + b.kbvy * n.ny;
-            if (dotKb < 0) {
-              b.kbvx -= dotKb * n.nx;
-              b.kbvy -= dotKb * n.ny;
-            }
-          }
 
-          // Collision with Blocks
-          for (let blk = state.blocks.length - 1; blk >= 0; blk--) {
-            const block = state.blocks[blk];
-            const closestX = clamp(b.x, block.x - block.size/2, block.x + block.size/2);
-            const closestY = clamp(b.y, block.y - block.size/2, block.y + block.size/2);
-            const dstX = b.x - closestX;
-            const dstY = b.y - closestY;
-            if (dstX * dstX + dstY * dstY < b.radius * b.radius) {
-                // Just bounce, block is unbreakable
-                if (Math.abs(b.x - closestX) >= Math.abs(b.y - closestY)) b.dx *= -1;
-                else b.dy *= -1;
+            b.x = finalX;
+            b.y = finalY;
+
+            b.kbvx = kbvx * Math.exp(-8 * dt);
+            b.kbvy = kbvy * Math.exp(-8 * dt);
+            if (Math.abs(b.kbvx) < 1) b.kbvx = 0;
+            if (Math.abs(b.kbvy) < 1) b.kbvy = 0;
+
+            if (isCollision || isClamped || boundaryCollided) {
+              state.forceBroadcast = true;
+            }
+
+            for (const n of winningNormals) {
+              const dot = b.dx * n.nx + b.dy * n.ny;
+              if (dot < 0) {
+                b.dx = b.dx - 2 * dot * n.nx;
+                b.dy = b.dy - 2 * dot * n.ny;
+              }
+              const dotKb = b.kbvx * n.nx + b.kbvy * n.ny;
+              if (dotKb < 0) {
+                b.kbvx -= dotKb * n.nx;
+                b.kbvy -= dotKb * n.ny;
+              }
+            }
+          } else {
+            // SINGLE-PLAYER EXACTLY
+            b.x += (b.dx * b.speed + kbvx) * dt;
+            b.y += (b.dy * b.speed + kbvy) * dt;
+
+            b.kbvx = kbvx * Math.exp(-8 * dt);
+            b.kbvy = kbvy * Math.exp(-8 * dt);
+            if (Math.abs(b.kbvx) < 1) b.kbvx = 0;
+            if (Math.abs(b.kbvy) < 1) b.kbvy = 0;
+
+            if (b.x < b.radius) { b.x = b.radius; b.dx *= -1; }
+            if (b.x > MAP_WIDTH - b.radius) { b.x = MAP_WIDTH - b.radius; b.dx *= -1; }
+            if (b.y < b.radius) { b.y = b.radius; b.dy *= -1; }
+            if (b.y > MAP_HEIGHT - b.radius) { b.y = MAP_HEIGHT - b.radius; b.dy *= -1; }
+
+            // Collision with Walls
+            const bResolved = resolveWallCollisions(b.x, b.y, b.radius, activeWalls, bBeforeX, bBeforeY);
+            b.x = bResolved.x;
+            b.y = bResolved.y;
+
+            for (const n of bResolved.normals) {
+              const dot = b.dx * n.nx + b.dy * n.ny;
+              if (dot < 0) {
+                b.dx = b.dx - 2 * dot * n.nx;
+                b.dy = b.dy - 2 * dot * n.ny;
+              }
+              const dotKb = b.kbvx * n.nx + b.kbvy * n.ny;
+              if (dotKb < 0) {
+                b.kbvx -= dotKb * n.nx;
+                b.kbvy -= dotKb * n.ny;
+              }
+            }
+
+            // Collision with Blocks
+            for (let blk = state.blocks.length - 1; blk >= 0; blk--) {
+              const block = state.blocks[blk];
+              const closestX = clamp(b.x, block.x - block.size/2, block.x + block.size/2);
+              const closestY = clamp(b.y, block.y - block.size/2, block.y + block.size/2);
+              const dstX = b.x - closestX;
+              const dstY = b.y - closestY;
+              if (dstX * dstX + dstY * dstY < b.radius * b.radius) {
+                  // Just bounce, block is unbreakable
+                  if (Math.abs(b.x - closestX) >= Math.abs(b.y - closestY)) b.dx *= -1;
+                  else b.dy *= -1;
+              }
             }
           }
 
