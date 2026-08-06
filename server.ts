@@ -157,40 +157,6 @@ async function startServer() {
       return `PLAYER ${num}`;
     };
 
-    const handlePlayerLeave = (roomId: string, socketId: string) => {
-      const roomIdUpper = roomId.trim().toUpperCase();
-      const room = rooms.get(roomIdUpper);
-      if (room) {
-        room.players = room.players.filter(p => p.id !== socketId);
-        if (room.players.length === 0) {
-          rooms.delete(roomIdUpper);
-        } else {
-          // If the host left or no host is present, assign the first player as the new host
-          let hostChanged = false;
-          let foundHost = false;
-          room.players.forEach(p => {
-            if (p.isHost) {
-              if (foundHost) {
-                p.isHost = false; // Never allow multiple hosts
-                hostChanged = true;
-              } else {
-                foundHost = true;
-              }
-            }
-          });
-          if (!foundHost && room.players.length > 0) {
-            room.players[0].isHost = true;
-            hostChanged = true;
-          }
-          if (hostChanged) {
-            room.lastHostStateTime = Date.now();
-          }
-          io.to(roomIdUpper).emit("lobby_players", room.players);
-          io.to(roomIdUpper).emit("player_left", socketId);
-        }
-      }
-    };
-
     socket.on("create_room", (arg1, arg2) => {
       const cb = typeof arg1 === "function" ? arg1 : arg2;
       const clientData = typeof arg1 === "object" && arg1 !== null ? arg1 : { name: "PLAYER" };
@@ -384,14 +350,11 @@ async function startServer() {
 
       socket.join(roomIdUpper);
 
-      const hasHost = room.players.some(p => p.isHost);
-      let hostGained = false;
-      if (!hasHost) {
+      const otherHost = room.players.find(p => p.id !== player.id && p.isHost);
+      if (otherHost) {
+        player.isHost = false;
+      } else {
         player.isHost = true;
-        hostGained = true;
-      }
-
-      if (hostGained) {
         room.lastHostStateTime = Date.now();
       }
 
