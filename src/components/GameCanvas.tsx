@@ -6187,12 +6187,15 @@ export default function GameCanvas() {
     });
 
     socket.on('player_reconnected', (data: any) => {
-      if (!data || typeof data !== 'object') return;
+      if (!data || typeof data !== 'object' || Array.isArray(data)) return;
       const { oldId, newId, roundId } = data;
       if (!isValidMpPlayerId(oldId) || !isValidMpPlayerId(newId) || oldId === newId) {
         return;
       }
-      if (roundId !== undefined && activeMultiplayerRoundIdRef.current > 0 && roundId !== activeMultiplayerRoundIdRef.current) {
+      if (typeof roundId !== 'number' || !Number.isFinite(roundId) || !Number.isInteger(roundId) || roundId < 0) {
+        return;
+      }
+      if (activeMultiplayerRoundIdRef.current > 0 && roundId !== activeMultiplayerRoundIdRef.current) {
         return;
       }
       remapPlayerId(oldId, newId);
@@ -6245,59 +6248,111 @@ export default function GameCanvas() {
     });
 
     socket.on('lobby_players', (playersList: any) => {
-      if (!Array.isArray(playersList) || playersList.length < 1 || playersList.length > 5) return;
+      const rejectRoster = () => {
+        setMpError('INVALID LOBBY ROSTER');
+        setMpState(prev => ({ ...prev, error: 'INVALID LOBBY ROSTER' }));
+      };
 
+      if (!Array.isArray(playersList) || playersList.length < 1 || playersList.length > 5) {
+        rejectRoster();
+        return;
+      }
+
+      if (!socket.id || !isValidMpPlayerId(socket.id)) {
+        rejectRoster();
+        return;
+      }
+
+      const currentSocketId = socket.id;
       const seenIds = new Set<string>();
-      const validatedEntries: Array<{ id: string; name: string; colorIdx: number; isHost: boolean }> = [];
-      let myItem: { name: string; colorIdx: number; isHost: boolean } | null = null;
+      const seenColors = new Set<number>();
+      let hostCount = 0;
+      let selfCount = 0;
+      let selfEntry: { id: string; name: string; colorIdx: number; isHost: boolean } | null = null;
+      const otherPlayers: Record<string, { name: string; colorIdx: number; isHost: boolean }> = {};
 
       for (const item of playersList) {
-        if (!item || typeof item !== 'object') return;
+        if (!item || typeof item !== 'object' || Array.isArray(item)) {
+          rejectRoster();
+          return;
+        }
         const { id, name, colorIdx, isHost } = item;
 
-        if (!isValidMpPlayerId(id)) return;
-        if (seenIds.has(id)) return;
+        if (!isValidMpPlayerId(id)) {
+          rejectRoster();
+          return;
+        }
+        if (seenIds.has(id)) {
+          rejectRoster();
+          return;
+        }
 
-        if (typeof name !== 'string') return;
+        if (typeof name !== 'string') {
+          rejectRoster();
+          return;
+        }
+        if (/[\x00-\x1F\x7F-\x9F]/.test(name)) {
+          rejectRoster();
+          return;
+        }
         const trimmedName = name.trim();
-        if (trimmedName.length < 1 || trimmedName.length > 12 || /[\x00-\x1F\x7F-\x9F]/.test(trimmedName)) return;
+        if (trimmedName.length < 1 || trimmedName.length > 12) {
+          rejectRoster();
+          return;
+        }
 
-        if (typeof colorIdx !== 'number' || !Number.isInteger(colorIdx) || colorIdx < 0 || colorIdx > 4) return;
-        if (typeof isHost !== 'boolean') return;
+        if (typeof colorIdx !== 'number' || !Number.isInteger(colorIdx) || colorIdx < 0 || colorIdx > 4) {
+          rejectRoster();
+          return;
+        }
+        if (seenColors.has(colorIdx)) {
+          rejectRoster();
+          return;
+        }
+
+        if (typeof isHost !== 'boolean') {
+          rejectRoster();
+          return;
+        }
 
         seenIds.add(id);
-        const entry = { id, name: trimmedName, colorIdx, isHost };
-        validatedEntries.push(entry);
+        seenColors.add(colorIdx);
 
-        if (socket.id && id === socket.id) {
-          myItem = entry;
+        if (isHost) {
+          hostCount++;
         }
-      }
 
-      if (validatedEntries.length < 1 || validatedEntries.length > 5) return;
+        const validatedEntry = { id, name: trimmedName, colorIdx, isHost };
 
-      if (myItem) {
-        setPlayerProfile({
-          name: myItem.name,
-          colorIdx: myItem.colorIdx
-        });
-        if (!isEditingCallsignRef.current) {
-          setCallsignDraft(myItem.name);
-        }
-        handleHostRoleTransition(myItem.isHost);
-      }
-
-      const otherPlayers: Record<string, { name: string; colorIdx: number; isHost: boolean }> = {};
-      for (const p of validatedEntries) {
-        if (!socket.id || p.id !== socket.id) {
-          otherPlayers[p.id] = {
-            name: p.name,
-            colorIdx: p.colorIdx,
-            isHost: p.isHost
+        if (id === currentSocketId) {
+          selfCount++;
+          selfEntry = validatedEntry;
+        } else {
+          otherPlayers[id] = {
+            name: trimmedName,
+            colorIdx,
+            isHost
           };
         }
       }
+
+      if (hostCount !== 1 || selfCount !== 1 || !selfEntry) {
+        rejectRoster();
+        return;
+      }
+
+      setPlayerProfile({
+        name: selfEntry.name,
+        colorIdx: selfEntry.colorIdx
+      });
+      if (!isEditingCallsignRef.current) {
+        setCallsignDraft(selfEntry.name);
+      }
+      handleHostRoleTransition(selfEntry.isHost);
       setLobbyPlayers(otherPlayers);
+
+      setMpError(prev => (prev === 'INVALID LOBBY ROSTER' ? null : prev));
+      setMpState(prev => (prev.error === 'INVALID LOBBY ROSTER' ? { ...prev, error: null } : prev));
     });
 
     socket.on('match_settings', (settings) => {
