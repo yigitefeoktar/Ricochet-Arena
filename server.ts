@@ -137,8 +137,16 @@ async function startServer() {
       deleteRoom(roomIdUpper);
     } else {
       normalizeHostOwnership(room);
-      io.to(roomIdUpper).emit("lobby_players", serializePublicRoster(room.players));
-      io.to(roomIdUpper).emit("player_left", playerId);
+      io.to(roomIdUpper).emit("lobby_players", {
+        roomId: roomIdUpper,
+        roundId: room.roundId,
+        players: serializePublicRoster(room.players)
+      });
+      io.to(roomIdUpper).emit("player_left", {
+        roomId: roomIdUpper,
+        roundId: room.roundId,
+        playerId
+      });
     }
   }
 
@@ -269,7 +277,11 @@ async function startServer() {
         roundId: 0,
       });
 
-      io.to(roomId).emit("lobby_players", serializePublicRoster([hostPlayer]));
+      io.to(roomId).emit("lobby_players", {
+        roomId,
+        roundId: 0,
+        players: serializePublicRoster([hostPlayer])
+      });
       if (cb) cb({
         success: true,
         roomId,
@@ -301,7 +313,11 @@ async function startServer() {
       if (existingPlayer) {
         leaveOtherRooms(socket, roomIdUpper);
         socket.join(roomIdUpper);
-        io.to(roomIdUpper).emit("lobby_players", serializePublicRoster(room.players));
+        io.to(roomIdUpper).emit("lobby_players", {
+          roomId: roomIdUpper,
+          roundId: room.roundId,
+          players: serializePublicRoster(room.players)
+        });
         if (cb) cb({
           success: true,
           roomId: roomIdUpper,
@@ -356,8 +372,16 @@ async function startServer() {
 
       room.players.push(newPlayer);
 
-      socket.to(roomIdUpper).emit("player_joined", socket.id);
-      io.to(roomIdUpper).emit("lobby_players", serializePublicRoster(room.players));
+      socket.to(roomIdUpper).emit("player_joined", {
+        roomId: roomIdUpper,
+        roundId: room.roundId,
+        playerId: socket.id
+      });
+      io.to(roomIdUpper).emit("lobby_players", {
+        roomId: roomIdUpper,
+        roundId: room.roundId,
+        players: serializePublicRoster(room.players)
+      });
 
       if (cb) cb({
         success: true,
@@ -460,12 +484,17 @@ async function startServer() {
       }
 
       io.to(roomIdUpper).emit("player_reconnected", {
+        roomId: roomIdUpper,
         oldId,
         newId,
         roundId: room.roundId
       });
 
-      io.to(roomIdUpper).emit("lobby_players", serializePublicRoster(room.players));
+      io.to(roomIdUpper).emit("lobby_players", {
+        roomId: roomIdUpper,
+        roundId: room.roundId,
+        players: serializePublicRoster(room.players)
+      });
 
       cb({
         success: true,
@@ -544,7 +573,11 @@ async function startServer() {
 
       room.matchSettings = sanitizedSettings;
 
-      io.to(roomIdUpper).emit("match_settings", sanitizedSettings);
+      io.to(roomIdUpper).emit("match_settings", {
+        roomId: roomIdUpper,
+        roundId: room.roundId,
+        matchSettings: sanitizedSettings
+      });
 
       if (cb) cb({ success: true, matchSettings: sanitizedSettings });
     });
@@ -569,7 +602,11 @@ async function startServer() {
               player.colorIdx = validColor;
             }
           }
-          io.to(roomIdUpper).emit("lobby_players", serializePublicRoster(room.players));
+          io.to(roomIdUpper).emit("lobby_players", {
+            roomId: roomIdUpper,
+            roundId: room.roundId,
+            players: serializePublicRoster(room.players)
+          });
         }
       }
     });
@@ -618,8 +655,9 @@ async function startServer() {
                   player.disconnectTimer = disconnectTimer;
 
                   io.to(roomIdUpper).emit("player_disconnected", {
-                    playerId: socketIdToDisconnect,
+                    roomId: roomIdUpper,
                     roundId: roundIdAtDisconnect,
+                    playerId: socketIdToDisconnect,
                     graceMs: DISCONNECT_GRACE_MS
                   });
                 }
@@ -645,7 +683,11 @@ async function startServer() {
       // Update server state timing tracker
       room.lastHostStateTime = Date.now();
       
-      socket.to(roomIdUpper).volatile.emit("game_state", state);
+      socket.to(roomIdUpper).volatile.emit("game_state", {
+        ...state,
+        roomId: roomIdUpper,
+        roundId: room.roundId
+      });
     });
 
     // Client sends input states (keyboard/mouse) for movement
@@ -670,7 +712,8 @@ async function startServer() {
       if (typeof input.x !== "number" || !Number.isFinite(input.x)) return;
       if (typeof input.y !== "number" || !Number.isFinite(input.y)) return;
 
-      const sanitizedInput: { x: number; y: number; roundId: number } = {
+      const sanitizedInput: { roomId: string; x: number; y: number; roundId: number } = {
+        roomId: roomIdUpper,
         x: input.x,
         y: input.y,
         roundId: input.roundId,
@@ -714,7 +757,11 @@ async function startServer() {
         // Reset last state time to now so consecutive simultaneous claims are safely throttled/resolved
         room.lastHostStateTime = now;
 
-        io.to(roomIdUpper).emit("lobby_players", serializePublicRoster(room.players));
+        io.to(roomIdUpper).emit("lobby_players", {
+          roomId: roomIdUpper,
+          roundId: room.roundId,
+          players: serializePublicRoster(room.players)
+        });
       }
     });
 
@@ -735,6 +782,7 @@ async function startServer() {
       const emitServerShootRejection = (reason: string) => {
         if (clientShotIdValid) {
           socket.emit("client_action_result", {
+            roomId: roomIdUpper,
             roundId: room.roundId,
             actionType: "shoot",
             clientShotId: action.clientShotId,
@@ -777,7 +825,7 @@ async function startServer() {
       }
 
       if (host.id !== socket.id) {
-        io.to(host.id).emit("client_action", socket.id, action);
+        io.to(host.id).emit("client_action", socket.id, { ...action, roomId: roomIdUpper });
       }
     });
 
@@ -807,6 +855,7 @@ async function startServer() {
       }
 
       const sanitizedResult: {
+        roomId: string;
         roundId: number;
         actionType: string;
         clientShotId?: string;
@@ -814,6 +863,7 @@ async function startServer() {
         reason?: string;
         authoritativeBulletId?: string;
       } = {
+        roomId: roomIdUpper,
         roundId: result.roundId,
         actionType: result.actionType,
         status: result.status,
@@ -880,7 +930,11 @@ async function startServer() {
         roomPlayerIds.every(id => id in spawnAssignments);
 
       if (!hasExactPlayers) {
-        io.to(roomIdUpper).emit("lobby_players", serializePublicRoster(room.players));
+        io.to(roomIdUpper).emit("lobby_players", {
+          roomId: roomIdUpper,
+          roundId: room.roundId,
+          players: serializePublicRoster(room.players)
+        });
         if (cb) cb({ success: false, error: "ROSTER_MISMATCH" });
         return;
       }

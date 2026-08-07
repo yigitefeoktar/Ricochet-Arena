@@ -26,6 +26,91 @@ const isValidMpPlayerId = (id: unknown): id is string => {
   return true;
 };
 
+export interface ValidatedRosterEntry {
+  id: string;
+  name: string;
+  colorIdx: number;
+  isHost: boolean;
+}
+
+export interface ValidatedRosterResult {
+  selfEntry: ValidatedRosterEntry;
+  otherPlayers: Record<string, { name: string; colorIdx: number; isHost: boolean }>;
+  playerIds: Set<string>;
+}
+
+export const validateRoster = (playersList: unknown, currentSocketId: string): ValidatedRosterResult | null => {
+  if (!Array.isArray(playersList) || playersList.length < 1 || playersList.length > 5) {
+    return null;
+  }
+  if (!currentSocketId || !isValidMpPlayerId(currentSocketId)) {
+    return null;
+  }
+
+  const seenIds = new Set<string>();
+  const seenColors = new Set<number>();
+  let hostCount = 0;
+  let selfCount = 0;
+  let selfEntry: ValidatedRosterEntry | null = null;
+  const otherPlayers: Record<string, { name: string; colorIdx: number; isHost: boolean }> = {};
+
+  for (const item of playersList) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      return null;
+    }
+    const { id, name, colorIdx, isHost } = item as any;
+
+    if (!isValidMpPlayerId(id) || seenIds.has(id)) {
+      return null;
+    }
+
+    if (typeof name !== 'string' || /[\x00-\x1F\x7F-\x9F]/.test(name)) {
+      return null;
+    }
+    const trimmedName = name.trim();
+    if (trimmedName.length < 1 || trimmedName.length > 12) {
+      return null;
+    }
+
+    if (typeof colorIdx !== 'number' || !Number.isInteger(colorIdx) || colorIdx < 0 || colorIdx > 4) {
+      return null;
+    }
+    if (seenColors.has(colorIdx)) {
+      return null;
+    }
+
+    if (typeof isHost !== 'boolean') {
+      return null;
+    }
+
+    seenIds.add(id);
+    seenColors.add(colorIdx);
+
+    if (isHost) {
+      hostCount++;
+    }
+
+    const validatedEntry = { id, name: trimmedName, colorIdx, isHost };
+
+    if (id === currentSocketId) {
+      selfCount++;
+      selfEntry = validatedEntry;
+    } else {
+      otherPlayers[id] = {
+        name: trimmedName,
+        colorIdx,
+        isHost
+      };
+    }
+  }
+
+  if (hostCount !== 1 || selfCount !== 1 || !selfEntry) {
+    return null;
+  }
+
+  return { selfEntry, otherPlayers, playerIds: seenIds };
+};
+
 const MAP_WIDTH = 3000;
 const MAP_HEIGHT = 3000;
 const PLAYER_SPEED = 200; // px per second
@@ -2668,21 +2753,6 @@ export default function GameCanvas() {
     pendingBuildRequestRef.current = null;
   }, []);
 
-  const emitLeaveRoom = useCallback(() => {
-    invalidateStartRequestGeneration();
-    activeMultiplayerRoundIdRef.current = 0;
-    const currentRoomId = mpRef.current.roomId;
-    roomRequestGenerationRef.current++;
-    roomRequestInFlightRef.current = false;
-    setPendingRoomRequest(null);
-    clearResumeSession();
-    mpRef.current.roomId = null;
-    mpRef.current.isHost = false;
-    if (currentRoomId) {
-      socketRef.current?.emit('leave_room', currentRoomId);
-    }
-  }, [clearResumeSession, invalidateStartRequestGeneration]);
-
   const lastReceivedGameStateTimeRef = useRef<number>(0);
   const triggerEliminationRef = useRef<((x: number, y: number, colorIdx: number, label?: string) => void) | null>(null);
   const eliminateRemotePlayerRef = useRef<((victimId: string, impactPos: { x: number, y: number }, currentTime: number) => void) | null>(null);
@@ -3378,6 +3448,35 @@ export default function GameCanvas() {
 
     state.touches.tap = { active: false, x: 0, y: 0 };
   }, []);
+
+  const emitLeaveRoom = useCallback(() => {
+    invalidateStartRequestGeneration();
+    activeMultiplayerRoundIdRef.current = 0;
+    const currentRoomId = mpRef.current.roomId;
+    roomRequestGenerationRef.current++;
+    roomRequestInFlightRef.current = false;
+    setPendingRoomRequest(null);
+    clearResumeSession();
+    clearPendingGuestShots(true);
+    clearPendingAbilityRequests();
+    cancelPendingMatchSettingsUpdate();
+    closeMpMapSelector();
+    releaseAllInputs();
+    lobbyPlayersRef.current = {};
+    setLobbyPlayers({});
+    mpRef.current.roomId = null;
+    mpRef.current.isHost = false;
+    setMpError(null);
+    setMpState(prev => ({
+      ...prev,
+      roomId: null,
+      isHost: false,
+      error: null
+    }));
+    if (currentRoomId) {
+      socketRef.current?.emit('leave_room', currentRoomId);
+    }
+  }, [clearResumeSession, clearPendingGuestShots, clearPendingAbilityRequests, cancelPendingMatchSettingsUpdate, closeMpMapSelector, releaseAllInputs, invalidateStartRequestGeneration]);
 
   useEffect(() => {
     const isDisconnected = mpState.roomId && !mpState.isConnected;
@@ -6135,6 +6234,13 @@ export default function GameCanvas() {
     const socket = io();
     socketRef.current = socket;
 
+    const isCurrentRoom = (roomId: unknown): boolean => {
+      const currentRoom = mpRef.current.roomId;
+      if (!currentRoom) return false;
+      if (typeof roomId !== 'string') return false;
+      return roomId.trim().toUpperCase() === currentRoom.trim().toUpperCase();
+    };
+
     const spawnParticlesDirect = (x: number, y: number, color: string, count: number) => {
       for (let i = 0; i < count; i++) {
         const angle = Math.random() * Math.PI * 2;
@@ -6297,7 +6403,8 @@ export default function GameCanvas() {
 
     socket.on('player_reconnected', (data: any) => {
       if (!data || typeof data !== 'object' || Array.isArray(data)) return;
-      const { oldId, newId, roundId } = data;
+      const { roomId, oldId, newId, roundId } = data;
+      if (!isCurrentRoom(roomId)) return;
       if (!isValidMpPlayerId(oldId) || !isValidMpPlayerId(newId) || oldId === newId) {
         return;
       }
@@ -6310,12 +6417,15 @@ export default function GameCanvas() {
       remapPlayerId(oldId, newId);
     });
 
-    socket.on('player_joined', (id: any) => {
-      if (!isValidMpPlayerId(id)) return;
-      if (socket.id && id === socket.id) return;
+    socket.on('player_joined', (data: any) => {
+      if (!data || typeof data !== 'object' || Array.isArray(data)) return;
+      const { roomId, playerId } = data;
+      if (!isCurrentRoom(roomId)) return;
+      if (!isValidMpPlayerId(playerId)) return;
+      if (socket.id && playerId === socket.id) return;
 
-      if (!stateRef.current.multiplayerPlayers[id]) {
-        stateRef.current.multiplayerPlayers[id] = {
+      if (!stateRef.current.multiplayerPlayers[playerId]) {
+        stateRef.current.multiplayerPlayers[playerId] = {
           x: stateRef.current.player.x,
           y: stateRef.current.player.y,
           radius: PLAYER_RADIUS,
@@ -6324,131 +6434,81 @@ export default function GameCanvas() {
       }
 
       setLobbyPlayers(prev => {
-        if (prev[id]) return prev;
+        if (prev[playerId]) return prev;
         return {
           ...prev,
-          [id]: { name: 'CONNECTING...', colorIdx: 0, isHost: false }
+          [playerId]: { name: 'CONNECTING...', colorIdx: 0, isHost: false }
         };
       });
     });
 
-    socket.on('player_left', (id: any) => {
-      if (!isValidMpPlayerId(id)) return;
-      if (socket.id && id === socket.id) return;
+    socket.on('player_left', (data: any) => {
+      if (!data || typeof data !== 'object' || Array.isArray(data)) return;
+      const { roomId, playerId } = data;
+      if (!isCurrentRoom(roomId)) return;
+      if (!isValidMpPlayerId(playerId)) return;
+      if (socket.id && playerId === socket.id) return;
 
       if (mpRef.current.isHost) {
         const state = stateRef.current;
-        if (state.matchPlayers[id]) {
-          state.matchPlayers[id].isDead = true;
-          state.matchPlayers[id].isDisconnected = true;
+        if (state.matchPlayers[playerId]) {
+          state.matchPlayers[playerId].isDead = true;
+          state.matchPlayers[playerId].isDisconnected = true;
         }
-        if (state.multiplayerPlayers[id]) {
-          state.multiplayerPlayers[id].isDead = true;
+        if (state.multiplayerPlayers[playerId]) {
+          state.multiplayerPlayers[playerId].isDead = true;
         }
         evaluateMatchState(performance.now());
       }
-      delete stateRef.current.multiplayerPlayers[id];
+      delete stateRef.current.multiplayerPlayers[playerId];
       setLobbyPlayers(prev => {
-        if (!prev[id]) return prev;
+        if (!prev[playerId]) return prev;
         const next = { ...prev };
-        delete next[id];
+        delete next[playerId];
         return next;
       });
     });
 
-    socket.on('lobby_players', (playersList: any) => {
+    socket.on('player_disconnected', (data: any) => {
+      if (!data || typeof data !== 'object' || Array.isArray(data)) return;
+      const { roomId } = data;
+      if (!isCurrentRoom(roomId)) return;
+    });
+
+    socket.on('lobby_players', (payload: any) => {
       const rejectRoster = () => {
         setMpError('INVALID LOBBY ROSTER');
         setMpState(prev => ({ ...prev, error: 'INVALID LOBBY ROSTER' }));
+        lobbyPlayersRef.current = {};
+        setLobbyPlayers({});
       };
 
-      if (!Array.isArray(playersList) || playersList.length < 1 || playersList.length > 5) {
+      if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
         rejectRoster();
         return;
       }
 
-      if (!socket.id || !isValidMpPlayerId(socket.id)) {
+      const { roomId, roundId, players } = payload;
+      if (!isCurrentRoom(roomId)) return;
+
+      if (typeof roundId !== 'number' || !Number.isInteger(roundId) || roundId < 0) {
         rejectRoster();
         return;
       }
 
       const currentSocketId = socket.id;
-      const seenIds = new Set<string>();
-      const seenColors = new Set<number>();
-      let hostCount = 0;
-      let selfCount = 0;
-      let selfEntry: { id: string; name: string; colorIdx: number; isHost: boolean } | null = null;
-      const otherPlayers: Record<string, { name: string; colorIdx: number; isHost: boolean }> = {};
-
-      for (const item of playersList) {
-        if (!item || typeof item !== 'object' || Array.isArray(item)) {
-          rejectRoster();
-          return;
-        }
-        const { id, name, colorIdx, isHost } = item;
-
-        if (!isValidMpPlayerId(id)) {
-          rejectRoster();
-          return;
-        }
-        if (seenIds.has(id)) {
-          rejectRoster();
-          return;
-        }
-
-        if (typeof name !== 'string') {
-          rejectRoster();
-          return;
-        }
-        if (/[\x00-\x1F\x7F-\x9F]/.test(name)) {
-          rejectRoster();
-          return;
-        }
-        const trimmedName = name.trim();
-        if (trimmedName.length < 1 || trimmedName.length > 12) {
-          rejectRoster();
-          return;
-        }
-
-        if (typeof colorIdx !== 'number' || !Number.isInteger(colorIdx) || colorIdx < 0 || colorIdx > 4) {
-          rejectRoster();
-          return;
-        }
-        if (seenColors.has(colorIdx)) {
-          rejectRoster();
-          return;
-        }
-
-        if (typeof isHost !== 'boolean') {
-          rejectRoster();
-          return;
-        }
-
-        seenIds.add(id);
-        seenColors.add(colorIdx);
-
-        if (isHost) {
-          hostCount++;
-        }
-
-        const validatedEntry = { id, name: trimmedName, colorIdx, isHost };
-
-        if (id === currentSocketId) {
-          selfCount++;
-          selfEntry = validatedEntry;
-        } else {
-          otherPlayers[id] = {
-            name: trimmedName,
-            colorIdx,
-            isHost
-          };
-        }
-      }
-
-      if (hostCount !== 1 || selfCount !== 1 || !selfEntry) {
+      if (!currentSocketId) {
         rejectRoster();
         return;
       }
+
+      const rosterResult = validateRoster(players, currentSocketId);
+      if (!rosterResult) {
+        rejectRoster();
+        return;
+      }
+
+      const { selfEntry, otherPlayers } = rosterResult;
 
       setPlayerProfile({
         name: selfEntry.name,
@@ -6465,15 +6525,17 @@ export default function GameCanvas() {
       setMpState(prev => (prev.error === 'INVALID LOBBY ROSTER' ? { ...prev, error: null } : prev));
     });
 
-    socket.on('match_settings', (settings) => {
-      applyAuthoritativeMatchSettings(settings);
+    socket.on('match_settings', (data: any) => {
+      if (!data || typeof data !== 'object' || Array.isArray(data)) return;
+      const { roomId, matchSettings } = data;
+      if (!isCurrentRoom(roomId)) return;
+      applyAuthoritativeMatchSettings(matchSettings);
     });
 
-    socket.on('start_game', (config) => {
+    socket.on('start_game', (config: any) => {
       const currentSocketId = socketRef.current?.id;
-      const currentRoomId = mpRef.current.roomId ? mpRef.current.roomId.trim().toUpperCase() : null;
 
-      if (!mpRef.current.isConnected || !currentRoomId || !currentSocketId) {
+      if (!mpRef.current.isConnected || !currentSocketId) {
         return;
       }
 
@@ -6485,12 +6547,11 @@ export default function GameCanvas() {
         return;
       }
 
-      const payloadRoomId = typeof config.roomId === 'string' ? config.roomId.trim().toUpperCase() : null;
-      if (!payloadRoomId || payloadRoomId !== currentRoomId) {
+      const { roomId, roundId, mapId, gameMode, hardMode, spawnAssignments } = config;
+      if (!isCurrentRoom(roomId)) {
         return;
       }
 
-      const roundId = config.roundId;
       if (typeof roundId !== 'number' || !Number.isInteger(roundId) || roundId <= 0) {
         return;
       }
@@ -6499,24 +6560,22 @@ export default function GameCanvas() {
         return;
       }
 
-      const mapId = config.mapId;
       if (!mapId || !isValidMapId(mapId)) {
         setMpError("INVALID START ASSIGNMENT");
         return;
       }
 
-      const gameMode: GameMode = config.gameMode;
-      if (!gameMode || !isValidGameMode(gameMode)) {
+      const gameModeTyped: GameMode = gameMode;
+      if (!gameModeTyped || !isValidGameMode(gameModeTyped)) {
         setMpError("INVALID START ASSIGNMENT");
         return;
       }
 
-      if (typeof config.hardMode !== 'boolean' || config.hardMode !== (gameMode !== 'normal')) {
+      if (typeof hardMode !== 'boolean' || hardMode !== (gameModeTyped !== 'normal')) {
         setMpError("INVALID START ASSIGNMENT");
         return;
       }
 
-      const spawnAssignments = config.spawnAssignments;
       if (!spawnAssignments || typeof spawnAssignments !== 'object' || Array.isArray(spawnAssignments)) {
         setMpError("INVALID START ASSIGNMENT");
         return;
@@ -6558,7 +6617,7 @@ export default function GameCanvas() {
         return;
       }
 
-      const ok = resetGame(isMobileRef.current ? 'mobile' : 'desktop', mapId, gameMode, spawnAssignments);
+      const ok = resetGame(isMobileRef.current ? 'mobile' : 'desktop', mapId, gameModeTyped, spawnAssignments);
       if (ok) {
         clearPendingGuestShots();
         clearPendingAbilityRequests();
@@ -6569,8 +6628,8 @@ export default function GameCanvas() {
           ...prev,
           status: 'PLAYING',
           mapId,
-          hardMode: config.hardMode,
-          gameMode
+          hardMode,
+          gameMode: gameModeTyped
         }));
       } else {
         setMpError("INVALID START ASSIGNMENT");
@@ -6580,6 +6639,7 @@ export default function GameCanvas() {
     socket.on('client_action_result', (result: any) => {
       if (mpRef.current.isHost) return;
       if (!result || typeof result !== 'object') return;
+      if (!isCurrentRoom(result.roomId)) return;
 
       const activeRoundId = activeMultiplayerRoundIdRef.current;
       if (typeof activeRoundId !== 'number' || activeRoundId <= 0 || !Number.isInteger(activeRoundId)) return;
@@ -6608,10 +6668,12 @@ export default function GameCanvas() {
       }
     });
 
-    socket.on('game_state', (state) => {
+    socket.on('game_state', (state: any) => {
+      if (!state || typeof state !== 'object') return;
+      if (!isCurrentRoom(state.roomId)) return;
       lastReceivedGameStateTimeRef.current = performance.now();
       if (!mpRef.current.isHost) {
-        if (!state || typeof state.roundId !== 'number' || state.roundId !== activeMultiplayerRoundIdRef.current) {
+        if (typeof state.roundId !== 'number' || state.roundId !== activeMultiplayerRoundIdRef.current) {
           return;
         }
 
@@ -7041,6 +7103,9 @@ export default function GameCanvas() {
     socket.on('client_input', (clientId, input) => {
       // A. Authority checks
       if (!mpRef.current.isHost) return;
+      if (input && typeof input === 'object' && input.roomId) {
+        if (!isCurrentRoom(input.roomId)) return;
+      }
       if (!input || typeof input.roundId !== 'number' || input.roundId !== activeMultiplayerRoundIdRef.current) return;
 
       const matchPlayer = stateRef.current.matchPlayers[clientId];
@@ -7247,6 +7312,9 @@ export default function GameCanvas() {
 
     socket.on('client_action', (clientId, action) => {
        if (mpRef.current.isHost) {
+          if (action && typeof action === 'object' && action.roomId) {
+            if (!isCurrentRoom(action.roomId)) return;
+          }
           if (!action || typeof action.roundId !== 'number' || action.roundId !== activeMultiplayerRoundIdRef.current) return;
           // Confirm clientId exists in matchPlayers and multiplayerPlayers
           const matchPlayer = stateRef.current.matchPlayers[clientId];
