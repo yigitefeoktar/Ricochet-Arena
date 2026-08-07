@@ -18,6 +18,14 @@ interface ActiveMatchSettingsRequest {
   isResolved: boolean;
 }
 
+export interface HostClockAnchor {
+  roomId: string;
+  roundId: number;
+  hostId: string;
+  hostTimeAtAnchor: number;
+  localTimeAtAnchor: number;
+}
+
 const isValidMpPlayerId = (id: unknown): id is string => {
   if (typeof id !== 'string') return false;
   if (id.length < 1 || id.length > 128) return false;
@@ -2755,6 +2763,12 @@ export default function GameCanvas() {
   }, []);
 
   const lastReceivedGameStateTimeRef = useRef<number>(0);
+
+  const hostClockAnchorRef = useRef<HostClockAnchor | null>(null);
+
+  const resetHostClockAnchor = useCallback(() => {
+    hostClockAnchorRef.current = null;
+  }, []);
   const triggerEliminationRef = useRef<((x: number, y: number, colorIdx: number, label?: string) => void) | null>(null);
   const eliminateRemotePlayerRef = useRef<((victimId: string, impactPos: { x: number, y: number }, currentTime: number) => void) | null>(null);
   const bannerShowingRef = useRef(false);
@@ -3321,6 +3335,7 @@ export default function GameCanvas() {
             clearPendingAbilityRequests();
             currentRoomRoundIdRef.current = roundId;
             activeMultiplayerRoundIdRef.current = roundId;
+            resetHostClockAnchor();
             setMpError(null);
             setUiState(prev => ({
               ...prev,
@@ -3456,6 +3471,7 @@ export default function GameCanvas() {
     invalidateStartRequestGeneration();
     currentRoomRoundIdRef.current = 0;
     activeMultiplayerRoundIdRef.current = 0;
+    resetHostClockAnchor();
     const currentRoomId = mpRef.current.roomId;
     roomRequestGenerationRef.current++;
     roomRequestInFlightRef.current = false;
@@ -3480,7 +3496,7 @@ export default function GameCanvas() {
     if (currentRoomId) {
       socketRef.current?.emit('leave_room', currentRoomId);
     }
-  }, [clearResumeSession, clearPendingGuestShots, clearPendingAbilityRequests, cancelPendingMatchSettingsUpdate, closeMpMapSelector, releaseAllInputs, invalidateStartRequestGeneration]);
+  }, [clearResumeSession, clearPendingGuestShots, clearPendingAbilityRequests, cancelPendingMatchSettingsUpdate, closeMpMapSelector, releaseAllInputs, invalidateStartRequestGeneration, resetHostClockAnchor]);
 
   useEffect(() => {
     const isDisconnected = mpState.roomId && !mpState.isConnected;
@@ -4959,6 +4975,7 @@ export default function GameCanvas() {
               socket.emit('leave_room', prevRoom);
             }
 
+            resetHostClockAnchor();
             clearPendingGuestShots(true);
             clearPendingAbilityRequests();
             releaseAllInputs();
@@ -5031,6 +5048,7 @@ export default function GameCanvas() {
           releaseAllInputs();
           cancelPendingMatchSettingsUpdate();
           closeMpMapSelector();
+          resetHostClockAnchor();
 
           currentRoomRoundIdRef.current = 0;
           activeMultiplayerRoundIdRef.current = 0;
@@ -6202,6 +6220,9 @@ export default function GameCanvas() {
 
   const handleHostRoleTransition = useCallback((newIsHost: boolean) => {
     const oldIsHost = mpRef.current.isHost;
+    if (oldIsHost !== newIsHost) {
+      resetHostClockAnchor();
+    }
     mpRef.current.isHost = newIsHost;
     setMpState(prev => ({ ...prev, isHost: newIsHost }));
 
@@ -6272,7 +6293,7 @@ export default function GameCanvas() {
       stateRef.current.lastBroadcastTime = 0;
       awaitingResumeSnapshotRef.current = true;
     }
-  }, [clearPendingGuestShots, clearPendingAbilityRequests, releaseAllInputs, getMultiplayerWorldPhaseTime]);
+  }, [clearPendingGuestShots, clearPendingAbilityRequests, releaseAllInputs, getMultiplayerWorldPhaseTime, resetHostClockAnchor]);
 
   const handleHostRoleTransitionRef = useRef(handleHostRoleTransition);
   handleHostRoleTransitionRef.current = handleHostRoleTransition;
@@ -6410,6 +6431,10 @@ export default function GameCanvas() {
 
             handleHostRoleTransition(res.isHost);
 
+            if (res.isHost === false) {
+              resetHostClockAnchor();
+            }
+
             if (res.matchActive === true && res.isHost === false) {
               awaitingResumeSnapshotRef.current = true;
             }
@@ -6430,6 +6455,7 @@ export default function GameCanvas() {
             clearPendingGuestShots(true);
             clearPendingAbilityRequests();
             releaseAllInputs();
+            resetHostClockAnchor();
             currentRoomRoundIdRef.current = 0;
             activeMultiplayerRoundIdRef.current = 0;
             lobbyPlayersRef.current = {};
@@ -6683,6 +6709,7 @@ export default function GameCanvas() {
       if (ok) {
         currentRoomRoundIdRef.current = roundId;
         activeMultiplayerRoundIdRef.current = roundId;
+        resetHostClockAnchor();
         clearPendingGuestShots();
         clearPendingAbilityRequests();
         lastReceivedGameStateTimeRef.current = performance.now();
@@ -6732,26 +6759,222 @@ export default function GameCanvas() {
     });
 
     socket.on('game_state', (state: any) => {
+      if (mpRef.current.isHost) return;
       if (!state || typeof state !== 'object') return;
+
+      // 1. Validation Requirements (Requirement 3):
       if (!isCurrentRoom(state.roomId)) return;
-      lastReceivedGameStateTimeRef.current = performance.now();
-      if (!mpRef.current.isHost) {
-        if (typeof state.roundId !== 'number' || state.roundId !== activeMultiplayerRoundIdRef.current) {
-          return;
+
+      const activeRoundId = activeMultiplayerRoundIdRef.current;
+      if (typeof state.roundId !== 'number' || !Number.isInteger(state.roundId) || state.roundId <= 0 || state.roundId !== activeRoundId) {
+        return;
+      }
+
+      if (!isValidMpPlayerId(state.hostId)) return;
+
+      const myId = socket.id || socketRef.current?.id;
+      if (!myId || state.hostId === myId) return;
+
+      if (typeof state.hostTime !== 'number' || !Number.isFinite(state.hostTime) || state.hostTime < 0) {
+        return;
+      }
+
+      // 2. Clock Anchor setup (Requirements 4 & 5):
+      const normRoomId = state.roomId.trim().toUpperCase();
+      const currentAnchor = hostClockAnchorRef.current;
+      const needsNewAnchor = !currentAnchor ||
+        currentAnchor.roomId !== normRoomId ||
+        currentAnchor.roundId !== state.roundId ||
+        currentAnchor.hostId !== state.hostId;
+
+      if (needsNewAnchor) {
+        hostClockAnchorRef.current = {
+          roomId: normRoomId,
+          roundId: state.roundId,
+          hostId: state.hostId,
+          hostTimeAtAnchor: state.hostTime,
+          localTimeAtAnchor: performance.now()
+        };
+      }
+
+      // 3. Mapping Helper and Precomputation (Requirements 6, 9, 10, 11, 12, 13, 14):
+      const mapHostTime = (hostTimestamp: unknown): number => {
+        if (typeof hostTimestamp !== 'number' || !Number.isFinite(hostTimestamp)) {
+          throw new Error('Malformed or non-finite host timestamp');
+        }
+        const anchor = hostClockAnchorRef.current;
+        if (!anchor) {
+          throw new Error('No clock anchor established');
+        }
+        return anchor.localTimeAtAnchor + (hostTimestamp - anchor.hostTimeAtAnchor);
+      };
+
+      const mapPlayerSnapshot = (p: any) => {
+        if (!p || typeof p !== 'object') {
+          throw new Error('Malformed player snapshot');
+        }
+        const cloned = { ...p };
+        if (cloned.lastShoot !== undefined && cloned.lastShoot !== null) {
+          cloned.lastShoot = mapHostTime(cloned.lastShoot);
+        }
+        if (cloned.processedZoneKbs !== undefined && Array.isArray(cloned.processedZoneKbs)) {
+          cloned.processedZoneKbs = cloned.processedZoneKbs.map((t: any) => mapHostTime(t));
+        }
+        if (cloned.recentBlocks !== undefined && Array.isArray(cloned.recentBlocks)) {
+          cloned.recentBlocks = cloned.recentBlocks.map((rb: any) => {
+            if (!rb || typeof rb !== 'object') {
+              throw new Error('Malformed recent block');
+            }
+            return {
+              ...rb,
+              timestamp: mapHostTime(rb.timestamp)
+            };
+          });
+        }
+        if (cloned.dash !== undefined && cloned.dash !== null && typeof cloned.dash === 'object') {
+          cloned.dash = {
+            ...cloned.dash,
+            endTime: mapHostTime(cloned.dash.endTime),
+            lastTime: mapHostTime(cloned.dash.lastTime)
+          };
+        }
+        if (cloned.build !== undefined && cloned.build !== null && typeof cloned.build === 'object') {
+          cloned.build = {
+            ...cloned.build,
+            endTime: mapHostTime(cloned.build.endTime),
+            lastTime: mapHostTime(cloned.build.lastTime)
+          };
+        }
+        return cloned;
+      };
+
+      let mappedBlocks: any[];
+      let mappedEnemies: any[];
+      let mappedBouncers: any[];
+      let mappedZones: any[];
+      let mappedHostPlayer: any;
+      let mappedMultiplayerPlayers: Record<string, any>;
+      let mappedIncomingBullets: any[];
+      let mappedPlayerActionAuthority: any = undefined;
+      let mappedFinalRunDeadline: number | null = null;
+      let mappedOpeningProtectionDeadline: number | null = null;
+
+      try {
+        mappedBlocks = (state.blocks || []).map((block: any) => {
+          if (!block || typeof block !== 'object') {
+            throw new Error('Malformed block');
+          }
+          return {
+            ...block,
+            createdAt: mapHostTime(block.createdAt)
+          };
+        });
+
+        mappedEnemies = (state.enemies || []).map((enemy: any) => {
+          if (!enemy || typeof enemy !== 'object') {
+            throw new Error('Malformed enemy');
+          }
+          const lastShoot = mapHostTime(enemy.lastShoot);
+          const processedZoneKbs = Array.isArray(enemy.processedZoneKbs)
+            ? enemy.processedZoneKbs.map((t: any) => mapHostTime(t))
+            : undefined;
+          return {
+            ...enemy,
+            lastShoot,
+            ...(processedZoneKbs !== undefined ? { processedZoneKbs } : {})
+          };
+        });
+
+        mappedBouncers = (state.bouncers || []).map((bouncer: any) => {
+          if (!bouncer || typeof bouncer !== 'object') {
+            throw new Error('Malformed bouncer');
+          }
+          const lastDirChange = mapHostTime(bouncer.lastDirChange);
+          const lastMultiply = mapHostTime(bouncer.lastMultiply);
+          const processedZoneKbs = Array.isArray(bouncer.processedZoneKbs)
+            ? bouncer.processedZoneKbs.map((t: any) => mapHostTime(t))
+            : undefined;
+          return {
+            ...bouncer,
+            lastDirChange,
+            lastMultiply,
+            ...(processedZoneKbs !== undefined ? { processedZoneKbs } : {})
+          };
+        });
+
+        mappedZones = (state.zones || []).map((zone: any) => {
+          if (!zone || typeof zone !== 'object') {
+            throw new Error('Malformed zone');
+          }
+          return {
+            ...zone,
+            spawnTime: mapHostTime(zone.spawnTime)
+          };
+        });
+
+        mappedHostPlayer = state.hostPlayer ? mapPlayerSnapshot(state.hostPlayer) : undefined;
+
+        mappedMultiplayerPlayers = {};
+        if (state.multiplayerPlayers && typeof state.multiplayerPlayers === 'object') {
+          for (const pid in state.multiplayerPlayers) {
+            mappedMultiplayerPlayers[pid] = mapPlayerSnapshot(state.multiplayerPlayers[pid]);
+          }
         }
 
-        if (awaitingResumeSnapshotRef.current) {
-          const myId = socket.id;
-          if (!myId) return;
-          let hostSnap: any = null;
-          if (state.multiplayerPlayers && state.multiplayerPlayers[myId]) {
-            hostSnap = state.multiplayerPlayers[myId];
-          } else if (state.hostPlayer && state.hostId === myId) {
-            hostSnap = state.hostPlayer;
+        mappedIncomingBullets = (state.bullets || []).map((ib: any) => {
+          if (!ib || typeof ib !== 'object') {
+            throw new Error('Malformed bullet');
           }
-          if (!hostSnap || typeof hostSnap.x !== 'number' || !Number.isFinite(hostSnap.x) || typeof hostSnap.y !== 'number' || !Number.isFinite(hostSnap.y)) {
-            return;
+          return {
+            ...ib,
+            spawnTime: mapHostTime(ib.spawnTime)
+          };
+        });
+
+        if (state.playerActionAuthority !== undefined) {
+          if (state.playerActionAuthority && typeof state.playerActionAuthority === 'object') {
+            mappedPlayerActionAuthority = {};
+            for (const pid in state.playerActionAuthority) {
+              const hostAuth = state.playerActionAuthority[pid];
+              if (hostAuth && typeof hostAuth === 'object') {
+                mappedPlayerActionAuthority[pid] = {
+                  specialActiveUntil: mapHostTime(hostAuth.specialActiveUntil),
+                  specialReadyAt: mapHostTime(hostAuth.specialReadyAt),
+                  buildActiveUntil: mapHostTime(hostAuth.buildActiveUntil),
+                  buildReadyAt: mapHostTime(hostAuth.buildReadyAt),
+                  lastShootAt: mapHostTime(hostAuth.lastShootAt)
+                };
+              }
+            }
+          } else {
+            throw new Error('Malformed playerActionAuthority');
           }
+        }
+
+        mappedFinalRunDeadline = (state.finalRunDeadline !== null && state.finalRunDeadline !== undefined)
+          ? mapHostTime(state.finalRunDeadline)
+          : null;
+
+        mappedOpeningProtectionDeadline = (state.openingProtectionDeadline !== null && state.openingProtectionDeadline !== undefined)
+          ? mapHostTime(state.openingProtectionDeadline)
+          : null;
+
+      } catch (e) {
+        return;
+      }
+
+      // 4. Watchdog Correctness: (Requirement 16)
+      lastReceivedGameStateTimeRef.current = performance.now();
+
+      // 5. Successful resume snapshot installation (Requirement 8 & 15)
+      if (awaitingResumeSnapshotRef.current) {
+        let hostSnap: any = null;
+        if (mappedMultiplayerPlayers[myId]) {
+          hostSnap = mappedMultiplayerPlayers[myId];
+        } else if (mappedHostPlayer && state.hostId === myId) {
+          hostSnap = mappedHostPlayer;
+        }
+        if (hostSnap && typeof hostSnap.x === 'number' && Number.isFinite(hostSnap.x) && typeof hostSnap.y === 'number' && Number.isFinite(hostSnap.y)) {
           stateRef.current.player.x = hostSnap.x;
           stateRef.current.player.y = hostSnap.y;
           if (typeof hostSnap.kbvx === 'number' && Number.isFinite(hostSnap.kbvx)) {
@@ -6763,404 +6986,349 @@ export default function GameCanvas() {
           releaseAllInputs();
           awaitingResumeSnapshotRef.current = false;
         }
-        if (typeof state.worldPhaseTime === 'number' && Number.isFinite(state.worldPhaseTime) && state.worldPhaseTime >= 0) {
-          multiplayerWorldPhaseAnchorRef.current = {
-            phaseAtAnchor: state.worldPhaseTime,
-            localTimeAtAnchor: performance.now(),
-            initialized: true,
+      }
+
+      if (typeof state.worldPhaseTime === 'number' && Number.isFinite(state.worldPhaseTime) && state.worldPhaseTime >= 0) {
+        multiplayerWorldPhaseAnchorRef.current = {
+          phaseAtAnchor: state.worldPhaseTime,
+          localTimeAtAnchor: performance.now(),
+          initialized: true,
+        };
+      }
+
+      if (state.matchPhase !== undefined) {
+        if (state.matchPhase !== stateRef.current.matchPhase) {
+          setCurrentMatchPhase(state.matchPhase);
+        }
+        stateRef.current.matchPhase = state.matchPhase;
+      }
+
+      if (state.finalRunnerId !== undefined) stateRef.current.finalRunnerId = state.finalRunnerId;
+      stateRef.current.finalRunDeadline = mappedFinalRunDeadline;
+
+      if (state.openingProtectionDeadline !== undefined) {
+        awaitingOpeningProtectionAuthorityRef.current = false;
+        stateRef.current.openingProtectionDeadline = mappedOpeningProtectionDeadline;
+        mappedProtectionDeadlineRef.current = mappedOpeningProtectionDeadline;
+      }
+
+      if (state.winnerId !== undefined) stateRef.current.winnerId = state.winnerId;
+
+      if (state.matchPlayers !== undefined) {
+        const prevMe = stateRef.current.matchPlayers[myId];
+        const incomingMe = state.matchPlayers[myId];
+        if (prevMe && incomingMe && !prevMe.isDead && incomingMe.isDead && uiRef.current.status === 'PLAYING') {
+          triggerEndPresentation({
+            outcome: 'defeat',
+            causeCode: 'eliminated_by_host',
+            label: 'ELIMINATED',
+            impactPos: { x: stateRef.current.player.x, y: stateRef.current.player.y },
+            markerColor: '#ff003c',
+            startTimestamp: performance.now(),
+          });
+          setUiState(prev => {
+            uiRef.current = { ...prev, status: 'GAME_OVER' };
+            return uiRef.current;
+          });
+        }
+        stateRef.current.matchPlayers = state.matchPlayers;
+      }
+
+      // Action Authority Mapping (Requirement 11 & 15)
+      if (mappedPlayerActionAuthority !== undefined) {
+        stateRef.current.playerActionAuthority = mappedPlayerActionAuthority;
+
+        pendingSpecialRequestRef.current = null;
+        pendingBuildRequestRef.current = null;
+
+        const myAuth = mappedPlayerActionAuthority[myId];
+        if (myAuth &&
+            Number.isFinite(myAuth.specialActiveUntil) &&
+            Number.isFinite(myAuth.specialReadyAt) &&
+            Number.isFinite(myAuth.buildActiveUntil) &&
+            Number.isFinite(myAuth.buildReadyAt)) {
+
+          const dash = stateRef.current.player.dash;
+          const build = stateRef.current.player.build;
+          const localNow = performance.now();
+
+          const specialActive = localNow < myAuth.specialActiveUntil;
+          dash.active = specialActive;
+          dash.endTime = myAuth.specialActiveUntil;
+
+          const buildActive = localNow < myAuth.buildActiveUntil;
+          const prevBuildActive = build.active;
+          build.active = buildActive;
+          build.endTime = myAuth.buildActiveUntil;
+
+          if (!prevBuildActive && buildActive) {
+            build.lastBlockX = -999999;
+            build.lastBlockY = -999999;
+          }
+        }
+      }
+
+      // Deadlines handling (Requirement 12)
+      if (state.matchPhase === 'FINAL_RUN' && mappedFinalRunDeadline !== null) {
+        mappedClientDeadlineRef.current = mappedFinalRunDeadline;
+      } else if (state.matchPhase !== 'FINAL_RUN') {
+        mappedClientDeadlineRef.current = null;
+      }
+
+      if (state.matchPhase === 'FINISHED' && uiRef.current.status === 'PLAYING') {
+        triggerMultiplayerMatchConclusion(state.winnerId);
+        setUiState(prev => ({ ...prev, status: 'GAME_OVER' }));
+      }
+
+      // Delta tracking for client-side visual particle effects on death (Requirement 15)
+      const prevEnemies = stateRef.current.enemies || [];
+      const prevSpawners = stateRef.current.spawners || [];
+      const prevBlocks = stateRef.current.blocks || [];
+
+      stateRef.current.blocks = mappedBlocks;
+      stateRef.current.spawners = state.spawners;
+
+      const newEnemies = mappedEnemies;
+      if (prevEnemies.length > newEnemies.length) {
+        for (const oldEnemy of prevEnemies) {
+          const stillAlive = newEnemies.some((e: any) => Math.abs(e.x - oldEnemy.x) < 5 && Math.abs(e.y - oldEnemy.y) < 5);
+          if (!stillAlive) {
+            spawnParticlesDirect(oldEnemy.x, oldEnemy.y, '#ff3333', 25);
+          }
+        }
+      }
+
+      const newSpawners = state.spawners || [];
+      if (prevSpawners.length > newSpawners.length) {
+        for (const oldSpawner of prevSpawners) {
+          const stillAlive = newSpawners.some((s: any) => Math.abs(s.x - oldSpawner.x) < 5 && Math.abs(s.y - oldSpawner.y) < 5);
+          if (!stillAlive) {
+            const spawnerColor = uiRef.current.hardMode ? '#ff3300' : '#ff00ff';
+            spawnParticlesDirect(oldSpawner.x, oldSpawner.y, spawnerColor, 80);
+            stateRef.current.shockwaves.push({ x: oldSpawner.x, y: oldSpawner.y, color: spawnerColor, maxRadius: 200, age: 0, maxAge: 0.5, thickness: 20 });
+            handleSpawnerDestroyed(oldSpawner);
+          }
+        }
+      }
+
+      const newBlocks = mappedBlocks;
+      if (prevBlocks.length > newBlocks.length) {
+        for (const oldBlock of prevBlocks) {
+          const stillAlive = newBlocks.some((b: any) => Math.abs(b.x - oldBlock.x) < 5 && Math.abs(b.y - oldBlock.y) < 5);
+          if (!stillAlive) {
+            spawnParticlesDirect(oldBlock.x, oldBlock.y, '#ffcc00', 15);
+          }
+        }
+      }
+
+      // Client-side smooth coordinates interpolation (Requirement 15)
+      const receivedPlayers = { ...mappedMultiplayerPlayers, [state.hostId]: mappedHostPlayer };
+      delete receivedPlayers[myId];
+
+      const mergedPlayers: Record<string, any> = {};
+      for (const pid in receivedPlayers) {
+        const incoming = receivedPlayers[pid];
+        if (!incoming) continue;
+
+        const prev = stateRef.current.multiplayerPlayers[pid];
+        if (prev) {
+          if (!prev.isDead && incoming.isDead) {
+            triggerEliminationRef.current?.(incoming.x, incoming.y, incoming.colorIdx !== undefined ? incoming.colorIdx : 0, incoming.name || 'PLAYER');
+          }
+          mergedPlayers[pid] = {
+            ...incoming,
+            x: prev.x,
+            y: prev.y,
+            targetX: incoming.x,
+            targetY: incoming.y
+          };
+        } else {
+          mergedPlayers[pid] = {
+            ...incoming,
+            targetX: incoming.x,
+            targetY: incoming.y
           };
         }
-        if (state.matchPhase !== undefined) {
-          if (state.matchPhase !== stateRef.current.matchPhase) {
-            setCurrentMatchPhase(state.matchPhase);
-          }
-          stateRef.current.matchPhase = state.matchPhase;
-        }
-        if (state.finalRunnerId !== undefined) stateRef.current.finalRunnerId = state.finalRunnerId;
-        if (state.finalRunDeadline !== undefined) stateRef.current.finalRunDeadline = state.finalRunDeadline;
-        if (state.openingProtectionDeadline !== undefined) {
-          awaitingOpeningProtectionAuthorityRef.current = false;
-          stateRef.current.openingProtectionDeadline = state.openingProtectionDeadline;
-          if (state.openingProtectionDeadline !== null && state.hostTime !== undefined) {
-            const remainingHostMs = state.openingProtectionDeadline - state.hostTime;
-            if (remainingHostMs > 0) {
-              mappedProtectionDeadlineRef.current = performance.now() + remainingHostMs;
-            } else {
-              mappedProtectionDeadlineRef.current = null;
+      }
+      stateRef.current.multiplayerPlayers = mergedPlayers;
+
+      // Direct dead-reckoned synchronization using mapped data (Requirement 15)
+      stateRef.current.enemies = mappedEnemies;
+      stateRef.current.bouncers = mappedBouncers;
+      stateRef.current.zones = mappedZones;
+
+      // High-fidelity synchronized & reconciled bullet tracking (Requirement 13 & 15)
+      const now = performance.now();
+      const prevBullets = stateRef.current.bullets || [];
+
+      // Check for accepted shots absent from the snapshot
+      const removedLocalIds = new Set<string>();
+      for (const [shotId, pending] of pendingGuestShotsRef.current.entries()) {
+        if (pending.status === 'accepted' && pending.roundId === activeMultiplayerRoundIdRef.current) {
+          const isPresent = mappedIncomingBullets.some((ib: any) => 
+            ib.clientShotId === pending.clientShotId || 
+            (pending.authoritativeBulletId !== null && ib.id === pending.authoritativeBulletId)
+          );
+          if (!isPresent) {
+            if (pending.localBulletId) {
+              removedLocalIds.add(pending.localBulletId);
             }
-          } else if (state.openingProtectionDeadline === null) {
-            mappedProtectionDeadlineRef.current = null;
-          }
-        }
-        if (state.winnerId !== undefined) stateRef.current.winnerId = state.winnerId;
-        if (state.matchPlayers !== undefined) {
-          const myId = socket.id;
-          if (myId) {
-            const prevMe = stateRef.current.matchPlayers[myId];
-            const incomingMe = state.matchPlayers[myId];
-            if (prevMe && incomingMe && !prevMe.isDead && incomingMe.isDead && uiRef.current.status === 'PLAYING') {
-              // start the existing local elimination/end presentation once
-              triggerEndPresentation({
-                outcome: 'defeat',
-                causeCode: 'eliminated_by_host',
-                label: 'ELIMINATED',
-                impactPos: { x: stateRef.current.player.x, y: stateRef.current.player.y },
-                markerColor: '#ff003c',
-                startTimestamp: performance.now(),
-              });
-              setUiState(prev => {
-                uiRef.current = { ...prev, status: 'GAME_OVER' };
-                return uiRef.current;
-              });
-            }
-          }
-          stateRef.current.matchPlayers = state.matchPlayers;
-        }
-        if (state.playerActionAuthority !== undefined) {
-          const hostNow = state.hostTime;
-          if (hostNow !== undefined && typeof hostNow === 'number' && Number.isFinite(hostNow)) {
-            const localNow = performance.now();
-            const mappedAuth: Record<string, any> = {};
-            for (const pid in state.playerActionAuthority) {
-              const hostAuth = state.playerActionAuthority[pid];
-              if (hostAuth && typeof hostAuth === 'object') {
-                const mapDeadline = (deadline: any) => {
-                  if (deadline !== undefined && typeof deadline === 'number' && Number.isFinite(deadline)) {
-                    return localNow + (deadline - hostNow);
-                  }
-                  return 0;
-                };
-
-                const mapLastShootAt = (lastShoot: any) => {
-                  if (lastShoot !== undefined && typeof lastShoot === 'number' && Number.isFinite(lastShoot)) {
-                    return localNow - (hostNow - lastShoot);
-                  }
-                  return 0;
-                };
-
-                mappedAuth[pid] = {
-                  specialActiveUntil: mapDeadline(hostAuth.specialActiveUntil),
-                  specialReadyAt: mapDeadline(hostAuth.specialReadyAt),
-                  buildActiveUntil: mapDeadline(hostAuth.buildActiveUntil),
-                  buildReadyAt: mapDeadline(hostAuth.buildReadyAt),
-                  lastShootAt: mapLastShootAt(hostAuth.lastShootAt)
-                };
-              }
-            }
-            stateRef.current.playerActionAuthority = mappedAuth;
-
-            if (socketRef.current?.id && mappedAuth[socketRef.current.id]) {
-              pendingSpecialRequestRef.current = null;
-              pendingBuildRequestRef.current = null;
-            }
-
-            if (!mpRef.current.isHost) {
-              const socketId = socketRef.current?.id;
-              if (socketId) {
-                const myAuth = mappedAuth[socketId];
-                if (myAuth &&
-                    Number.isFinite(myAuth.specialActiveUntil) &&
-                    Number.isFinite(myAuth.specialReadyAt) &&
-                    Number.isFinite(myAuth.buildActiveUntil) &&
-                    Number.isFinite(myAuth.buildReadyAt)) {
-
-                  const dash = stateRef.current.player.dash;
-                  const build = stateRef.current.player.build;
-
-                  const specialActive = localNow < myAuth.specialActiveUntil;
-                  dash.active = specialActive;
-                  dash.endTime = myAuth.specialActiveUntil;
-
-                  const buildActive = localNow < myAuth.buildActiveUntil;
-                  const prevBuildActive = build.active;
-                  build.active = buildActive;
-                  build.endTime = myAuth.buildActiveUntil;
-
-                  if (!prevBuildActive && buildActive) {
-                    build.lastBlockX = -999999;
-                    build.lastBlockY = -999999;
-                  }
-                }
-              }
-            }
-          } else {
-            if (!stateRef.current.playerActionAuthority) {
-              stateRef.current.playerActionAuthority = {};
-            }
+            pendingGuestShotsRef.current.delete(shotId);
           }
         }
+      }
 
-        if (state.matchPhase === 'FINAL_RUN' && state.finalRunDeadline !== null && state.finalRunDeadline !== undefined && state.hostTime !== undefined) {
-          const remainingHostMs = state.finalRunDeadline - state.hostTime;
-          mappedClientDeadlineRef.current = performance.now() + Math.max(0, remainingHostMs);
-        } else if (state.matchPhase !== 'FINAL_RUN') {
-          mappedClientDeadlineRef.current = null;
-        }
+      // Track which previous bullets successfully matched an incoming packet
+      const matchedPreviousIds = new Set<string>();
+      const seenAuthoritativeIds = new Set<string>();
+      const incomingBullets: any[] = [];
 
-        if (state.matchPhase === 'FINISHED' && uiRef.current.status === 'PLAYING') {
-          triggerMultiplayerMatchConclusion(state.winnerId);
-          setUiState(prev => ({ ...prev, status: 'GAME_OVER' }));
-        }
+      for (const ib of mappedIncomingBullets) {
+        if (ib.id === undefined || ib.id === null) continue;
+        const authoritativeIdStr = ib.id.toString();
+        if (seenAuthoritativeIds.has(authoritativeIdStr)) continue;
+        seenAuthoritativeIds.add(authoritativeIdStr);
 
-        // Delta tracking for client-side visual particle effects on death
-        const prevEnemies = stateRef.current.enemies || [];
-        const prevSpawners = stateRef.current.spawners || [];
-        const prevBlocks = stateRef.current.blocks || [];
+        const mappedSpawnTime = ib.spawnTime;
 
-        stateRef.current.blocks = state.blocks;
-        stateRef.current.spawners = state.spawners;
+        let matchedLocal: any = undefined;
 
-        // Compare and spawn particles local to the client
-        const newEnemies = state.enemies || [];
-        if (prevEnemies.length > newEnemies.length) {
-          for (const oldEnemy of prevEnemies) {
-            const stillAlive = newEnemies.some((e: any) => Math.abs(e.x - oldEnemy.x) < 5 && Math.abs(e.y - oldEnemy.y) < 5);
-            if (!stillAlive) {
-              spawnParticlesDirect(oldEnemy.x, oldEnemy.y, '#ff3333', 25);
-            }
-          }
-        }
+        // 1. Exact authoritative bullet ID
+        matchedLocal = prevBullets.find((pb: any) => 
+          pb.id !== undefined && pb.id !== null &&
+          !matchedPreviousIds.has(pb.id) && 
+          pb.id === ib.id
+        );
 
-        const newSpawners = state.spawners || [];
-        if (prevSpawners.length > newSpawners.length) {
-          for (const oldSpawner of prevSpawners) {
-            const stillAlive = newSpawners.some((s: any) => Math.abs(s.x - oldSpawner.x) < 5 && Math.abs(s.y - oldSpawner.y) < 5);
-            if (!stillAlive) {
-              const spawnerColor = uiRef.current.hardMode ? '#ff3300' : '#ff00ff';
-              spawnParticlesDirect(oldSpawner.x, oldSpawner.y, spawnerColor, 80);
-              stateRef.current.shockwaves.push({ x: oldSpawner.x, y: oldSpawner.y, color: spawnerColor, maxRadius: 200, age: 0, maxAge: 0.5, thickness: 20 });
-              if (!mpRef.current.isHost) {
-                handleSpawnerDestroyed(oldSpawner);
-              }
-            }
-          }
-        }
-
-        const newBlocks = state.blocks || [];
-        if (prevBlocks.length > newBlocks.length) {
-          for (const oldBlock of prevBlocks) {
-            const stillAlive = newBlocks.some((b: any) => Math.abs(b.x - oldBlock.x) < 5 && Math.abs(b.y - oldBlock.y) < 5);
-            if (!stillAlive) {
-              spawnParticlesDirect(oldBlock.x, oldBlock.y, '#ffcc00', 15);
-            }
-          }
-        }
-
-        // Client-side smooth coordinates interpolation
-        const receivedPlayers = { ...state.multiplayerPlayers, [state.hostId]: state.hostPlayer };
-        delete receivedPlayers[socket.id];
-
-        const mergedPlayers: Record<string, any> = {};
-        for (const pid in receivedPlayers) {
-          const incoming = receivedPlayers[pid];
-          if (!incoming) continue;
-
-          const prev = stateRef.current.multiplayerPlayers[pid];
-          if (prev) {
-            if (!prev.isDead && incoming.isDead) {
-              triggerEliminationRef.current?.(incoming.x, incoming.y, incoming.colorIdx !== undefined ? incoming.colorIdx : 0, incoming.name || 'PLAYER');
-            }
-            mergedPlayers[pid] = {
-              ...incoming,
-              x: prev.x,
-              y: prev.y,
-              targetX: incoming.x,
-              targetY: incoming.y
-            };
-          } else {
-            mergedPlayers[pid] = {
-              ...incoming,
-              targetX: incoming.x,
-              targetY: incoming.y
-            };
-          }
-        }
-        stateRef.current.multiplayerPlayers = mergedPlayers;
-
-        // Direct dead-reckoned synchronization for enemies, bouncers, and bullets
-        stateRef.current.enemies = state.enemies || [];
-        stateRef.current.bouncers = state.bouncers || [];
-        stateRef.current.zones = state.zones || [];
-
-        // High-fidelity synchronized & reconciled bullet tracking
-        const now = performance.now();
-        const hostTime = state.hostTime || now;
-        const myId = socket.id || socketRef.current?.id || 'local';
-        const prevBullets = stateRef.current.bullets || [];
-
-        // 6. Check for accepted shots absent from the snapshot
-        const removedLocalIds = new Set<string>();
-        for (const [shotId, pending] of pendingGuestShotsRef.current.entries()) {
-          if (pending.status === 'accepted' && pending.roundId === activeMultiplayerRoundIdRef.current) {
-            const isPresent = (state.bullets || []).some((ib: any) => 
-              ib.clientShotId === pending.clientShotId || 
-              (pending.authoritativeBulletId !== null && ib.id === pending.authoritativeBulletId)
+        // 2. Exact pending-shot identity
+        if (!matchedLocal && ib.clientShotId) {
+          const pending = pendingGuestShotsRef.current.get(ib.clientShotId);
+          if (pending && pending.roundId === activeMultiplayerRoundIdRef.current) {
+            matchedLocal = prevBullets.find((pb: any) => 
+              pb.id !== undefined && pb.id !== null &&
+              !matchedPreviousIds.has(pb.id) && 
+              pb.id === pending.localBulletId
             );
-            if (!isPresent) {
-              if (pending.localBulletId) {
-                removedLocalIds.add(pending.localBulletId);
-              }
-              pendingGuestShotsRef.current.delete(shotId);
-            }
           }
         }
 
-        // Track which previous bullets successfully matched an incoming packet
-        const matchedPreviousIds = new Set<string>();
-        const seenAuthoritativeIds = new Set<string>();
-        const incomingBullets: any[] = [];
-
-        for (const ib of (state.bullets || [])) {
-          if (ib.id === undefined || ib.id === null) continue;
-          const authoritativeIdStr = ib.id.toString();
-          if (seenAuthoritativeIds.has(authoritativeIdStr)) continue;
-          seenAuthoritativeIds.add(authoritativeIdStr);
-
-          // Calculate the relative age of the bullet on the host
-          const age = Math.max(0, hostTime - ib.spawnTime);
-          // Map to local timeline so that timeAlive aligns perfectly with local performance.now()
-          const mappedSpawnTime = now - age;
-
-          let matchedLocal: any = undefined;
-
-          // 1. Exact authoritative bullet ID
+        // 3. Exact client shot ID
+        if (!matchedLocal && ib.clientShotId) {
           matchedLocal = prevBullets.find((pb: any) => 
             pb.id !== undefined && pb.id !== null &&
             !matchedPreviousIds.has(pb.id) && 
-            pb.id === ib.id
+            pb.clientShotId === ib.clientShotId
           );
+        }
 
-          // 2. Exact pending-shot identity
-          if (!matchedLocal && ib.clientShotId) {
-            const pending = pendingGuestShotsRef.current.get(ib.clientShotId);
-            if (pending && pending.roundId === activeMultiplayerRoundIdRef.current) {
-              matchedLocal = prevBullets.find((pb: any) => 
+        // 4. Acknowledgement supplied authoritativeBulletId matching localBulletId
+        if (!matchedLocal) {
+          for (const pending of pendingGuestShotsRef.current.values()) {
+            if (pending.roundId === activeMultiplayerRoundIdRef.current && pending.authoritativeBulletId === ib.id) {
+              const candidate = prevBullets.find((pb: any) => 
                 pb.id !== undefined && pb.id !== null &&
                 !matchedPreviousIds.has(pb.id) && 
                 pb.id === pending.localBulletId
               );
-            }
-          }
-
-          // 3. Exact client shot ID
-          if (!matchedLocal && ib.clientShotId) {
-            matchedLocal = prevBullets.find((pb: any) => 
-              pb.id !== undefined && pb.id !== null &&
-              !matchedPreviousIds.has(pb.id) && 
-              pb.clientShotId === ib.clientShotId
-            );
-          }
-
-          // 4. Acknowledgement supplied authoritativeBulletId matching localBulletId
-          if (!matchedLocal) {
-            for (const pending of pendingGuestShotsRef.current.values()) {
-              if (pending.roundId === activeMultiplayerRoundIdRef.current && pending.authoritativeBulletId === ib.id) {
-                const candidate = prevBullets.find((pb: any) => 
-                  pb.id !== undefined && pb.id !== null &&
-                  !matchedPreviousIds.has(pb.id) && 
-                  pb.id === pending.localBulletId
-                );
-                if (candidate) {
-                  matchedLocal = candidate;
-                  break;
-                }
+              if (candidate) {
+                matchedLocal = candidate;
+                break;
               }
             }
           }
+        }
 
-          if (matchedLocal) {
-            matchedPreviousIds.add(matchedLocal.id);
+        if (matchedLocal) {
+          matchedPreviousIds.add(matchedLocal.id);
 
-            if (matchedLocal.id.toString().startsWith('local_')) {
-              // Promote predicted bullets to authoritative identity (first promotion)
-              if (ib.clientShotId) {
-                pendingGuestShotsRef.current.delete(ib.clientShotId);
-              }
-              if (matchedLocal.clientShotId && matchedLocal.clientShotId !== ib.clientShotId) {
-                pendingGuestShotsRef.current.delete(matchedLocal.clientShotId);
-              }
-              for (const [shotId, pending] of pendingGuestShotsRef.current.entries()) {
-                if (pending.localBulletId === matchedLocal.id) {
-                  pendingGuestShotsRef.current.delete(shotId);
-                }
-              }
-
-              const distance = Math.hypot(matchedLocal.x - ib.x, matchedLocal.y - ib.y);
-              const useVisualXY = distance <= 120;
-
-              incomingBullets.push({
-                ...ib,
-                x: useVisualXY ? matchedLocal.x : ib.x,
-                y: useVisualXY ? matchedLocal.y : ib.y,
-                spawnTime: mappedSpawnTime
-              });
-            } else {
-              // Reconcile already-authoritative bullets smoothly
-              const error = Math.hypot(matchedLocal.x - ib.x, matchedLocal.y - ib.y);
-              let finalX = ib.x;
-              let finalY = ib.y;
-              if (error <= 160) {
-                finalX = matchedLocal.x + 0.35 * (ib.x - matchedLocal.x);
-                finalY = matchedLocal.y + 0.35 * (ib.y - matchedLocal.y);
-              }
-
-              incomingBullets.push({
-                ...ib,
-                x: finalX,
-                y: finalY,
-                spawnTime: mappedSpawnTime
-              });
+          if (matchedLocal.id.toString().startsWith('local_')) {
+            // Promote predicted bullets to authoritative identity (first promotion)
+            if (ib.clientShotId) {
+              pendingGuestShotsRef.current.delete(ib.clientShotId);
             }
-          } else {
-            // Brand new bullet from host
+            if (matchedLocal.clientShotId && matchedLocal.clientShotId !== ib.clientShotId) {
+              pendingGuestShotsRef.current.delete(matchedLocal.clientShotId);
+            }
+            for (const [shotId, pending] of pendingGuestShotsRef.current.entries()) {
+              if (pending.localBulletId === matchedLocal.id) {
+                pendingGuestShotsRef.current.delete(shotId);
+              }
+            }
+
+            const distance = Math.hypot(matchedLocal.x - ib.x, matchedLocal.y - ib.y);
+            const useVisualXY = distance <= 120;
+
             incomingBullets.push({
               ...ib,
+              x: useVisualXY ? matchedLocal.x : ib.x,
+              y: useVisualXY ? matchedLocal.y : ib.y,
+              spawnTime: mappedSpawnTime
+            });
+          } else {
+            // Reconcile already-authoritative bullets smoothly
+            const error = Math.hypot(matchedLocal.x - ib.x, matchedLocal.y - ib.y);
+            let finalX = ib.x;
+            let finalY = ib.y;
+            if (error <= 160) {
+              finalX = matchedLocal.x + 0.35 * (ib.x - matchedLocal.x);
+              finalY = matchedLocal.y + 0.35 * (ib.y - matchedLocal.y);
+            }
+
+            incomingBullets.push({
+              ...ib,
+              x: finalX,
+              y: finalY,
               spawnTime: mappedSpawnTime
             });
           }
+        } else {
+          // Brand new bullet from host
+          incomingBullets.push({
+            ...ib,
+            spawnTime: mappedSpawnTime
+          });
         }
-
-        // Retain fresh unmatched local-only bullets so they fly smoothly until acknowledged
-        const unmatchedLocals = prevBullets.filter((pb: any) => {
-          if (!pb.id || !pb.id.toString().startsWith('local_')) return false;
-          if (matchedPreviousIds.has(pb.id)) return false;
-          if (removedLocalIds.has(pb.id)) return false;
-
-          const age = now - pb.spawnTime;
-          if (age >= 1500) return false;
-
-          if (!pb.clientShotId) return false;
-
-          const pending = pendingGuestShotsRef.current.get(pb.clientShotId);
-          if (!pending) return false;
-          if (pending.localBulletId !== pb.id) return false;
-          if (pending.roundId !== activeMultiplayerRoundIdRef.current) return false;
-          if (pending.status !== 'pending') return false;
-
-          return true;
-        });
-
-        stateRef.current.bullets = [...incomingBullets, ...unmatchedLocals];
-
-        if (uiRef.current.status === 'PLAYING') {
-          const myId = socketRef.current?.id;
-          const targetScore = (myId && state.multiplayerPlayers[myId] !== undefined)
-            ? (state.multiplayerPlayers[myId].score || 0)
-            : uiRef.current.score;
-
-          if (state.spawnersLeft === 0 && !mpRef.current.roomId) {
-            uiRef.current.status = 'VICTORY';
-            uiRef.current.score = targetScore;
-            setUiState(prev => ({ ...prev, status: 'VICTORY', score: targetScore, spawnersLeft: 0 }));
-          } else if (uiRef.current.score !== targetScore || uiRef.current.spawnersLeft !== state.spawnersLeft || uiRef.current.blocks !== state.blocksLeft) {
-             uiRef.current.score = targetScore;
-             uiRef.current.spawnersLeft = state.spawnersLeft;
-             uiRef.current.blocks = state.blocksLeft;
-             setUiState(prev => ({ ...prev, score: targetScore, spawnersLeft: state.spawnersLeft, blocks: state.blocksLeft }));
-          }
-        }
-        setMpTick(t => t + 1);
       }
+
+      // Retain fresh unmatched local-only bullets so they fly smoothly until acknowledged
+      const unmatchedLocals = prevBullets.filter((pb: any) => {
+        if (!pb.id || !pb.id.toString().startsWith('local_')) return false;
+        if (matchedPreviousIds.has(pb.id)) return false;
+        if (removedLocalIds.has(pb.id)) return false;
+
+        const age = now - pb.spawnTime;
+        if (age >= 1500) return false;
+
+        if (!pb.clientShotId) return false;
+
+        const pending = pendingGuestShotsRef.current.get(pb.clientShotId);
+        if (!pending) return false;
+        if (pending.localBulletId !== pb.id) return false;
+        if (pending.roundId !== activeMultiplayerRoundIdRef.current) return false;
+        if (pending.status !== 'pending') return false;
+
+        return true;
+      });
+
+      stateRef.current.bullets = [...incomingBullets, ...unmatchedLocals];
+
+      if (uiRef.current.status === 'PLAYING') {
+        const targetScore = (mappedMultiplayerPlayers[myId] !== undefined)
+          ? (mappedMultiplayerPlayers[myId].score || 0)
+          : uiRef.current.score;
+
+        if (state.spawnersLeft === 0 && !mpRef.current.roomId) {
+          uiRef.current.status = 'VICTORY';
+          uiRef.current.score = targetScore;
+          setUiState(prev => ({ ...prev, status: 'VICTORY', score: targetScore, spawnersLeft: 0 }));
+        } else if (uiRef.current.score !== targetScore || uiRef.current.spawnersLeft !== state.spawnersLeft || uiRef.current.blocks !== state.blocksLeft) {
+          uiRef.current.score = targetScore;
+          uiRef.current.spawnersLeft = state.spawnersLeft;
+          uiRef.current.blocks = state.blocksLeft;
+          setUiState(prev => ({ ...prev, score: targetScore, spawnersLeft: state.spawnersLeft, blocks: state.blocksLeft }));
+        }
+      }
+      setMpTick(t => t + 1);
     });
 
     socket.on('client_input', (clientId, input) => {
@@ -7571,6 +7739,7 @@ export default function GameCanvas() {
       cancelPendingMatchSettingsUpdate();
       clearPendingGuestShots(true);
       clearPendingAbilityRequests();
+      resetHostClockAnchor();
       invalidateStartRequestGeneration(true);
       currentRoomRoundIdRef.current = 0;
       activeMultiplayerRoundIdRef.current = 0;
