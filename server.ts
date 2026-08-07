@@ -913,6 +913,7 @@ async function startServer() {
       const hardMode = gameMode !== "normal";
 
       const startPayload = {
+        roomId: roomIdUpper,
         mapId,
         gameMode,
         hardMode,
@@ -923,7 +924,7 @@ async function startServer() {
       room.matchActive = true;
       room.lastHostStateTime = Date.now();
       socket.to(roomIdUpper).emit("start_game", startPayload);
-      if (cb) cb({ success: true, roundId: currentRoundId, config: startPayload });
+      if (cb) cb({ success: true, roomId: roomIdUpper, roundId: currentRoundId, config: startPayload });
     });
 
     socket.on("disconnect", () => {

@@ -2367,6 +2367,13 @@ export default function GameCanvas() {
 
   const multiplayerStartPendingRef = useRef<boolean>(false);
   const [multiplayerStartPending, setMultiplayerStartPending] = useState<boolean>(false);
+  const multiplayerStartRequestGenerationRef = useRef<number>(0);
+
+  const invalidateStartRequestGeneration = useCallback(() => {
+    multiplayerStartRequestGenerationRef.current += 1;
+    multiplayerStartPendingRef.current = false;
+    setMultiplayerStartPending(false);
+  }, []);
 
   const invalidateQuickSave = useCallback(() => {
     quickSaveRef.current = null;
@@ -2402,6 +2409,11 @@ export default function GameCanvas() {
   const [showQrCode, setShowQrCode] = useState(false);
   const [activeLobbyTab, setActiveLobbyTab] = useState<'invite' | 'players' | 'match'>('invite');
   const [lobbyPlayers, setLobbyPlayers] = useState<Record<string, { name: string, colorIdx: number, isHost: boolean }>>({});
+  const lobbyPlayersRef = useRef<Record<string, { name: string, colorIdx: number, isHost: boolean }>>({});
+
+  useEffect(() => {
+    lobbyPlayersRef.current = lobbyPlayers;
+  }, [lobbyPlayers]);
   const [lobbyMatchSettings, setLobbyMatchSettings] = useState<MatchSettings>(DEFAULT_MATCH_SETTINGS);
   const lobbyMatchSettingsRef = useRef<MatchSettings>(DEFAULT_MATCH_SETTINGS);
   const [isMatchSettingsUpdatePending, setIsMatchSettingsUpdatePending] = useState(false);
@@ -2655,6 +2667,8 @@ export default function GameCanvas() {
   }, []);
 
   const emitLeaveRoom = useCallback(() => {
+    invalidateStartRequestGeneration();
+    activeMultiplayerRoundIdRef.current = 0;
     const currentRoomId = mpRef.current.roomId;
     roomRequestGenerationRef.current++;
     roomRequestInFlightRef.current = false;
@@ -2665,7 +2679,7 @@ export default function GameCanvas() {
     if (currentRoomId) {
       socketRef.current?.emit('leave_room', currentRoomId);
     }
-  }, [clearResumeSession]);
+  }, [clearResumeSession, invalidateStartRequestGeneration]);
 
   const lastReceivedGameStateTimeRef = useRef<number>(0);
   const triggerEliminationRef = useRef<((x: number, y: number, colorIdx: number, label?: string) => void) | null>(null);
@@ -3077,16 +3091,20 @@ export default function GameCanvas() {
 
   const handleStartMultiplayerMatch = () => {
     if (multiplayerStartPendingRef.current) return;
-    if (!mpRef.current.roomId || !mpState.isHost) return;
-    clearPendingGuestShots();
-    clearPendingAbilityRequests();
+
+    const capturedSocket = socketRef.current;
+    if (!capturedSocket || !capturedSocket.connected) return;
+
+    const capturedRoomId = mpRef.current.roomId ? mpRef.current.roomId.trim().toUpperCase() : null;
+    if (!capturedRoomId || !mpRef.current.isHost || !mpRef.current.isConnected) return;
 
     if (matchSettingsUpdatePendingRef.current) {
       setMpError("WAITING FOR SETTINGS SYNC");
       return;
     }
 
-    const lobbyPlayerCount = Object.keys(lobbyPlayers).length + 1;
+    const currentLobby = lobbyPlayersRef.current;
+    const lobbyPlayerCount = Object.keys(currentLobby).length + 1;
     if (lobbyPlayerCount < 2) {
       setMpError("WAITING FOR ANOTHER PLAYER");
       return;
@@ -3094,14 +3112,16 @@ export default function GameCanvas() {
 
     setMpError(null);
 
-    const myId = socketRef.current?.id || 'host';
-    const playerIds = [myId];
+    const myId = capturedSocket.id;
+    if (!myId) return;
 
-    for (const pid in lobbyPlayers) {
+    const playerIds = [myId];
+    for (const pid in currentLobby) {
       if (pid !== myId && !playerIds.includes(pid)) {
         playerIds.push(pid);
       }
     }
+    const capturedPlayerIds = [...playerIds];
 
     const mapIdToUse = lobbyMatchSettingsRef.current.mapId;
     const mapDef = MAPS[mapIdToUse] || MAPS.classic_arena;
@@ -3112,34 +3132,46 @@ export default function GameCanvas() {
       return;
     }
 
+    multiplayerStartRequestGenerationRef.current += 1;
+    const requestGen = multiplayerStartRequestGenerationRef.current;
+
     multiplayerStartPendingRef.current = true;
     setMultiplayerStartPending(true);
 
-    socketRef.current?.emit(
+    capturedSocket.emit(
       'start_game',
-      mpRef.current.roomId,
+      capturedRoomId,
       {
         spawnAssignments
       },
-      (response?: { success: boolean; roundId?: number; config?: { mapId: string; gameMode: GameMode; hardMode: boolean; spawnAssignments: any }; error?: string }) => {
+      (response?: {
+        success?: boolean;
+        roundId?: number;
+        roomId?: string;
+        config?: {
+          roomId?: string;
+          mapId: string;
+          gameMode: GameMode;
+          hardMode: boolean;
+          spawnAssignments: Record<string, { x: number; y: number }>;
+          roundId?: number;
+        };
+        error?: string;
+      }) => {
         try {
-          if (response && response.success && response.config && typeof response.roundId === 'number') {
-            activeMultiplayerRoundIdRef.current = response.roundId;
-            setMpError(null);
-            const startConfig = response.config;
-            const ok = resetGame(isMobileRef.current ? 'mobile' : 'desktop', startConfig.mapId, startConfig.gameMode, startConfig.spawnAssignments);
-            if (ok) {
-              setUiState(prev => ({
-                ...prev,
-                status: 'PLAYING',
-                mapId: startConfig.mapId,
-                hardMode: startConfig.hardMode,
-                gameMode: startConfig.gameMode
-              }));
-            } else {
-              setMpError("FAILED TO INITIALIZE MATCH");
-            }
-          } else {
+          if (
+            multiplayerStartRequestGenerationRef.current !== requestGen ||
+            socketRef.current !== capturedSocket ||
+            !capturedSocket.connected ||
+            !mpRef.current.isConnected ||
+            !mpRef.current.roomId ||
+            mpRef.current.roomId.trim().toUpperCase() !== capturedRoomId ||
+            !mpRef.current.isHost
+          ) {
+            return;
+          }
+
+          if (!response || !response.success) {
             const err = response?.error || 'START_FAILED';
             const msg =
               err === 'ROSTER_MISMATCH'
@@ -3152,10 +3184,73 @@ export default function GameCanvas() {
                 ? 'LOBBY ROSTER NOT READY - TRY AGAIN'
                 : `START FAILED: ${err}`;
             setMpError(msg);
+            return;
+          }
+
+          const resRoomId =
+            (typeof response.config?.roomId === 'string' && response.config.roomId.trim().toUpperCase()) ||
+            (typeof response.roomId === 'string' && response.roomId.trim().toUpperCase());
+
+          if (!resRoomId || resRoomId !== capturedRoomId) return;
+
+          const roundId = response.roundId;
+          if (typeof roundId !== 'number' || !Number.isInteger(roundId) || roundId <= 0) return;
+
+          if (response.config?.roundId !== roundId) return;
+
+          const mapId = response.config?.mapId;
+          if (!mapId || !isValidMapId(mapId)) return;
+
+          const gameMode = response.config?.gameMode;
+          if (!gameMode || !isValidGameMode(gameMode)) return;
+
+          const resSpawns = response.config?.spawnAssignments;
+          if (!resSpawns || typeof resSpawns !== 'object' || Array.isArray(resSpawns)) return;
+
+          const resAssignedKeys = Object.keys(resSpawns);
+          if (resAssignedKeys.length !== capturedPlayerIds.length) return;
+
+          const hasExactCapturedIds = capturedPlayerIds.every(id => id in resSpawns);
+          if (!hasExactCapturedIds) return;
+
+          for (const pid of capturedPlayerIds) {
+            const pos = resSpawns[pid];
+            if (
+              !pos ||
+              typeof pos.x !== 'number' ||
+              typeof pos.y !== 'number' ||
+              !Number.isFinite(pos.x) ||
+              !Number.isFinite(pos.y) ||
+              pos.x < 0 ||
+              pos.x > 3000 ||
+              pos.y < 0 ||
+              pos.y > 3000
+            ) {
+              return;
+            }
+          }
+
+          const ok = resetGame(isMobileRef.current ? 'mobile' : 'desktop', mapId, gameMode, resSpawns);
+          if (ok) {
+            clearPendingGuestShots();
+            clearPendingAbilityRequests();
+            activeMultiplayerRoundIdRef.current = roundId;
+            setMpError(null);
+            setUiState(prev => ({
+              ...prev,
+              status: 'PLAYING',
+              mapId,
+              hardMode: gameMode !== 'normal',
+              gameMode
+            }));
+          } else {
+            setMpError("FAILED TO INITIALIZE MATCH");
           }
         } finally {
-          multiplayerStartPendingRef.current = false;
-          setMultiplayerStartPending(false);
+          if (multiplayerStartRequestGenerationRef.current === requestGen) {
+            multiplayerStartPendingRef.current = false;
+            setMultiplayerStartPending(false);
+          }
         }
       }
     );
@@ -4731,8 +4826,7 @@ export default function GameCanvas() {
             closeMpMapSelector();
 
             activeMultiplayerRoundIdRef.current = 0;
-            multiplayerStartPendingRef.current = false;
-            setMultiplayerStartPending(false);
+            invalidateStartRequestGeneration();
             awaitingResumeSnapshotRef.current = false;
 
             setLobbyPlayers({});
@@ -4792,8 +4886,7 @@ export default function GameCanvas() {
           closeMpMapSelector();
 
           activeMultiplayerRoundIdRef.current = 0;
-          multiplayerStartPendingRef.current = false;
-          setMultiplayerStartPending(false);
+          invalidateStartRequestGeneration();
           awaitingResumeSnapshotRef.current = false;
 
           setLobbyPlayers({});
@@ -5179,8 +5272,8 @@ export default function GameCanvas() {
         for (const pid in spawnAssignments) {
           if (pid !== myId) {
             const assignedPos = spawnAssignments[pid];
-            const existingColor = lobbyPlayers[pid]?.colorIdx ?? state.matchPlayers[pid]?.colorIdx ?? 0;
-            const existingName = lobbyPlayers[pid]?.name ?? state.matchPlayers[pid]?.name ?? 'PLAYER';
+            const existingColor = lobbyPlayersRef.current[pid]?.colorIdx ?? state.matchPlayers[pid]?.colorIdx ?? 0;
+            const existingName = lobbyPlayersRef.current[pid]?.name ?? state.matchPlayers[pid]?.name ?? 'PLAYER';
 
             state.multiplayerPlayers[pid] = {
               x: assignedPos.x,
@@ -5215,12 +5308,12 @@ export default function GameCanvas() {
           }
         }
 
-        for (const lpid in lobbyPlayers) {
+        for (const lpid in lobbyPlayersRef.current) {
           if (!initialMatchPlayers[lpid]) {
             initialMatchPlayers[lpid] = {
               id: lpid,
-              name: lobbyPlayers[lpid].name || 'PLAYER',
-              colorIdx: lobbyPlayers[lpid].colorIdx || 0,
+              name: lobbyPlayersRef.current[lpid].name || 'PLAYER',
+              colorIdx: lobbyPlayersRef.current[lpid].colorIdx || 0,
               score: 0,
               isDead: false,
             };
@@ -5953,6 +6046,10 @@ export default function GameCanvas() {
     mpRef.current.isHost = newIsHost;
     setMpState(prev => ({ ...prev, isHost: newIsHost }));
 
+    if (!newIsHost) {
+      invalidateStartRequestGeneration();
+    }
+
     if (oldIsHost === newIsHost) {
       return;
     }
@@ -6177,8 +6274,7 @@ export default function GameCanvas() {
       awaitingResumeSnapshotRef.current = false;
       clearPendingGuestShots(true);
       clearPendingAbilityRequests();
-      multiplayerStartPendingRef.current = false;
-      setMultiplayerStartPending(false);
+      invalidateStartRequestGeneration();
       cancelPendingMatchSettingsUpdate();
       closeMpMapSelector();
       releaseAllInputs();
@@ -6349,6 +6445,7 @@ export default function GameCanvas() {
         setCallsignDraft(selfEntry.name);
       }
       handleHostRoleTransition(selfEntry.isHost);
+      lobbyPlayersRef.current = otherPlayers;
       setLobbyPlayers(otherPlayers);
 
       setMpError(prev => (prev === 'INVALID LOBBY ROSTER' ? null : prev));
@@ -6360,33 +6457,122 @@ export default function GameCanvas() {
     });
 
     socket.on('start_game', (config) => {
-      clearPendingGuestShots();
-      clearPendingAbilityRequests();
-      lastReceivedGameStateTimeRef.current = performance.now();
-      if (typeof config?.roundId === 'number') {
-        activeMultiplayerRoundIdRef.current = config.roundId;
-      }
-      if (!mpRef.current.isHost) {
-        const mapId = config?.mapId || 'medium';
-        const rawGameMode: GameMode | undefined = config?.gameMode;
-        const inferredGameMode: GameMode = rawGameMode && isValidGameMode(rawGameMode)
-          ? rawGameMode
-          : (config?.hardMode ? 'hard' : 'normal');
+      const currentSocketId = socketRef.current?.id;
+      const currentRoomId = mpRef.current.roomId ? mpRef.current.roomId.trim().toUpperCase() : null;
 
-        const spawnAssignments = config?.spawnAssignments;
-        const ok = resetGame(isMobileRef.current ? 'mobile' : 'desktop', mapId, inferredGameMode, spawnAssignments);
-        if (ok) {
-          setMpError(null);
-          setUiState(prev => ({
-            ...prev,
-            status: 'PLAYING',
-            mapId,
-            hardMode: inferredGameMode !== 'normal',
-            gameMode: inferredGameMode
-          }));
-        } else {
-          setMpError('INVALID START ASSIGNMENT');
+      if (!mpRef.current.isConnected || !currentRoomId || !currentSocketId) {
+        setMpError("INVALID START ASSIGNMENT");
+        return;
+      }
+
+      if (mpRef.current.isHost) {
+        return;
+      }
+
+      if (!config || typeof config !== 'object') {
+        setMpError("INVALID START ASSIGNMENT");
+        return;
+      }
+
+      const payloadRoomId = typeof config.roomId === 'string' ? config.roomId.trim().toUpperCase() : null;
+      if (!payloadRoomId || payloadRoomId !== currentRoomId) {
+        setMpError("INVALID START ASSIGNMENT");
+        return;
+      }
+
+      const roundId = config.roundId;
+      if (typeof roundId !== 'number' || !Number.isInteger(roundId) || roundId <= 0) {
+        setMpError("INVALID START ASSIGNMENT");
+        return;
+      }
+
+      if (roundId <= activeMultiplayerRoundIdRef.current) {
+        setMpError("INVALID START ASSIGNMENT");
+        return;
+      }
+
+      const mapId = config.mapId;
+      if (!mapId || !isValidMapId(mapId)) {
+        setMpError("INVALID START ASSIGNMENT");
+        return;
+      }
+
+      const rawGameMode: GameMode | undefined = config.gameMode;
+      const gameMode: GameMode = rawGameMode && isValidGameMode(rawGameMode)
+        ? rawGameMode
+        : (config.hardMode ? 'hard' : 'normal');
+
+      if (!isValidGameMode(gameMode)) {
+        setMpError("INVALID START ASSIGNMENT");
+        return;
+      }
+
+      const spawnAssignments = config.spawnAssignments;
+      if (!spawnAssignments || typeof spawnAssignments !== 'object' || Array.isArray(spawnAssignments)) {
+        setMpError("INVALID START ASSIGNMENT");
+        return;
+      }
+
+      const myPos = spawnAssignments[currentSocketId];
+      if (
+        !myPos ||
+        typeof myPos.x !== 'number' ||
+        typeof myPos.y !== 'number' ||
+        !Number.isFinite(myPos.x) ||
+        !Number.isFinite(myPos.y) ||
+        myPos.x < 0 ||
+        myPos.x > 3000 ||
+        myPos.y < 0 ||
+        myPos.y > 3000
+      ) {
+        setMpError("INVALID START ASSIGNMENT");
+        return;
+      }
+
+      const assignedIds = Object.keys(spawnAssignments);
+      for (const id of assignedIds) {
+        const pos = spawnAssignments[id];
+        if (
+          !pos ||
+          typeof pos.x !== 'number' ||
+          typeof pos.y !== 'number' ||
+          !Number.isFinite(pos.x) ||
+          !Number.isFinite(pos.y) ||
+          pos.x < 0 ||
+          pos.x > 3000 ||
+          pos.y < 0 ||
+          pos.y > 3000
+        ) {
+          setMpError("INVALID START ASSIGNMENT");
+          return;
         }
+      }
+
+      const expectedRosterIds = new Set([currentSocketId, ...Object.keys(lobbyPlayersRef.current)]);
+      if (
+        assignedIds.length !== expectedRosterIds.size ||
+        !assignedIds.every(id => expectedRosterIds.has(id))
+      ) {
+        setMpError("INVALID START ASSIGNMENT");
+        return;
+      }
+
+      const ok = resetGame(isMobileRef.current ? 'mobile' : 'desktop', mapId, gameMode, spawnAssignments);
+      if (ok) {
+        clearPendingGuestShots();
+        clearPendingAbilityRequests();
+        lastReceivedGameStateTimeRef.current = performance.now();
+        activeMultiplayerRoundIdRef.current = roundId;
+        setMpError(null);
+        setUiState(prev => ({
+          ...prev,
+          status: 'PLAYING',
+          mapId,
+          hardMode: gameMode !== 'normal',
+          gameMode
+        }));
+      } else {
+        setMpError("INVALID START ASSIGNMENT");
       }
     });
 
@@ -7255,6 +7441,7 @@ export default function GameCanvas() {
       cancelPendingMatchSettingsUpdate();
       clearPendingGuestShots(true);
       clearPendingAbilityRequests();
+      invalidateStartRequestGeneration();
       socket.disconnect();
     };
   }, []);
