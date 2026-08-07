@@ -7,7 +7,10 @@ import { MatchSettings, DEFAULT_MATCH_SETTINGS, isValidGameMode, isValidMapId } 
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const configuredPort = Number.parseInt(process.env.PORT ?? "", 10);
+  const PORT = Number.isInteger(configuredPort) && configuredPort > 0
+    ? configuredPort
+    : 3000;
   
   const httpServer = createServer(app);
   const io = new Server(httpServer, {
