@@ -289,7 +289,9 @@ async function startServer() {
         isHost: true,
         colorIdx: chosenColor,
         matchSettings,
-        resumeToken: hostPlayer.resumeToken
+        resumeToken: hostPlayer.resumeToken,
+        roundId: 0,
+        players: serializePublicRoster([hostPlayer])
       });
     });
 
@@ -325,7 +327,9 @@ async function startServer() {
           isHost: existingPlayer.isHost,
           colorIdx: existingPlayer.colorIdx,
           matchSettings: room.matchSettings,
-          resumeToken: existingPlayer.resumeToken
+          resumeToken: existingPlayer.resumeToken,
+          roundId: room.roundId,
+          players: serializePublicRoster(room.players)
         });
         return;
       }
@@ -390,7 +394,9 @@ async function startServer() {
         isHost: newPlayer.isHost,
         colorIdx: newPlayer.colorIdx,
         matchSettings: room.matchSettings,
-        resumeToken: newPlayer.resumeToken
+        resumeToken: newPlayer.resumeToken,
+        roundId: room.roundId,
+        players: serializePublicRoster(room.players)
       });
     });
 
@@ -505,7 +511,8 @@ async function startServer() {
         roundId: room.roundId,
         matchActive: !!room.matchActive,
         matchSettings: room.matchSettings,
-        resumeToken: player.resumeToken
+        resumeToken: player.resumeToken,
+        players: serializePublicRoster(room.players)
       });
     });
 
@@ -579,7 +586,12 @@ async function startServer() {
         matchSettings: sanitizedSettings
       });
 
-      if (cb) cb({ success: true, matchSettings: sanitizedSettings });
+      if (cb) cb({
+        success: true,
+        roomId: roomIdUpper,
+        roundId: room.roundId,
+        matchSettings: sanitizedSettings
+      });
     });
     
     socket.on("update_profile", (roomId, data) => {
