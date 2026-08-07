@@ -2369,10 +2369,12 @@ export default function GameCanvas() {
   const [multiplayerStartPending, setMultiplayerStartPending] = useState<boolean>(false);
   const multiplayerStartRequestGenerationRef = useRef<number>(0);
 
-  const invalidateStartRequestGeneration = useCallback(() => {
+  const invalidateStartRequestGeneration = useCallback((skipStateUpdate?: boolean) => {
     multiplayerStartRequestGenerationRef.current += 1;
     multiplayerStartPendingRef.current = false;
-    setMultiplayerStartPending(false);
+    if (!skipStateUpdate) {
+      setMultiplayerStartPending(false);
+    }
   }, []);
 
   const invalidateQuickSave = useCallback(() => {
@@ -3191,43 +3193,54 @@ export default function GameCanvas() {
             (typeof response.config?.roomId === 'string' && response.config.roomId.trim().toUpperCase()) ||
             (typeof response.roomId === 'string' && response.roomId.trim().toUpperCase());
 
-          if (!resRoomId || resRoomId !== capturedRoomId) return;
-
           const roundId = response.roundId;
-          if (typeof roundId !== 'number' || !Number.isInteger(roundId) || roundId <= 0) return;
-
-          if (response.config?.roundId !== roundId) return;
-
           const mapId = response.config?.mapId;
-          if (!mapId || !isValidMapId(mapId)) return;
-
           const gameMode = response.config?.gameMode;
-          if (!gameMode || !isValidGameMode(gameMode)) return;
-
+          const hardMode = response.config?.hardMode;
           const resSpawns = response.config?.spawnAssignments;
-          if (!resSpawns || typeof resSpawns !== 'object' || Array.isArray(resSpawns)) return;
 
-          const resAssignedKeys = Object.keys(resSpawns);
-          if (resAssignedKeys.length !== capturedPlayerIds.length) return;
+          let isValidResponse = true;
 
-          const hasExactCapturedIds = capturedPlayerIds.every(id => id in resSpawns);
-          if (!hasExactCapturedIds) return;
+          if (!resRoomId || resRoomId !== capturedRoomId) isValidResponse = false;
+          if (typeof roundId !== 'number' || !Number.isInteger(roundId) || roundId <= 0) isValidResponse = false;
+          if (response.config?.roundId !== roundId) isValidResponse = false;
+          if (!mapId || !isValidMapId(mapId)) isValidResponse = false;
+          if (!gameMode || !isValidGameMode(gameMode)) isValidResponse = false;
+          if (typeof hardMode !== 'boolean' || hardMode !== (gameMode !== 'normal')) isValidResponse = false;
+          if (!resSpawns || typeof resSpawns !== 'object' || Array.isArray(resSpawns)) isValidResponse = false;
 
-          for (const pid of capturedPlayerIds) {
-            const pos = resSpawns[pid];
-            if (
-              !pos ||
-              typeof pos.x !== 'number' ||
-              typeof pos.y !== 'number' ||
-              !Number.isFinite(pos.x) ||
-              !Number.isFinite(pos.y) ||
-              pos.x < 0 ||
-              pos.x > 3000 ||
-              pos.y < 0 ||
-              pos.y > 3000
-            ) {
-              return;
+          if (isValidResponse && resSpawns) {
+            const resAssignedKeys = Object.keys(resSpawns);
+            if (resAssignedKeys.length !== capturedPlayerIds.length) {
+              isValidResponse = false;
+            } else if (!capturedPlayerIds.every(id => id in resSpawns)) {
+              isValidResponse = false;
+            } else {
+              for (const pid of capturedPlayerIds) {
+                const pos = resSpawns[pid];
+                if (
+                  !pos ||
+                  typeof pos !== 'object' ||
+                  Array.isArray(pos) ||
+                  typeof pos.x !== 'number' ||
+                  typeof pos.y !== 'number' ||
+                  !Number.isFinite(pos.x) ||
+                  !Number.isFinite(pos.y) ||
+                  pos.x < 0 ||
+                  pos.x > 3000 ||
+                  pos.y < 0 ||
+                  pos.y > 3000
+                ) {
+                  isValidResponse = false;
+                  break;
+                }
+              }
             }
+          }
+
+          if (!isValidResponse) {
+            setMpError("INVALID START RESPONSE");
+            return;
           }
 
           const ok = resetGame(isMobileRef.current ? 'mobile' : 'desktop', mapId, gameMode, resSpawns);
@@ -6461,7 +6474,6 @@ export default function GameCanvas() {
       const currentRoomId = mpRef.current.roomId ? mpRef.current.roomId.trim().toUpperCase() : null;
 
       if (!mpRef.current.isConnected || !currentRoomId || !currentSocketId) {
-        setMpError("INVALID START ASSIGNMENT");
         return;
       }
 
@@ -6469,25 +6481,21 @@ export default function GameCanvas() {
         return;
       }
 
-      if (!config || typeof config !== 'object') {
-        setMpError("INVALID START ASSIGNMENT");
+      if (!config || typeof config !== 'object' || Array.isArray(config)) {
         return;
       }
 
       const payloadRoomId = typeof config.roomId === 'string' ? config.roomId.trim().toUpperCase() : null;
       if (!payloadRoomId || payloadRoomId !== currentRoomId) {
-        setMpError("INVALID START ASSIGNMENT");
         return;
       }
 
       const roundId = config.roundId;
       if (typeof roundId !== 'number' || !Number.isInteger(roundId) || roundId <= 0) {
-        setMpError("INVALID START ASSIGNMENT");
         return;
       }
 
       if (roundId <= activeMultiplayerRoundIdRef.current) {
-        setMpError("INVALID START ASSIGNMENT");
         return;
       }
 
@@ -6497,12 +6505,13 @@ export default function GameCanvas() {
         return;
       }
 
-      const rawGameMode: GameMode | undefined = config.gameMode;
-      const gameMode: GameMode = rawGameMode && isValidGameMode(rawGameMode)
-        ? rawGameMode
-        : (config.hardMode ? 'hard' : 'normal');
+      const gameMode: GameMode = config.gameMode;
+      if (!gameMode || !isValidGameMode(gameMode)) {
+        setMpError("INVALID START ASSIGNMENT");
+        return;
+      }
 
-      if (!isValidGameMode(gameMode)) {
+      if (typeof config.hardMode !== 'boolean' || config.hardMode !== (gameMode !== 'normal')) {
         setMpError("INVALID START ASSIGNMENT");
         return;
       }
@@ -6513,27 +6522,13 @@ export default function GameCanvas() {
         return;
       }
 
-      const myPos = spawnAssignments[currentSocketId];
-      if (
-        !myPos ||
-        typeof myPos.x !== 'number' ||
-        typeof myPos.y !== 'number' ||
-        !Number.isFinite(myPos.x) ||
-        !Number.isFinite(myPos.y) ||
-        myPos.x < 0 ||
-        myPos.x > 3000 ||
-        myPos.y < 0 ||
-        myPos.y > 3000
-      ) {
-        setMpError("INVALID START ASSIGNMENT");
-        return;
-      }
-
       const assignedIds = Object.keys(spawnAssignments);
       for (const id of assignedIds) {
         const pos = spawnAssignments[id];
         if (
           !pos ||
+          typeof pos !== 'object' ||
+          Array.isArray(pos) ||
           typeof pos.x !== 'number' ||
           typeof pos.y !== 'number' ||
           !Number.isFinite(pos.x) ||
@@ -6546,6 +6541,12 @@ export default function GameCanvas() {
           setMpError("INVALID START ASSIGNMENT");
           return;
         }
+      }
+
+      const myPos = spawnAssignments[currentSocketId];
+      if (!myPos) {
+        setMpError("INVALID START ASSIGNMENT");
+        return;
       }
 
       const expectedRosterIds = new Set([currentSocketId, ...Object.keys(lobbyPlayersRef.current)]);
@@ -6568,7 +6569,7 @@ export default function GameCanvas() {
           ...prev,
           status: 'PLAYING',
           mapId,
-          hardMode: gameMode !== 'normal',
+          hardMode: config.hardMode,
           gameMode
         }));
       } else {
@@ -7441,7 +7442,7 @@ export default function GameCanvas() {
       cancelPendingMatchSettingsUpdate();
       clearPendingGuestShots(true);
       clearPendingAbilityRequests();
-      invalidateStartRequestGeneration();
+      invalidateStartRequestGeneration(true);
       socket.disconnect();
     };
   }, []);
