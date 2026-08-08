@@ -13,7 +13,8 @@
     "start": "node dist/server.cjs",
     "preview": "vite preview",
     "clean": "rm -rf dist",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test": "tsx --test src/shared/bulletSync.test.ts"
   },
   "dependencies": {
     "express": "^4.21.2",

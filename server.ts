@@ -698,11 +698,18 @@ async function startServer() {
       // Update server state timing tracker
       room.lastHostStateTime = Date.now();
       
-      socket.to(roomIdUpper).volatile.emit("game_state", {
+      const outboundState = {
         ...state,
+        criticalSnapshot: state.criticalSnapshot === true,
         roomId: roomIdUpper,
         roundId: room.roundId
-      });
+      };
+
+      if (outboundState.criticalSnapshot) {
+        socket.to(roomIdUpper).emit("game_state", outboundState);
+      } else {
+        socket.to(roomIdUpper).volatile.emit("game_state", outboundState);
+      }
     });
 
     // Client sends input states (keyboard/mouse) for movement
