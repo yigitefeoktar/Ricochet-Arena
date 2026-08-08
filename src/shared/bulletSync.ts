@@ -1,4 +1,5 @@
-export const GUEST_BULLET_SNAP_DISTANCE = 48;
+export const GUEST_BULLET_SNAP_DISTANCE = 160;
+export const GUEST_BULLET_BLEND = 0.65;
 
 export interface SyncableBullet {
   x: number;
@@ -6,18 +7,12 @@ export interface SyncableBullet {
   dx: number;
   dy: number;
   bounceCount: number;
-  visualSpeedScale?: number;
   [key: string]: unknown;
 }
 
-const clamp = (value: number, min: number, max: number) =>
-  Math.max(min, Math.min(value, max));
-
 /**
- * Reconcile an already-predicted guest bullet with a host snapshot.
- * Compatible snapshots keep the visual position and adjust speed so the
- * prediction converges without ever pulling the bullet backwards. A missed
- * bounce, direction reversal, or large error snaps once to host authority.
+ * Smooth ordinary host snapshots without simulating guest-side physics.
+ * A bounce, direction change, or large error always snaps to host authority.
  */
 export function reconcileGuestBulletSnapshot<T extends SyncableBullet>(
   predicted: T,
@@ -35,27 +30,18 @@ export function reconcileGuestBulletSnapshot<T extends SyncableBullet>(
         (predictedSpeed * authoritativeSpeed)
       : 1;
 
-  const canPreservePrediction =
+  const canBlendSnapshot =
     error <= GUEST_BULLET_SNAP_DISTANCE &&
     predicted.bounceCount === authoritative.bounceCount &&
     directionDot > 0.25;
 
-  if (!canPreservePrediction) {
-    return {
-      ...authoritative,
-      visualSpeedScale: 1,
-    };
+  if (!canBlendSnapshot) {
+    return { ...authoritative };
   }
-
-  const dirX = authoritativeSpeed > 0.0001 ? authoritative.dx / authoritativeSpeed : 0;
-  const dirY = authoritativeSpeed > 0.0001 ? authoritative.dy / authoritativeSpeed : 0;
-  const alongPathError = errorX * dirX + errorY * dirY;
-  const visualSpeedScale = clamp(1 + alongPathError / 120, 0.85, 1.15);
 
   return {
     ...authoritative,
-    x: predicted.x,
-    y: predicted.y,
-    visualSpeedScale,
+    x: predicted.x + errorX * GUEST_BULLET_BLEND,
+    y: predicted.y + errorY * GUEST_BULLET_BLEND,
   };
 }

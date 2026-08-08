@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  GUEST_BULLET_BLEND,
   GUEST_BULLET_SNAP_DISTANCE,
   reconcileGuestBulletSnapshot,
   type SyncableBullet,
@@ -15,38 +16,32 @@ const bullet = (overrides: Partial<SyncableBullet> = {}): SyncableBullet => ({
   ...overrides,
 });
 
-test('keeps a compatible predicted position and speeds up when it is behind', () => {
-  const result = reconcileGuestBulletSnapshot(
-    bullet(),
-    bullet({ x: 112 }),
-  );
+test('blends an ordinary same-direction host snapshot', () => {
+  const result = reconcileGuestBulletSnapshot(bullet(), bullet({ x: 120 }));
 
-  assert.equal(result.x, 100);
+  assert.equal(result.x, 100 + 20 * GUEST_BULLET_BLEND);
   assert.equal(result.y, 100);
-  assert.ok((result.visualSpeedScale ?? 1) > 1);
+  assert.equal(result.dx, 120);
 });
 
-test('slows prediction instead of moving it backwards when it is ahead', () => {
+test('uses host fields even while position is blended', () => {
   const result = reconcileGuestBulletSnapshot(
-    bullet({ x: 112 }),
-    bullet({ x: 100 }),
+    bullet({ x: 110 }),
+    bullet({ x: 120, isNeutral: true }),
   );
 
-  assert.equal(result.x, 112);
-  assert.ok((result.visualSpeedScale ?? 1) < 1);
+  assert.equal(result.x, 110 + 10 * GUEST_BULLET_BLEND);
+  assert.equal(result.isNeutral, true);
 });
 
-test('snaps once when positional divergence is too large', () => {
-  const result = reconcileGuestBulletSnapshot(
-    bullet(),
-    bullet({ x: 100 + GUEST_BULLET_SNAP_DISTANCE + 1 }),
-  );
+test('snaps when positional divergence is too large', () => {
+  const authoritativeX = 100 + GUEST_BULLET_SNAP_DISTANCE + 1;
+  const result = reconcileGuestBulletSnapshot(bullet(), bullet({ x: authoritativeX }));
 
-  assert.equal(result.x, 100 + GUEST_BULLET_SNAP_DISTANCE + 1);
-  assert.equal(result.visualSpeedScale, 1);
+  assert.equal(result.x, authoritativeX);
 });
 
-test('snaps to host authority when a bounce was missed', () => {
+test('snaps to host authority when bounce count changes', () => {
   const result = reconcileGuestBulletSnapshot(
     bullet({ x: 104 }),
     bullet({ x: 102, dx: -120, bounceCount: 1 }),
@@ -55,7 +50,6 @@ test('snaps to host authority when a bounce was missed', () => {
   assert.equal(result.x, 102);
   assert.equal(result.dx, -120);
   assert.equal(result.bounceCount, 1);
-  assert.equal(result.visualSpeedScale, 1);
 });
 
 test('snaps when velocity reverses even if bounce metadata is unchanged', () => {

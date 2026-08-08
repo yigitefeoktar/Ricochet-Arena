@@ -2169,114 +2169,6 @@ function sweptMultiplayerBulletRelicCollision(
   return null;
 }
 
-type GuestVisualBullet = {
-  x: number;
-  y: number;
-  dx: number;
-  dy: number;
-  radius: number;
-  isPlayer: boolean;
-  bounceCount: number;
-  spawnTime: number;
-  isNeutral: boolean;
-  allowedBlockKeys?: string[];
-  visualSpeedScale?: number;
-};
-
-/**
- * Advance only the visual representation of a bullet on a multiplayer guest.
- * This intentionally handles static movement geometry only. Damage, scoring,
- * entity hits, creation, and removal remain exclusively host-authoritative.
- */
-function advanceGuestBulletVisual(
-  bullet: GuestVisualBullet,
-  dt: number,
-  currentTime: number,
-  worldPhaseTime: number,
-  walls: { x: number; y: number; w: number; h: number }[],
-  blocks: { x: number; y: number; size: number; createdAt: number; colorIdx?: number; ownerId?: string }[],
-  spawners: any[],
-): void {
-  const baseSpeedMultiplier = bullet.isPlayer && currentTime - bullet.spawnTime < 250 ? 3.5 : 1;
-  const convergenceScale = clamp(bullet.visualSpeedScale ?? 1, 0.85, 1.15);
-  const motionDt = dt * convergenceScale;
-  const startX = bullet.x;
-  const startY = bullet.y;
-  const targetX = startX + bullet.dx * baseSpeedMultiplier * motionDt;
-  const targetY = startY + bullet.dy * baseSpeedMultiplier * motionDt;
-
-  const wallResult = sweptMultiplayerBulletResolve(
-    startX,
-    startY,
-    targetX,
-    targetY,
-    bullet.radius,
-    walls,
-  );
-
-  const blockCollision = sweptBuildBlockCollision(
-    startX,
-    startY,
-    wallResult.x,
-    wallResult.y,
-    bullet.radius,
-    blocks,
-    bullet.allowedBlockKeys || [],
-  );
-
-  const staticEndX = blockCollision ? blockCollision.x : wallResult.x;
-  const staticEndY = blockCollision ? blockCollision.y : wallResult.y;
-  const startPhaseTime = Math.max(0, worldPhaseTime - motionDt * 1000);
-  const relicCollision = sweptMultiplayerBulletRelicCollision(
-    startX,
-    startY,
-    staticEndX,
-    staticEndY,
-    bullet.radius,
-    spawners,
-    startPhaseTime,
-    worldPhaseTime,
-  );
-
-  const hasStaticCollision = blockCollision !== null || wallResult.collided;
-  const relicWins = relicCollision !== null && (!hasStaticCollision || relicCollision.t < 1 - 1e-6);
-
-  if (relicWins && relicCollision) {
-    bullet.x = relicCollision.x;
-    bullet.y = relicCollision.y;
-    const dot = bullet.dx * relicCollision.nx + bullet.dy * relicCollision.ny;
-    if (dot < 0) {
-      bullet.dx -= 2 * dot * relicCollision.nx;
-      bullet.dy -= 2 * dot * relicCollision.ny;
-      bullet.bounceCount++;
-    }
-  } else if (blockCollision) {
-    bullet.x = blockCollision.x;
-    bullet.y = blockCollision.y;
-    const dot = bullet.dx * blockCollision.nx + bullet.dy * blockCollision.ny;
-    if (dot < 0) {
-      bullet.dx -= 2 * dot * blockCollision.nx;
-      bullet.dy -= 2 * dot * blockCollision.ny;
-    }
-    bullet.bounceCount++;
-    bullet.isNeutral = true;
-  } else {
-    bullet.x = wallResult.x;
-    bullet.y = wallResult.y;
-    for (const normal of wallResult.normals) {
-      const dot = bullet.dx * normal.nx + bullet.dy * normal.ny;
-      if (dot < 0) {
-        bullet.dx -= 2 * dot * normal.nx;
-        bullet.dy -= 2 * dot * normal.ny;
-        bullet.bounceCount++;
-        bullet.isNeutral = true;
-      }
-    }
-  }
-
-  bullet.visualSpeedScale = 1 + (convergenceScale - 1) * Math.exp(-6 * dt);
-}
-
 const DashStatus = ({ stateRef }: { stateRef: any }) => {
   const [text, setText] = useState('READY');
   const [color, setColor] = useState('#fff');
@@ -3489,7 +3381,7 @@ export default function GameCanvas() {
     forceBroadcast: false,
     blocks: [] as { x: number; y: number; size: number; createdAt: number, colorIdx?: number, ownerId?: string }[],
     nextBlockScore: 100,
-    bullets: [] as { id?: string; clientShotId?: string; x: number; y: number; dx: number; dy: number; radius: number, isPlayer: boolean, bounceCount: number, spawnTime: number, isNeutral: boolean, ownerId?: string, colorIdx?: number, targetX?: number, targetY?: number, repelMultiplied?: boolean, allowedBlockKeys?: string[], leftBlockKeys?: string[], visualSpeedScale?: number }[],
+    bullets: [] as { id?: string; clientShotId?: string; x: number; y: number; dx: number; dy: number; radius: number, isPlayer: boolean, bounceCount: number, spawnTime: number, isNeutral: boolean, ownerId?: string, colorIdx?: number, targetX?: number, targetY?: number, repelMultiplied?: boolean, allowedBlockKeys?: string[], leftBlockKeys?: string[] }[],
     enemies: [] as { id?: string; x: number; y: number; radius: number; lastShoot: number, speed: number, targetX?: number, targetY?: number, kbvx?: number, kbvy?: number, processedZoneKbs?: number[] }[],
     bouncers: [] as { id?: string; x: number; y: number; dx: number; dy: number; size: number; radius: number; speed: number; lastDirChange: number; lastMultiply: number, targetX?: number, targetY?: number, kbvx?: number, kbvy?: number, processedZoneKbs?: number[] }[],
     zones: [] as { x: number; y: number; innerRadius: number; outerRadius: number; duration: number; spawnTime: number; ownerId: string; colorIdx?: number, type?: 'repel' }[],
@@ -6365,12 +6257,6 @@ export default function GameCanvas() {
     if (newIsHost) {
       awaitingResumeSnapshotRef.current = false;
 
-      // Guest-only convergence metadata must never become authoritative or be
-      // rebroadcast if this client is promoted during host migration.
-      for (const bullet of stateRef.current.bullets || []) {
-        delete bullet.visualSpeedScale;
-      }
-
       if (stateRef.current.matchPhase === 'FINAL_RUN') {
         if (mappedClientDeadlineRef.current !== null) {
           stateRef.current.finalRunDeadline = mappedClientDeadlineRef.current;
@@ -7371,15 +7257,19 @@ export default function GameCanvas() {
             }
           }
 
-          // Compatible predictions keep moving forward and converge by small
-          // speed changes. Missed bounces or large errors snap once to the host.
-          incomingBullets.push(reconcileGuestBulletSnapshot(
-            matchedLocal,
-            {
-              ...ib,
-              spawnTime: mappedSpawnTime,
-            },
-          ));
+          const authoritativeBullet = {
+            ...ib,
+            spawnTime: mappedSpawnTime,
+          };
+
+          // A locally predicted shot is intentionally snapped on its first
+          // acknowledgement. After promotion, ordinary same-direction host
+          // snapshots may be blended, while bounces always snap immediately.
+          incomingBullets.push(
+            matchedLocal.id.toString().startsWith('local_')
+              ? authoritativeBullet
+              : reconcileGuestBulletSnapshot(matchedLocal, authoritativeBullet)
+          );
         } else {
           // Brand new bullet from host
           incomingBullets.push({
@@ -10010,23 +9900,6 @@ export default function GameCanvas() {
                 colorIdx: playerProfileRef.current.colorIdx
               });
             }
-          }
-        }
-
-        // Guests predict bullet visuals every animation frame. The host still
-        // owns all gameplay consequences and corrects these visuals via state
-        // snapshots, so this path must not damage or remove any entity.
-        if (mpRef.current.roomId && !mpRef.current.isHost) {
-          for (const bullet of state.bullets) {
-            advanceGuestBulletVisual(
-              bullet,
-              dt,
-              currentTime,
-              worldPhaseTime,
-              activeWalls,
-              state.blocks,
-              state.spawners,
-            );
           }
         }
 
