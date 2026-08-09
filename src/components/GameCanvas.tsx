@@ -12465,7 +12465,13 @@ export default function GameCanvas() {
     };
   }, []);
 
-  const menuScale = Math.max(0.75, Math.min(1.2, Math.min(containerSize.width / 460, containerSize.height / 650)));
+  // The multiplayer lobby was originally composed at a 650 px logical height
+  // and displayed at roughly 85% on the reference iPhone layout. Keep that
+  // exact displayed size on every supported aspect ratio; compensate the
+  // unscaled width so the card still fills the available mobile width.
+  const lobbyMenuScale = 0.85;
+  const lobbyMenuWidthPercent = 100 / lobbyMenuScale;
+  const lobbyMenuMaxWidth = 448 / lobbyMenuScale;
   const mapScale = Math.max(0.75, Math.min(1.1, Math.min(containerSize.width / 920, containerSize.height / 650)));
 
   const isAnyMapSelectorOpen =
@@ -13009,11 +13015,17 @@ export default function GameCanvas() {
               ) : (
                 <motion.div
                   key="lobby-box"
-                  initial={{ scale: 0.9 * menuScale, y: 20 }}
-                  animate={{ scale: menuScale, y: 0 }}
-                  exit={{ scale: 0.9 * menuScale, y: 20 }}
+                  initial={{ scale: 0.9 * lobbyMenuScale, y: 20 }}
+                  animate={{ scale: lobbyMenuScale, y: 0 }}
+                  exit={{ scale: 0.9 * lobbyMenuScale, y: 20 }}
                   transition={{ duration: 0.2, ease: "easeOut" }}
-                  className="w-full max-w-md flex flex-col border-2 border-[#ffcc00] bg-[#0d0f1b]/95 p-3 sm:p-6 shadow-[10px_10px_0_#ffcc00] pointer-events-auto items-center relative z-10 origin-center max-h-[92vh] overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none]"
+                  className={`flex-none flex flex-col border-2 border-[#ffcc00] bg-[#0d0f1b]/95 p-3 shadow-[10px_10px_0_#ffcc00] pointer-events-auto items-center relative z-10 origin-center overflow-y-auto [&::-webkit-scrollbar]:hidden [-ms-overflow-style:none] [scrollbar-width:none] ${
+                    mpState.roomId ? 'h-[650px]' : 'max-h-[650px]'
+                  }`}
+                  style={{
+                    width: `${lobbyMenuWidthPercent}%`,
+                    maxWidth: `${lobbyMenuMaxWidth}px`,
+                  }}
                 >
               <h2 className="text-3xl font-black text-white tracking-widest" style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}>MULTIPLAYER</h2>
 
@@ -13059,7 +13071,7 @@ export default function GameCanvas() {
                     </button>
                   </div>
 
-                  <div className="w-full h-[345px] min-h-[345px] flex flex-col mb-3 sm:mb-5 shrink-0 overflow-hidden">
+                  <div className="w-full h-[345px] min-h-[345px] flex flex-col mb-3 shrink-0 overflow-hidden">
                     {activeLobbyTab === 'invite' ? (
                       <div className="w-full h-full flex flex-col justify-between">
                         <div>
