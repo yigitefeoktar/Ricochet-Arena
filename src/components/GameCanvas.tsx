@@ -26,10 +26,12 @@ import {
   type GuestBulletTimeline,
 } from '../shared/multiplayerBulletTimeline';
 import {
-  getGuestShotPreviewTravelSeconds,
+  advanceGuestShotVisual,
+  getGuestShotVisualAlpha,
   getPlayerBulletTimeAtTravelFraction,
   getPlayerBulletTravelSecondsBetween,
-  MAX_GUEST_SHOT_PREVIEW_MS,
+  GUEST_SHOT_VISUAL_END_FADE_MS,
+  type GuestShotVisualState,
 } from '../shared/multiplayerShotPreview';
 
 interface ActiveMatchSettingsRequest {
@@ -2451,16 +2453,8 @@ export default function GameCanvas() {
     roundId: number;
     spawnTime: number;
     status: 'pending' | 'accepted' | 'rejected';
-    preview?: {
-      x: number;
-      y: number;
-      dx: number;
-      dy: number;
-      radius: number;
-      colorIdx: number;
-      allowedBlockKeys: string[];
-      spawnWorldPhaseTime: number;
-    };
+    authoritativeSeen: boolean;
+    preview?: GuestShotVisualState;
   }
 
   const [quickSaveExists, setQuickSaveExists] = useState<boolean>(false);
@@ -6841,10 +6835,10 @@ export default function GameCanvas() {
       if (pending.roundId !== result.roundId) return;
 
       if (result.status === 'rejected') {
-        stateRef.current.bullets = stateRef.current.bullets.filter(
-          b => b.id !== pending.localBulletId
-        );
-        pendingGuestShotsRef.current.delete(clientShotId);
+        pending.status = 'rejected';
+        if (pending.preview && pending.preview.endingAt === undefined) {
+          pending.preview.endingAt = performance.now();
+        }
       } else if (result.status === 'accepted') {
         pending.status = 'accepted';
         if (typeof result.authoritativeBulletId === 'string' && result.authoritativeBulletId.length > 0 && result.authoritativeBulletId.length <= 96 && /^[a-zA-Z0-9_\-:]+$/.test(result.authoritativeBulletId)) {
@@ -7306,8 +7300,6 @@ export default function GameCanvas() {
       const sampledGuestBullets = sampleGuestBulletTimeline(
         bulletTimeline,
         performance.now(),
-        undefined,
-        myId,
       ).bullets;
 
       for (const [shotId, pending] of pendingGuestShotsRef.current.entries()) {
@@ -7320,6 +7312,27 @@ export default function GameCanvas() {
         if (matchingSpawn) {
           pending.status = 'accepted';
           pending.authoritativeBulletId = matchingSpawn.bulletId;
+          pending.authoritativeSeen = true;
+        }
+        const matchingSnapshot = mappedIncomingBullets.find((bullet: any) =>
+          bullet.clientShotId === pending.clientShotId || bullet.id === pending.authoritativeBulletId);
+        if (matchingSnapshot) {
+          pending.status = 'accepted';
+          pending.authoritativeBulletId = matchingSnapshot.id;
+          pending.authoritativeSeen = true;
+        }
+        const matchingTransform = pending.authoritativeBulletId
+          ? [...mappedBulletEvents].reverse().find(event =>
+              event.bulletId === pending.authoritativeBulletId && event.type === 'transform' && event.state)
+          : undefined;
+        if (matchingTransform?.state && pending.preview && pending.preview.endingAt === undefined) {
+          // Apply authoritative rule changes without copying the delayed host
+          // position into the local visual.
+          pending.preview.dx = matchingTransform.state.dx;
+          pending.preview.dy = matchingTransform.state.dy;
+          pending.preview.isNeutral = matchingTransform.state.isNeutral;
+          pending.preview.colorIdx = matchingTransform.state.colorIdx ?? pending.preview.colorIdx;
+          pending.preview.lastUpdateTime = performance.now();
         }
         const terminalEvent = pending.authoritativeBulletId
           ? mappedBulletEvents.find(event =>
@@ -7327,19 +7340,41 @@ export default function GameCanvas() {
               (event.type === 'hit' || event.type === 'remove'))
           : undefined;
         if (terminalEvent) {
-          pendingGuestShotsRef.current.delete(shotId);
-          continue;
+          if (pending.preview && pending.preview.endingAt === undefined) {
+            const visual = pending.preview;
+            visual.endingAt = performance.now();
+            const colorDef = PLAYER_COLORS[visual.colorIdx] || PLAYER_COLORS[0];
+            const impactColor = visual.isNeutral ? '#aaaaaa' : colorDef.n;
+            spawnParticlesDirect(visual.x, visual.y, impactColor, 8);
+            stateRef.current.shockwaves.push({
+              x: visual.x,
+              y: visual.y,
+              color: impactColor,
+              maxRadius: 24,
+              age: 0,
+              maxAge: 0.12,
+              thickness: 3,
+            });
+          }
+        } else if (pending.authoritativeSeen && !matchingSnapshot && pending.preview?.endingAt === undefined) {
+          // Full snapshots are authoritative recovery. If a previously seen
+          // bullet is absent, end its visual even if a terminal event was lost.
+          pending.preview.endingAt = performance.now();
         }
-        // Keep the immediate local-only preview until the authoritative bullet
-        // actually reaches the buffered render timeline, not merely until its
-        // future snapshot arrives over the network.
-        if (pending.status === 'accepted' && sampledGuestBullets.some((bullet: any) =>
-          bullet.clientShotId === pending.clientShotId || bullet.id === pending.authoritativeBulletId)) {
+        const authoritativeStillBuffered = sampledGuestBullets.some((bullet: any) =>
+          bullet.clientShotId === pending.clientShotId || bullet.id === pending.authoritativeBulletId);
+        if (pending.preview?.endingAt !== undefined &&
+            performance.now() - pending.preview.endingAt >= GUEST_SHOT_VISUAL_END_FADE_MS &&
+            !authoritativeStillBuffered) {
           pendingGuestShotsRef.current.delete(shotId);
         }
       }
 
-      stateRef.current.bullets = sampledGuestBullets;
+      stateRef.current.bullets = sampledGuestBullets.filter((bullet: any) => {
+        if (bullet.ownerId !== myId) return true;
+        return ![...pendingGuestShotsRef.current.values()].some(pending =>
+          bullet.clientShotId === pending.clientShotId || bullet.id === pending.authoritativeBulletId);
+      });
 
       if (uiRef.current.status === 'PLAYING') {
         const targetScore = (mappedMultiplayerPlayers[myId] !== undefined)
@@ -8418,9 +8453,16 @@ export default function GameCanvas() {
       // Defensive timeout / cleanup for pending guest shots
       if (mpRef.current.roomId && !mpRef.current.isHost && pendingGuestShotsRef.current.size > 0) {
         for (const [shotId, entry] of pendingGuestShotsRef.current.entries()) {
-          if (currentTime - entry.spawnTime > 1500) {
-            state.bullets = state.bullets.filter(b => b.id !== entry.localBulletId);
+          const ageMs = currentTime - entry.spawnTime;
+          if (entry.preview?.endingAt !== undefined &&
+              currentTime - entry.preview.endingAt >= GUEST_SHOT_VISUAL_END_FADE_MS &&
+              !entry.authoritativeBulletId) {
             pendingGuestShotsRef.current.delete(shotId);
+          } else if (entry.status === 'pending' && ageMs > 1500) {
+            entry.status = 'rejected';
+            if (entry.preview && entry.preview.endingAt === undefined) {
+              entry.preview.endingAt = currentTime;
+            }
           }
         }
       }
@@ -8580,15 +8622,14 @@ export default function GameCanvas() {
 
         // --- LOGIC UPDATES ---
 
-        // Authoritative guest bullets are rendered from the reliable buffered
-        // host timeline. Guests never simulate bullet collision or removal.
+        // Remote bullets are rendered from the reliable buffered host timeline.
+        // A guest's own bullet keeps one continuous local-only visual; the host
+        // still owns every gameplay collision, hit, score, and removal.
         if (!mpRef.current.isHost) {
           if (mpRef.current.roomId && guestBulletTimelineRef.current) {
             state.bullets = sampleGuestBulletTimeline(
               guestBulletTimelineRef.current,
               currentTime,
-              undefined,
-              socketRef.current?.id,
             ).bullets;
 
             for (const [shotId, pending] of pendingGuestShotsRef.current.entries()) {
@@ -8596,9 +8637,102 @@ export default function GameCanvas() {
                 pendingGuestShotsRef.current.delete(shotId);
                 continue;
               }
-              if (pending.status === 'accepted' && state.bullets.some((bullet: any) =>
-                bullet.clientShotId === pending.clientShotId || bullet.id === pending.authoritativeBulletId)) {
+              const authoritativeStillBuffered = state.bullets.some((bullet: any) =>
+                bullet.clientShotId === pending.clientShotId || bullet.id === pending.authoritativeBulletId);
+              if (pending.preview?.endingAt !== undefined &&
+                  currentTime - pending.preview.endingAt >= GUEST_SHOT_VISUAL_END_FADE_MS &&
+                  !authoritativeStillBuffered) {
                 pendingGuestShotsRef.current.delete(shotId);
+              }
+            }
+            const localId = socketRef.current?.id;
+            if (localId) {
+              state.bullets = state.bullets.filter((bullet: any) => {
+                if (bullet.ownerId !== localId) return true;
+                return ![...pendingGuestShotsRef.current.values()].some(pending =>
+                  bullet.clientShotId === pending.clientShotId || bullet.id === pending.authoritativeBulletId);
+              });
+            }
+          }
+
+          if (mpRef.current.roomId) {
+            for (const pending of pendingGuestShotsRef.current.values()) {
+              const visual = pending.preview;
+              if (!visual || visual.endingAt !== undefined) continue;
+
+              if (visual.allowedBlockKeys.length > 0) {
+                const stillInsideAllowedBlock = state.blocks.some(block => {
+                  if (!visual.allowedBlockKeys.includes(`${block.x}_${block.y}`)) return false;
+                  const halfSize = block.size / 2;
+                  const closestX = Math.max(block.x - halfSize, Math.min(visual.x, block.x + halfSize));
+                  const closestY = Math.max(block.y - halfSize, Math.min(visual.y, block.y + halfSize));
+                  return (visual.x - closestX) ** 2 + (visual.y - closestY) ** 2 < visual.radius ** 2;
+                });
+                if (!stillInsideAllowedBlock) visual.allowedBlockKeys = [];
+              }
+
+              const allowedBuildKeys = new Set(visual.allowedBlockKeys);
+              const visualSurfaces: AxisAlignedSurface[] = [
+                ...activeWalls.map((wall, index) => ({
+                  id: `wall:${index}`,
+                  kind: 'wall' as const,
+                  x: wall.x,
+                  y: wall.y,
+                  w: wall.w,
+                  h: wall.h,
+                })),
+                ...state.blocks.flatMap((block, index) => {
+                  if (allowedBuildKeys.has(`${block.x}_${block.y}`)) return [];
+                  return [{
+                    id: `build:${index}:${block.x}:${block.y}`,
+                    kind: 'build' as const,
+                    x: block.x - block.size / 2,
+                    y: block.y - block.size / 2,
+                    w: block.size,
+                    h: block.size,
+                  }];
+                }),
+              ];
+              const startWorldPhaseTime = visual.lastWorldPhaseTime;
+              const advanced = advanceGuestShotVisual(
+                visual,
+                currentTime,
+                visualSurfaces,
+                (startX, startY, endX, endY, startFraction, endFraction): SurfaceHit | null => {
+                  const relicCollision = sweptMultiplayerBulletRelicCollision(
+                    startX,
+                    startY,
+                    endX,
+                    endY,
+                    visual.radius,
+                    state.spawners,
+                    startWorldPhaseTime + (worldPhaseTime - startWorldPhaseTime) * startFraction,
+                    startWorldPhaseTime + (worldPhaseTime - startWorldPhaseTime) * endFraction,
+                  );
+                  if (!relicCollision) return null;
+                  const spawnerIndex = state.spawners.indexOf(relicCollision.spawner);
+                  return {
+                    id: `relic:${spawnerIndex}:${relicCollision.specialType}`,
+                    kind: 'relic',
+                    t: relicCollision.t,
+                    x: startX + (endX - startX) * relicCollision.t,
+                    y: startY + (endY - startY) * relicCollision.t,
+                    normals: [{ nx: relicCollision.nx, ny: relicCollision.ny }],
+                  };
+                },
+              );
+              advanced.lastWorldPhaseTime = worldPhaseTime;
+              pending.preview = advanced;
+
+              if (Math.random() > 0.3) {
+                const colorDef = PLAYER_COLORS[advanced.colorIdx] || PLAYER_COLORS[0];
+                state.trails.push({
+                  x: advanced.x,
+                  y: advanced.y,
+                  age: 0,
+                  color: advanced.isNeutral ? '#aaaaaa' : colorDef.n,
+                  radius: advanced.radius * 0.6,
+                });
               }
             }
           }
@@ -9925,7 +10059,8 @@ export default function GameCanvas() {
                   authoritativeBulletId: null,
                   roundId: activeRoundId,
                   spawnTime: currentTime,
-                  status: 'pending'
+                  status: 'pending',
+                  authoritativeSeen: false,
                 });
               }
             }
@@ -9979,14 +10114,18 @@ export default function GameCanvas() {
                   radius: BULLET_RADIUS,
                   colorIdx: playerProfileRef.current.colorIdx,
                   allowedBlockKeys: [...localAllowedKeys],
-                  spawnWorldPhaseTime: worldPhaseTime,
+                  spawnTime: currentTime,
+                  lastUpdateTime: currentTime,
+                  isNeutral: false,
+                  bounceCount: 0,
+                  lastWorldPhaseTime: worldPhaseTime,
                 };
               }
             }
 
             // Only the host/single-player path creates gameplay bullets. A
-            // multiplayer guest sends responsive input, then displays the
-            // authoritative spawn on the short buffered timeline.
+            // multiplayer guest sends responsive input and keeps a cosmetic
+            // local visual while the host owns the authoritative bullet.
             if (!isGuest) {
               state.bullets.push({
                 id: localBulletId,
@@ -11686,89 +11825,28 @@ export default function GameCanvas() {
         ctx.fill();
       }
 
-      // A guest sees its own shot leave the current local player immediately,
-      // while the authoritative bullet is travelling through the 150 ms event
-      // buffer. This preview is deliberately kept outside state.bullets: it can
-      // never collide, score, damage, remove an entity, or enter a snapshot.
+      // The shooter's bullet is one continuous local visual. It is never moved
+      // to a delayed network coordinate and remains outside state.bullets, so
+      // it cannot affect authoritative gameplay.
       if (mpRef.current.roomId && !mpRef.current.isHost) {
         for (const pending of pendingGuestShotsRef.current.values()) {
           const preview = pending.preview;
-          const elapsedMs = currentTime - pending.spawnTime;
-          if (!preview || elapsedMs < 0 || elapsedMs > MAX_GUEST_SHOT_PREVIEW_MS) continue;
-          if (state.bullets.some((bullet: any) =>
-            bullet.clientShotId === pending.clientShotId || bullet.id === pending.authoritativeBulletId)) continue;
-
-          const allowedBuildKeys = new Set(preview.allowedBlockKeys);
-          const previewSurfaces: AxisAlignedSurface[] = [
-            ...activeWalls.map((wall, index) => ({
-              id: `wall:${index}`,
-              kind: 'wall' as const,
-              x: wall.x,
-              y: wall.y,
-              w: wall.w,
-              h: wall.h,
-            })),
-            ...state.blocks.flatMap((block, index) => {
-              if (allowedBuildKeys.has(`${block.x}_${block.y}`)) return [];
-              return [{
-                id: `build:${index}:${block.x}:${block.y}`,
-                kind: 'build' as const,
-                x: block.x - block.size / 2,
-                y: block.y - block.size / 2,
-                w: block.size,
-                h: block.size,
-              }];
-            }),
-          ];
-          const previewTrace = traceReflectedBulletMotion({
-            x: preview.x,
-            y: preview.y,
-            dx: preview.dx,
-            dy: preview.dy,
-            durationSeconds: getGuestShotPreviewTravelSeconds(elapsedMs),
-            radius: preview.radius,
-            surfaces: previewSurfaces,
-            dynamicSurface: (startX, startY, endX, endY, startFraction, endFraction): SurfaceHit | null => {
-              const relicCollision = sweptMultiplayerBulletRelicCollision(
-                startX,
-                startY,
-                endX,
-                endY,
-                preview.radius,
-                state.spawners,
-                preview.spawnWorldPhaseTime + (worldPhaseTime - preview.spawnWorldPhaseTime) * startFraction,
-                preview.spawnWorldPhaseTime + (worldPhaseTime - preview.spawnWorldPhaseTime) * endFraction,
-              );
-              if (!relicCollision) return null;
-              const spawnerIndex = state.spawners.indexOf(relicCollision.spawner);
-              return {
-                id: `relic:${spawnerIndex}:${relicCollision.specialType}`,
-                kind: 'relic',
-                t: relicCollision.t,
-                x: startX + (endX - startX) * relicCollision.t,
-                y: startY + (endY - startY) * relicCollision.t,
-                normals: [{ nx: relicCollision.nx, ny: relicCollision.ny }],
-              };
-            },
-          });
-          const predictedNeutral = previewTrace.collisions.some(collision =>
-            collision.kind === 'wall' || collision.kind === 'build');
+          if (!preview) continue;
+          const alpha = getGuestShotVisualAlpha(preview, currentTime);
+          if (alpha <= 0) continue;
           const colorDef = PLAYER_COLORS[preview.colorIdx] || PLAYER_COLORS[0];
-          const previewColor = predictedNeutral ? '#aaaaaa' : colorDef.n;
-          const previewGlow = predictedNeutral ? 'rgba(170, 170, 170, 0.3)' : colorDef.g;
+          const previewColor = preview.isNeutral ? '#aaaaaa' : colorDef.n;
+          const previewGlow = preview.isNeutral ? 'rgba(170, 170, 170, 0.3)' : colorDef.g;
 
           ctx.save();
-          ctx.globalAlpha = Math.max(
-            0,
-            1 - Math.max(0, elapsedMs - (MAX_GUEST_SHOT_PREVIEW_MS - 80)) / 80
-          );
+          ctx.globalAlpha = alpha;
           ctx.fillStyle = previewGlow;
           ctx.beginPath();
-          ctx.arc(previewTrace.x, previewTrace.y, preview.radius * 2.5, 0, Math.PI * 2);
+          ctx.arc(preview.x, preview.y, preview.radius * 2.5, 0, Math.PI * 2);
           ctx.fill();
           ctx.fillStyle = previewColor;
           ctx.beginPath();
-          ctx.arc(previewTrace.x, previewTrace.y, preview.radius, 0, Math.PI * 2);
+          ctx.arc(preview.x, preview.y, preview.radius, 0, Math.PI * 2);
           ctx.fill();
           ctx.restore();
         }

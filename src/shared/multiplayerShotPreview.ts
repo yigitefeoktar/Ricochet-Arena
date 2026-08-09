@@ -1,8 +1,28 @@
+import {
+  traceReflectedBulletMotion,
+  type AxisAlignedSurface,
+  type DynamicSurfaceResolver,
+} from './multiplayerBulletPhysics';
+
 export const PLAYER_BULLET_BURST_MS = 250;
 export const PLAYER_BULLET_BURST_MULTIPLIER = 3.5;
-// Long enough to cover a slow action round trip. The preview is replaced as
-// soon as the shooter's unbuffered authoritative track is available.
-export const MAX_GUEST_SHOT_PREVIEW_MS = 500;
+export const GUEST_SHOT_VISUAL_END_FADE_MS = 80;
+
+export interface GuestShotVisualState {
+  x: number;
+  y: number;
+  dx: number;
+  dy: number;
+  radius: number;
+  colorIdx: number;
+  allowedBlockKeys: string[];
+  spawnTime: number;
+  lastUpdateTime: number;
+  isNeutral: boolean;
+  bounceCount: number;
+  lastWorldPhaseTime: number;
+  endingAt?: number;
+}
 
 export function getPlayerBulletTravelSecondsBetween(
   spawnTimeMs: number,
@@ -48,6 +68,49 @@ export function getPlayerBulletTimeAtTravelFraction(
  */
 export function getGuestShotPreviewTravelSeconds(elapsedMs: number): number {
   if (!Number.isFinite(elapsedMs) || elapsedMs <= 0) return 0;
-  const boundedMs = Math.min(elapsedMs, MAX_GUEST_SHOT_PREVIEW_MS);
-  return getPlayerBulletTravelSecondsBetween(0, 0, boundedMs);
+  return getPlayerBulletTravelSecondsBetween(0, 0, elapsedMs);
+}
+
+export function advanceGuestShotVisual(
+  visual: GuestShotVisualState,
+  nowMs: number,
+  surfaces: AxisAlignedSurface[],
+  dynamicSurface?: DynamicSurfaceResolver,
+): GuestShotVisualState {
+  if (!Number.isFinite(nowMs) || nowMs <= visual.lastUpdateTime || visual.endingAt !== undefined) {
+    return visual;
+  }
+  const durationSeconds = getPlayerBulletTravelSecondsBetween(
+    visual.spawnTime,
+    visual.lastUpdateTime,
+    nowMs,
+  );
+  const trace = traceReflectedBulletMotion({
+    x: visual.x,
+    y: visual.y,
+    dx: visual.dx,
+    dy: visual.dy,
+    durationSeconds,
+    radius: visual.radius,
+    surfaces,
+    dynamicSurface,
+  });
+  const neutralized = trace.collisions.some(collision =>
+    collision.kind === 'wall' || collision.kind === 'build');
+  return {
+    ...visual,
+    x: trace.x,
+    y: trace.y,
+    dx: trace.dx,
+    dy: trace.dy,
+    isNeutral: visual.isNeutral || neutralized,
+    bounceCount: visual.bounceCount + trace.collisions.length,
+    lastUpdateTime: nowMs,
+  };
+}
+
+export function getGuestShotVisualAlpha(visual: GuestShotVisualState, nowMs: number): number {
+  if (visual.endingAt === undefined) return 1;
+  if (!Number.isFinite(nowMs)) return 0;
+  return Math.max(0, 1 - (nowMs - visual.endingAt) / GUEST_SHOT_VISUAL_END_FADE_MS);
 }

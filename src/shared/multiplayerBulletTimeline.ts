@@ -234,7 +234,6 @@ export function sampleGuestBulletTimeline(
   timeline: GuestBulletTimeline,
   nowMs: number,
   bufferMs = DEFAULT_MULTIPLAYER_BULLET_BUFFER_MS,
-  immediateOwnerId?: string,
 ): GuestBulletTimelineSample {
   const safeBuffer = Math.max(
     MIN_MULTIPLAYER_BULLET_BUFFER_MS,
@@ -250,26 +249,19 @@ export function sampleGuestBulletTimeline(
   const bullets: AuthoritativeBulletState[] = [];
 
   for (const frames of timeline.tracks.values()) {
-    const trackOwnerId = frames.find(frame => frame.state?.ownerId)?.state?.ownerId;
-    // The local shooter has already seen a cosmetic prediction from the input
-    // frame. Sampling only that player's authoritative bullet at real time
-    // permits a seamless handoff; every other bullet keeps the shared buffer.
-    const trackRenderTime = trackOwnerId && trackOwnerId === immediateOwnerId
-      ? Math.min(nowMs, safeHorizon)
-      : renderTimeMs;
     let selected: BulletKeyframe | null = null;
     for (const frame of frames) {
-      if (frame.timeMs <= trackRenderTime + 1e-7) selected = frame;
+      if (frame.timeMs <= renderTimeMs + 1e-7) selected = frame;
       else break;
     }
     if (!selected || !selected.state) continue;
 
     const next = frames.find(frame => frame.timeMs > selected!.timeMs + 1e-7);
-    const sampleUntil = next ? Math.min(trackRenderTime, next.timeMs) : trackRenderTime;
+    const sampleUntil = next ? Math.min(renderTimeMs, next.timeMs) : renderTimeMs;
     const projected = projectFromKeyframe(selected, sampleUntil);
     if (!projected) continue;
 
-    if (next && trackRenderTime >= next.timeMs - 1e-7) continue;
+    if (next && renderTimeMs >= next.timeMs - 1e-7) continue;
     bullets.push(projected);
   }
 
