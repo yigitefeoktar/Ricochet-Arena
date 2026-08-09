@@ -8,6 +8,7 @@ import {
   type AuthoritativeBulletEvent,
   type AuthoritativeBulletState,
 } from './multiplayerBulletTimeline';
+import { getGuestShotPreviewTravelSeconds } from './multiplayerShotPreview';
 
 const bullet = (overrides: Partial<AuthoritativeBulletState> = {}): AuthoritativeBulletState => ({
   id: 'bullet-1',
@@ -34,7 +35,7 @@ const event = (
   tick: sequence,
   hostTime,
   type,
-  bulletId: 'bullet-1',
+  bulletId: state?.id ?? 'bullet-1',
   x: state?.x ?? 0,
   y: state?.y ?? 0,
   state,
@@ -214,4 +215,26 @@ test('host migration starts a new host-scoped timeline from its authoritative sn
   assert.equal(migrated.bullets.length, 1);
   assert.equal(migrated.bullets[0].x, 144);
   assert.equal(newHost.hostId, 'host-b');
+});
+
+test('only the local shooter can sample its authoritative bullet without the shared buffer', () => {
+  const timeline = createGuestBulletTimeline(3, 'host');
+  const local = bullet({ id: 'local-shot', x: 0, y: 0, isPlayer: true });
+  local.ownerId = 'guest-a';
+  const remote = bullet({ id: 'remote-shot', x: 0, y: 20, isPlayer: true });
+  remote.ownerId = 'guest-b';
+  ingestAuthoritativeBulletEvents(timeline, [
+    event(1, 'spawn', 1_000, local),
+    event(2, 'spawn', 1_000, remote),
+  ]);
+  timeline.confirmedThroughMs = 1_200;
+
+  const sample = sampleGuestBulletTimeline(timeline, 1_200, undefined, 'guest-a');
+  const localRendered = sample.bullets.find(item => item.id === 'local-shot');
+  const remoteRendered = sample.bullets.find(item => item.id === 'remote-shot');
+  assert.ok(localRendered);
+  assert.ok(remoteRendered);
+  assert.equal(localRendered.x, 84);
+  assert.equal(remoteRendered.x, 21);
+  assert.equal(localRendered.x, local.dx * getGuestShotPreviewTravelSeconds(200));
 });

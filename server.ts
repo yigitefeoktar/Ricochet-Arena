@@ -873,7 +873,8 @@ async function startServer() {
         (action.x !== undefined && (typeof action.x !== "number" || !Number.isFinite(action.x))) ||
         (action.y !== undefined && (typeof action.y !== "number" || !Number.isFinite(action.y))) ||
         (action.dx !== undefined && (typeof action.dx !== "number" || !Number.isFinite(action.dx))) ||
-        (action.dy !== undefined && (typeof action.dy !== "number" || !Number.isFinite(action.dy)));
+        (action.dy !== undefined && (typeof action.dy !== "number" || !Number.isFinite(action.dy))) ||
+        (action.shotHostTime !== undefined && (typeof action.shotHostTime !== "number" || !Number.isFinite(action.shotHostTime)));
 
       if (hasNonFinite) {
         emitServerShootRejection("invalid_payload");

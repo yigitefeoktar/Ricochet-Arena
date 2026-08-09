@@ -27,6 +27,8 @@ import {
 } from '../shared/multiplayerBulletTimeline';
 import {
   getGuestShotPreviewTravelSeconds,
+  getPlayerBulletTimeAtTravelFraction,
+  getPlayerBulletTravelSecondsBetween,
   MAX_GUEST_SHOT_PREVIEW_MS,
 } from '../shared/multiplayerShotPreview';
 
@@ -7304,10 +7306,27 @@ export default function GameCanvas() {
       const sampledGuestBullets = sampleGuestBulletTimeline(
         bulletTimeline,
         performance.now(),
+        undefined,
+        myId,
       ).bullets;
 
       for (const [shotId, pending] of pendingGuestShotsRef.current.entries()) {
         if (pending.roundId !== activeRoundId) {
+          pendingGuestShotsRef.current.delete(shotId);
+          continue;
+        }
+        const matchingSpawn = mappedBulletEvents.find(event =>
+          event.type === 'spawn' && event.state?.clientShotId === pending.clientShotId);
+        if (matchingSpawn) {
+          pending.status = 'accepted';
+          pending.authoritativeBulletId = matchingSpawn.bulletId;
+        }
+        const terminalEvent = pending.authoritativeBulletId
+          ? mappedBulletEvents.find(event =>
+              event.bulletId === pending.authoritativeBulletId &&
+              (event.type === 'hit' || event.type === 'remove'))
+          : undefined;
+        if (terminalEvent) {
           pendingGuestShotsRef.current.delete(shotId);
           continue;
         }
@@ -7683,6 +7702,15 @@ export default function GameCanvas() {
                const bvx = (action.dx / len) * BULLET_SPEED;
                const bvy = (action.dy / len) * BULLET_SPEED;
                const authoritativeBulletId = 'bl_' + stateRef.current.nextEntityId++;
+               const requestedShotTime = typeof action.shotHostTime === 'number' && Number.isFinite(action.shotHostTime)
+                 ? action.shotHostTime
+                 : currentTime;
+               // Bound lag compensation so a forged or badly skewed client
+               // clock cannot rewind a shot arbitrarily far into the round.
+               const authoritativeShotTime = Math.max(
+                 currentTime - 300,
+                 Math.min(currentTime, requestedShotTime)
+               );
                // The reliable shoot action carries the guest's position from
                // the exact local firing frame. Volatile movement packets can
                // be dropped, so using only clientPlayer.x/y makes every shot
@@ -7709,7 +7737,8 @@ export default function GameCanvas() {
                  radius: BULLET_RADIUS,
                  isPlayer: true,
                  bounceCount: 0,
-                 spawnTime: currentTime,
+                 spawnTime: authoritativeShotTime,
+                 multiplayerCatchUpFromTime: authoritativeShotTime,
                  isNeutral: false,
                  ownerId: clientId,
                  colorIdx: matchPlayer.colorIdx,
@@ -8558,6 +8587,8 @@ export default function GameCanvas() {
             state.bullets = sampleGuestBulletTimeline(
               guestBulletTimelineRef.current,
               currentTime,
+              undefined,
+              socketRef.current?.id,
             ).bullets;
 
             for (const [shotId, pending] of pendingGuestShotsRef.current.entries()) {
@@ -9978,6 +10009,12 @@ export default function GameCanvas() {
 
             // In multiplayer client mode, also notify the host to create the authoritative bullet
             if (isGuest && clientShotId) {
+              const anchor = hostClockAnchorRef.current;
+              const estimatedHostShotTime = anchor &&
+                anchor.roomId === mpRef.current.roomId &&
+                anchor.roundId === activeMultiplayerRoundIdRef.current
+                  ? anchor.hostTimeAtAnchor + (currentTime - anchor.localTimeAtAnchor)
+                  : undefined;
               socketRef.current?.emit('client_action', mpRef.current.roomId, {
                 roundId: activeMultiplayerRoundIdRef.current,
                 type: 'shoot',
@@ -9986,7 +10023,8 @@ export default function GameCanvas() {
                 y: state.player.y,
                 dx: bvx,
                 dy: bvy,
-                colorIdx: playerProfileRef.current.colorIdx
+                colorIdx: playerProfileRef.current.colorIdx,
+                ...(estimatedHostShotTime !== undefined ? { shotHostTime: estimatedHostShotTime } : {})
               });
             }
           }
@@ -10101,7 +10139,17 @@ export default function GameCanvas() {
         }
         for (let i = state.bullets.length - 1; i >= 0; i--) {
           const bullet = state.bullets[i];
-          const bulletStepStartTime = Math.max(0, currentTime - dt * 1000);
+          const isAuthoritativeMultiplayerBullet =
+            Boolean(mpRef.current.roomId && mpRef.current.isHost);
+          const requestedCatchUpFromTime = (bullet as any).multiplayerCatchUpFromTime;
+          const hasMultiplayerCatchUp = isAuthoritativeMultiplayerBullet &&
+            typeof requestedCatchUpFromTime === 'number' &&
+            Number.isFinite(requestedCatchUpFromTime) &&
+            requestedCatchUpFromTime < currentTime;
+          const bulletStepStartTime = hasMultiplayerCatchUp
+            ? Math.max(0, bullet.spawnTime, requestedCatchUpFromTime)
+            : Math.max(0, currentTime - dt * 1000);
+          const bulletStepDurationMs = Math.max(0, currentTime - bulletStepStartTime);
 
           if (mpRef.current.roomId && mpRef.current.isHost && bullet.id) {
             const currentAuthoritativeState = toAuthoritativeBulletState(bullet);
@@ -10216,14 +10264,19 @@ export default function GameCanvas() {
             speedMultiplier = 3.5;
           }
 
+          const bulletTravelSeconds = hasMultiplayerCatchUp && bullet.isPlayer
+            ? getPlayerBulletTravelSecondsBetween(
+                bullet.spawnTime,
+                bulletStepStartTime,
+                currentTime,
+              )
+            : speedMultiplier * dt;
+
           const bulletBeforeX = bullet.x;
           const bulletBeforeY = bullet.y;
 
-          const targetX = bulletBeforeX + bullet.dx * speedMultiplier * dt;
-          const targetY = bulletBeforeY + bullet.dy * speedMultiplier * dt;
-
-          const isAuthoritativeMultiplayerBullet =
-            Boolean(mpRef.current.roomId && mpRef.current.isHost);
+          const targetX = bulletBeforeX + bullet.dx * bulletTravelSeconds;
+          const targetY = bulletBeforeY + bullet.dy * bulletTravelSeconds;
 
           let normalsToProcess: { nx: number; ny: number }[] = [];
           let trailX = bullet.x;
@@ -10237,7 +10290,7 @@ export default function GameCanvas() {
           let authoritativeImpactTime = currentTime;
 
           if (isAuthoritativeMultiplayerBullet) {
-            const startPhaseTime = Math.max(0, worldPhaseTime - dt * 1000);
+            const startPhaseTime = Math.max(0, worldPhaseTime - bulletStepDurationMs);
             const allowedBuildKeys = new Set(bullet.allowedBlockKeys || []);
             const surfaces: AxisAlignedSurface[] = [
               ...activeWalls.map((wall, index) => ({
@@ -10268,7 +10321,7 @@ export default function GameCanvas() {
               y: bulletBeforeY,
               dx: bullet.dx,
               dy: bullet.dy,
-              durationSeconds: dt * speedMultiplier,
+              durationSeconds: bulletTravelSeconds,
               radius: bullet.radius,
               surfaces,
               dynamicSurface: (startX, startY, endX, endY, startFraction, endFraction): SurfaceHit | null => {
@@ -10422,7 +10475,14 @@ export default function GameCanvas() {
                 else if (specialType === 'crystal') particleColor = '#00ffaa';
               }
               spawnParticles(collision.x, collision.y, particleColor, particleCount);
-              const collisionTime = currentTime - dt * 1000 + segment.endFraction * dt * 1000;
+              const collisionTime = hasMultiplayerCatchUp && bullet.isPlayer
+                ? getPlayerBulletTimeAtTravelFraction(
+                    bullet.spawnTime,
+                    bulletStepStartTime,
+                    currentTime,
+                    segment.endFraction,
+                  )
+                : bulletStepStartTime + segment.endFraction * bulletStepDurationMs;
               queueAuthoritativeBulletEvent('bounce', bullet, collisionTime, collision.kind);
             }
 
@@ -10432,7 +10492,14 @@ export default function GameCanvas() {
               bullet.dx = motionTrace.segments[targetHit.segmentIndex].dx;
               bullet.dy = motionTrace.segments[targetHit.segmentIndex].dy;
               authoritativeTargetHit = targetHit.target.data;
-              authoritativeImpactTime = currentTime - dt * 1000 + targetHit.stepFraction * dt * 1000;
+              authoritativeImpactTime = hasMultiplayerCatchUp && bullet.isPlayer
+                ? getPlayerBulletTimeAtTravelFraction(
+                    bullet.spawnTime,
+                    bulletStepStartTime,
+                    currentTime,
+                    targetHit.stepFraction,
+                  )
+                : bulletStepStartTime + targetHit.stepFraction * bulletStepDurationMs;
             } else {
               bullet.x = motionTrace.x;
               bullet.y = motionTrace.y;
@@ -10442,6 +10509,9 @@ export default function GameCanvas() {
             trailX = bullet.x;
             trailY = bullet.y;
             normalsToProcess = [];
+            if (hasMultiplayerCatchUp) {
+              delete (bullet as any).multiplayerCatchUpFromTime;
+            }
           } else {
             // Outside authoritative multiplayer: direct movement and direct resolveWallCollisions
             bullet.x = targetX;
@@ -11688,7 +11758,10 @@ export default function GameCanvas() {
           const previewGlow = predictedNeutral ? 'rgba(170, 170, 170, 0.3)' : colorDef.g;
 
           ctx.save();
-          ctx.globalAlpha = Math.max(0, 1 - Math.max(0, elapsedMs - 60) / 40);
+          ctx.globalAlpha = Math.max(
+            0,
+            1 - Math.max(0, elapsedMs - (MAX_GUEST_SHOT_PREVIEW_MS - 80)) / 80
+          );
           ctx.fillStyle = previewGlow;
           ctx.beginPath();
           ctx.arc(previewTrace.x, previewTrace.y, preview.radius * 2.5, 0, Math.PI * 2);
