@@ -698,9 +698,22 @@ async function startServer() {
       // Update server state timing tracker
       room.lastHostStateTime = Date.now();
       
+      const bulletEvents = Array.isArray(state.bulletEvents)
+        ? state.bulletEvents.slice(0, 256).filter((event: any) =>
+            event && typeof event === "object" &&
+            Number.isInteger(event.roundId) && event.roundId === room.roundId &&
+            Number.isInteger(event.sequence) && event.sequence > 0 &&
+            Number.isInteger(event.tick) && event.tick >= 0 &&
+            typeof event.hostTime === "number" && Number.isFinite(event.hostTime) && event.hostTime >= 0 &&
+            typeof event.bulletId === "string" && event.bulletId.length > 0 && event.bulletId.length <= 128 &&
+            ["spawn", "bounce", "transform", "hit", "remove"].includes(event.type)
+          )
+        : [];
+
       const outboundState = {
         ...state,
-        criticalSnapshot: state.criticalSnapshot === true,
+        bulletEvents,
+        criticalSnapshot: state.criticalSnapshot === true || bulletEvents.length > 0,
         roomId: roomIdUpper,
         roundId: room.roundId
       };
@@ -710,6 +723,23 @@ async function startServer() {
       } else {
         socket.to(roomIdUpper).volatile.emit("game_state", outboundState);
       }
+    });
+
+    // A guest that detects an event-sequence gap asks the current host for one
+    // reliable full snapshot. The server never accepts state from the guest.
+    socket.on("request_bullet_snapshot", (roomId, request) => {
+      const roomIdUpper = normalizeRoomCode(roomId);
+      if (!roomIdUpper || !request || typeof request !== "object") return;
+      const room = rooms.get(roomIdUpper);
+      if (!room || request.roundId !== room.roundId) return;
+      const requester = room.players.find(player => player.id === socket.id);
+      const host = room.players.find(player => player.isHost);
+      if (!requester || requester.isHost || !host) return;
+      io.to(host.id).emit("bullet_snapshot_requested", {
+        roomId: roomIdUpper,
+        roundId: room.roundId,
+        requesterId: socket.id,
+      });
     });
 
     // Client sends input states (keyboard/mouse) for movement

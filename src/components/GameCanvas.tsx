@@ -10,10 +10,21 @@ import {
   isValidMapId,
 } from '../shared/matchSettings';
 import {
-  ingestGuestBulletSnapshot,
-  sampleGuestBulletVisualTrack,
-  type GuestBulletVisualTrack,
-} from '../shared/bulletSync';
+  findEarliestCircleTargetHit,
+  traceReflectedBulletMotion,
+  type AxisAlignedSurface,
+  type SurfaceHit,
+} from '../shared/multiplayerBulletPhysics';
+import {
+  confirmAuthoritativeBulletSnapshot,
+  createGuestBulletTimeline,
+  ingestAuthoritativeBulletEvents,
+  sampleGuestBulletTimeline,
+  type AuthoritativeBulletEvent,
+  type AuthoritativeBulletEventType,
+  type AuthoritativeBulletState,
+  type GuestBulletTimeline,
+} from '../shared/multiplayerBulletTimeline';
 
 interface ActiveMatchSettingsRequest {
   seq: number;
@@ -2443,7 +2454,12 @@ export default function GameCanvas() {
   const activeMultiplayerRoundIdRef = useRef<number>(0);
   const clientShotSeqRef = useRef<number>(0);
   const pendingGuestShotsRef = useRef<Map<string, PendingGuestShot>>(new Map());
-  const guestBulletTracksRef = useRef<Map<string, GuestBulletVisualTrack>>(new Map());
+  const guestBulletTimelineRef = useRef<GuestBulletTimeline | null>(null);
+  const guestBulletGapRequestedRef = useRef<boolean>(false);
+  const hostBulletEventSequenceRef = useRef<number>(0);
+  const hostBulletSimulationTickRef = useRef<number>(0);
+  const pendingHostBulletEventsRef = useRef<AuthoritativeBulletEvent[]>([]);
+  const knownHostBulletStatesRef = useRef<Map<string, AuthoritativeBulletState>>(new Map());
   const pendingSpecialRequestRef = useRef<{ roundId: number; requestedAt: number } | null>(null);
   const pendingBuildRequestRef = useRef<{ roundId: number; requestedAt: number } | null>(null);
 
@@ -2463,7 +2479,12 @@ export default function GameCanvas() {
       }
     }
     pendingGuestShotsRef.current.clear();
-    guestBulletTracksRef.current.clear();
+    guestBulletTimelineRef.current = null;
+    guestBulletGapRequestedRef.current = false;
+    hostBulletEventSequenceRef.current = 0;
+    hostBulletSimulationTickRef.current = 0;
+    pendingHostBulletEventsRef.current = [];
+    knownHostBulletStatesRef.current.clear();
   }, []);
 
   const multiplayerStartPendingRef = useRef<boolean>(false);
@@ -3421,6 +3442,57 @@ export default function GameCanvas() {
     hardMode: false,
     tutorial: { active: false, spawnerIndex: null as number | null, enemySpawned: false, timer: 0 },
   });
+
+  const toAuthoritativeBulletState = useCallback((bullet: typeof stateRef.current.bullets[number]): AuthoritativeBulletState | null => {
+    if (!bullet.id) return null;
+    return {
+      id: String(bullet.id),
+      x: bullet.x,
+      y: bullet.y,
+      dx: bullet.dx,
+      dy: bullet.dy,
+      radius: bullet.radius,
+      bounceCount: bullet.bounceCount,
+      spawnTime: bullet.spawnTime,
+      isPlayer: bullet.isPlayer,
+      isNeutral: bullet.isNeutral,
+      ...(bullet.ownerId !== undefined ? { ownerId: bullet.ownerId } : {}),
+      ...(bullet.colorIdx !== undefined ? { colorIdx: bullet.colorIdx } : {}),
+      ...(bullet.clientShotId !== undefined ? { clientShotId: bullet.clientShotId } : {}),
+      ...(bullet.repelMultiplied !== undefined ? { repelMultiplied: bullet.repelMultiplied } : {}),
+      ...(bullet.allowedBlockKeys !== undefined ? { allowedBlockKeys: [...bullet.allowedBlockKeys] } : {}),
+      ...(bullet.leftBlockKeys !== undefined ? { leftBlockKeys: [...bullet.leftBlockKeys] } : {}),
+    };
+  }, []);
+
+  const queueAuthoritativeBulletEvent = useCallback((
+    type: AuthoritativeBulletEventType,
+    bullet: typeof stateRef.current.bullets[number],
+    hostTime: number,
+    reason?: string,
+  ) => {
+    if (!mpRef.current.roomId || !mpRef.current.isHost || !bullet.id) return;
+    const roundId = activeMultiplayerRoundIdRef.current;
+    if (!Number.isInteger(roundId) || roundId <= 0) return;
+    const state = (type === 'hit' || type === 'remove')
+      ? undefined
+      : toAuthoritativeBulletState(bullet) ?? undefined;
+    const event: AuthoritativeBulletEvent = {
+      roundId,
+      sequence: ++hostBulletEventSequenceRef.current,
+      tick: hostBulletSimulationTickRef.current,
+      hostTime,
+      type,
+      bulletId: String(bullet.id),
+      x: bullet.x,
+      y: bullet.y,
+      ...(state ? { state } : {}),
+      ...(reason ? { reason } : {}),
+    };
+    pendingHostBulletEventsRef.current.push(event);
+    if (state) knownHostBulletStatesRef.current.set(state.id, state);
+    stateRef.current.forceBroadcast = true;
+  }, [toAuthoritativeBulletState]);
 
   const getOrInitializeAuthority = (clientId: string) => {
     if (!stateRef.current.playerActionAuthority) {
@@ -6862,6 +6934,7 @@ export default function GameCanvas() {
       let mappedHostPlayer: any;
       let mappedMultiplayerPlayers: Record<string, any>;
       let mappedIncomingBullets: any[];
+      let mappedBulletEvents: AuthoritativeBulletEvent[];
       let mappedBulletSnapshotTime: number;
       let mappedPlayerActionAuthority: any = undefined;
       let mappedFinalRunDeadline: number | null = null;
@@ -6939,6 +7012,22 @@ export default function GameCanvas() {
           };
         });
         mappedBulletSnapshotTime = mapHostTime(state.hostTime);
+        mappedBulletEvents = (state.bulletEvents || []).map((rawEvent: any) => {
+          if (!rawEvent || typeof rawEvent !== 'object') {
+            throw new Error('Malformed bullet event');
+          }
+          const mappedEvent = {
+            ...rawEvent,
+            hostTime: mapHostTime(rawEvent.hostTime),
+          };
+          if (rawEvent.state !== undefined) {
+            mappedEvent.state = {
+              ...rawEvent.state,
+              spawnTime: mapHostTime(rawEvent.state.spawnTime),
+            };
+          }
+          return mappedEvent;
+        });
 
         if (state.playerActionAuthority !== undefined) {
           if (state.playerActionAuthority && typeof state.playerActionAuthority === 'object') {
@@ -7166,167 +7255,53 @@ export default function GameCanvas() {
       stateRef.current.bouncers = mappedBouncers;
       stateRef.current.zones = mappedZones;
 
-      // High-fidelity synchronized & reconciled bullet tracking (Requirement 13 & 15)
-      const now = performance.now();
-      const prevBullets = stateRef.current.bullets || [];
+      // Multiplayer bullets use a reliable authoritative event timeline. Normal
+      // snapshots only confirm the playback horizon and recover reconnects;
+      // they never pull an existing visual bullet toward a moving target.
+      let bulletTimeline = guestBulletTimelineRef.current;
+      if (!bulletTimeline ||
+          bulletTimeline.roundId !== activeRoundId ||
+          bulletTimeline.hostId !== state.hostId) {
+        bulletTimeline = createGuestBulletTimeline(activeRoundId, state.hostId);
+        guestBulletTimelineRef.current = bulletTimeline;
+        guestBulletGapRequestedRef.current = false;
+      }
 
-      // Check for accepted shots absent from the snapshot
-      const removedLocalIds = new Set<string>();
+      const ingestResult = ingestAuthoritativeBulletEvents(bulletTimeline, mappedBulletEvents);
+      const snapshotSequence = Number.isInteger(state.bulletEventSequence) && state.bulletEventSequence >= 0
+        ? state.bulletEventSequence
+        : bulletTimeline.lastSequence;
+      const needsRecovery = ingestResult.gap !== null || snapshotSequence > bulletTimeline.lastSequence;
+      confirmAuthoritativeBulletSnapshot(
+        bulletTimeline,
+        mappedIncomingBullets as AuthoritativeBulletState[],
+        mappedBulletSnapshotTime,
+        snapshotSequence,
+        needsRecovery,
+      );
+
+      if (needsRecovery && !guestBulletGapRequestedRef.current) {
+        guestBulletGapRequestedRef.current = true;
+        socket.emit('request_bullet_snapshot', normRoomId, { roundId: activeRoundId });
+      } else if (!needsRecovery) {
+        guestBulletGapRequestedRef.current = false;
+      }
+
       for (const [shotId, pending] of pendingGuestShotsRef.current.entries()) {
-        if (pending.status === 'accepted' && pending.roundId === activeMultiplayerRoundIdRef.current) {
-          const isPresent = mappedIncomingBullets.some((ib: any) => 
-            ib.clientShotId === pending.clientShotId || 
-            (pending.authoritativeBulletId !== null && ib.id === pending.authoritativeBulletId)
-          );
-          if (!isPresent) {
-            if (pending.localBulletId) {
-              removedLocalIds.add(pending.localBulletId);
-            }
-            pendingGuestShotsRef.current.delete(shotId);
-          }
+        if (pending.roundId !== activeRoundId) {
+          pendingGuestShotsRef.current.delete(shotId);
+          continue;
+        }
+        if (pending.status === 'accepted' && mappedIncomingBullets.some((bullet: any) =>
+          bullet.clientShotId === pending.clientShotId || bullet.id === pending.authoritativeBulletId)) {
+          pendingGuestShotsRef.current.delete(shotId);
         }
       }
 
-      // Track which previous bullets successfully matched an incoming packet
-      const matchedPreviousIds = new Set<string>();
-      const seenAuthoritativeIds = new Set<string>();
-      const incomingBullets: any[] = [];
-
-      for (const ib of mappedIncomingBullets) {
-        if (ib.id === undefined || ib.id === null) continue;
-        const authoritativeIdStr = ib.id.toString();
-        if (seenAuthoritativeIds.has(authoritativeIdStr)) continue;
-        seenAuthoritativeIds.add(authoritativeIdStr);
-
-        const mappedSpawnTime = ib.spawnTime;
-
-        let matchedLocal: any = undefined;
-
-        // 1. Exact authoritative bullet ID
-        matchedLocal = prevBullets.find((pb: any) => 
-          pb.id !== undefined && pb.id !== null &&
-          !matchedPreviousIds.has(pb.id) && 
-          pb.id === ib.id
-        );
-
-        // 2. Exact pending-shot identity
-        if (!matchedLocal && ib.clientShotId) {
-          const pending = pendingGuestShotsRef.current.get(ib.clientShotId);
-          if (pending && pending.roundId === activeMultiplayerRoundIdRef.current) {
-            matchedLocal = prevBullets.find((pb: any) => 
-              pb.id !== undefined && pb.id !== null &&
-              !matchedPreviousIds.has(pb.id) && 
-              pb.id === pending.localBulletId
-            );
-          }
-        }
-
-        // 3. Exact client shot ID
-        if (!matchedLocal && ib.clientShotId) {
-          matchedLocal = prevBullets.find((pb: any) => 
-            pb.id !== undefined && pb.id !== null &&
-            !matchedPreviousIds.has(pb.id) && 
-            pb.clientShotId === ib.clientShotId
-          );
-        }
-
-        // 4. Acknowledgement supplied authoritativeBulletId matching localBulletId
-        if (!matchedLocal) {
-          for (const pending of pendingGuestShotsRef.current.values()) {
-            if (pending.roundId === activeMultiplayerRoundIdRef.current && pending.authoritativeBulletId === ib.id) {
-              const candidate = prevBullets.find((pb: any) => 
-                pb.id !== undefined && pb.id !== null &&
-                !matchedPreviousIds.has(pb.id) && 
-                pb.id === pending.localBulletId
-              );
-              if (candidate) {
-                matchedLocal = candidate;
-                break;
-              }
-            }
-          }
-        }
-
-        if (matchedLocal) {
-          matchedPreviousIds.add(matchedLocal.id);
-          const initialPosition = { x: matchedLocal.x, y: matchedLocal.y };
-
-          if (matchedLocal.id.toString().startsWith('local_')) {
-            // Promote the predicted bullet to its authoritative identity.
-            if (ib.clientShotId) {
-              pendingGuestShotsRef.current.delete(ib.clientShotId);
-            }
-            if (matchedLocal.clientShotId && matchedLocal.clientShotId !== ib.clientShotId) {
-              pendingGuestShotsRef.current.delete(matchedLocal.clientShotId);
-            }
-            for (const [shotId, pending] of pendingGuestShotsRef.current.entries()) {
-              if (pending.localBulletId === matchedLocal.id) {
-                pendingGuestShotsRef.current.delete(shotId);
-              }
-            }
-          }
-
-          const authoritativeBullet = {
-            ...ib,
-            spawnTime: mappedSpawnTime,
-          };
-
-          const track = ingestGuestBulletSnapshot(
-            guestBulletTracksRef.current.get(authoritativeIdStr),
-            authoritativeBullet,
-            now,
-            mappedBulletSnapshotTime,
-            initialPosition
-          );
-          guestBulletTracksRef.current.set(authoritativeIdStr, track);
-          incomingBullets.push({
-            ...authoritativeBullet,
-            ...sampleGuestBulletVisualTrack(track, now),
-          });
-        } else {
-          // Brand new host bullet has no previous visual position to preserve.
-          const track = ingestGuestBulletSnapshot(
-            guestBulletTracksRef.current.get(authoritativeIdStr),
-            ib,
-            now,
-            mappedBulletSnapshotTime
-          );
-          guestBulletTracksRef.current.set(authoritativeIdStr, track);
-          incomingBullets.push({
-            ...ib,
-            spawnTime: mappedSpawnTime,
-            ...sampleGuestBulletVisualTrack(track, now),
-          });
-        }
-      }
-
-      for (const trackedId of guestBulletTracksRef.current.keys()) {
-        if (!seenAuthoritativeIds.has(trackedId)) {
-          guestBulletTracksRef.current.delete(trackedId);
-        }
-      }
-
-      // Retain fresh unmatched local-only bullets so they fly smoothly until acknowledged
-      const unmatchedLocals = prevBullets.filter((pb: any) => {
-        if (!pb.id || !pb.id.toString().startsWith('local_')) return false;
-        if (matchedPreviousIds.has(pb.id)) return false;
-        if (removedLocalIds.has(pb.id)) return false;
-
-        const age = now - pb.spawnTime;
-        if (age >= 1500) return false;
-
-        if (!pb.clientShotId) return false;
-
-        const pending = pendingGuestShotsRef.current.get(pb.clientShotId);
-        if (!pending) return false;
-        if (pending.localBulletId !== pb.id) return false;
-        if (pending.roundId !== activeMultiplayerRoundIdRef.current) return false;
-        if (pending.status !== 'pending') return false;
-
-        return true;
-      });
-
-      stateRef.current.bullets = [...incomingBullets, ...unmatchedLocals];
+      stateRef.current.bullets = sampleGuestBulletTimeline(
+        bulletTimeline,
+        performance.now(),
+      ).bullets;
 
       if (uiRef.current.status === 'PLAYING') {
         const targetScore = (mappedMultiplayerPlayers[myId] !== undefined)
@@ -7745,6 +7720,14 @@ export default function GameCanvas() {
               // Harmless ignored legacy action: do not mutate authoritative game state
           }
         }
+    });
+
+    socket.on('bullet_snapshot_requested', (request: any) => {
+      if (!mpRef.current.isHost || !request || typeof request !== 'object') return;
+      if (!isCurrentRoom(request.roomId)) return;
+      if (request.roundId !== activeMultiplayerRoundIdRef.current) return;
+      stateRef.current.forceBroadcast = true;
+      stateRef.current.lastBroadcastTime = 0;
     });
 
     return () => {
@@ -8521,20 +8504,14 @@ export default function GameCanvas() {
 
         // --- LOGIC UPDATES ---
 
-        // Authoritative guest bullets are rendered from buffered host snapshots.
-        // Only local pending shots are projected independently before promotion.
+        // Authoritative guest bullets are rendered from the reliable buffered
+        // host timeline. Guests never simulate bullet collision or removal.
         if (!mpRef.current.isHost) {
-          if (mpRef.current.roomId && guestBulletTracksRef.current.size > 0) {
-            for (const bullet of state.bullets) {
-              if (bullet.id === undefined || bullet.id === null) continue;
-              const id = bullet.id.toString();
-              if (id.startsWith('local_')) continue;
-              const track = guestBulletTracksRef.current.get(id);
-              if (!track) continue;
-              const visual = sampleGuestBulletVisualTrack(track, currentTime);
-              bullet.x = visual.x;
-              bullet.y = visual.y;
-            }
+          if (mpRef.current.roomId && guestBulletTimelineRef.current) {
+            state.bullets = sampleGuestBulletTimeline(
+              guestBulletTimelineRef.current,
+              currentTime,
+            ).bullets;
           }
 
           // Smooth client-side coordinates interpolation for remote players
@@ -8587,23 +8564,8 @@ export default function GameCanvas() {
               if (b.y > MAP_HEIGHT - b.radius) { b.y = MAP_HEIGHT - b.radius; b.dy *= -1; }
             }
 
-            // 3. Project only unacknowledged local shots. Authoritative bullets
-            // are already positioned by guestBulletTracksRef above.
+            // 3. Draw trails from authoritative buffered bullet positions.
             for (const bullet of state.bullets) {
-              const isPendingLocalShot =
-                bullet.id !== undefined &&
-                bullet.id !== null &&
-                bullet.id.toString().startsWith('local_');
-              if (isPendingLocalShot) {
-                let speedMultiplier = 1;
-                const timeAlive = currentTime - bullet.spawnTime;
-                if (bullet.isPlayer && timeAlive < 250) {
-                  speedMultiplier = 3.5;
-                }
-                bullet.x += bullet.dx * speedMultiplier * dt;
-                bullet.y += bullet.dy * speedMultiplier * dt;
-              }
-
               if (Math.random() > 0.3) {
                 let trailColor = '#ff0066';
                 if (bullet.isNeutral) {
@@ -9917,24 +9879,28 @@ export default function GameCanvas() {
               }
             }
 
-            // Spawn bullet locally first for immediate visual feedback
-            state.bullets.push({
-              id: localBulletId,
-              clientShotId,
-              x: state.player.x,
-              y: state.player.y,
-              dx: bvx,
-              dy: bvy,
-              radius: BULLET_RADIUS,
-              isPlayer: true,
-              bounceCount: 0,
-              spawnTime: currentTime,
-              isNeutral: false,
-              ownerId: socketRef.current?.id || 'local',
-              colorIdx: playerProfileRef.current.colorIdx,
-              allowedBlockKeys: localAllowedKeys,
-              leftBlockKeys: []
-            });
+            // Only the host/single-player path creates gameplay bullets. A
+            // multiplayer guest sends responsive input, then displays the
+            // authoritative spawn on the short buffered timeline.
+            if (!isGuest) {
+              state.bullets.push({
+                id: localBulletId,
+                clientShotId,
+                x: state.player.x,
+                y: state.player.y,
+                dx: bvx,
+                dy: bvy,
+                radius: BULLET_RADIUS,
+                isPlayer: true,
+                bounceCount: 0,
+                spawnTime: currentTime,
+                isNeutral: false,
+                ownerId: socketRef.current?.id || 'local',
+                colorIdx: playerProfileRef.current.colorIdx,
+                allowedBlockKeys: localAllowedKeys,
+                leftBlockKeys: []
+              });
+            }
 
             // In multiplayer client mode, also notify the host to create the authoritative bullet
             if (isGuest && clientShotId) {
@@ -10056,23 +10022,36 @@ export default function GameCanvas() {
         }
 
         // 5. Update Bullets & Collisions
+        if (mpRef.current.roomId && mpRef.current.isHost) {
+          hostBulletSimulationTickRef.current += 1;
+        }
         for (let i = state.bullets.length - 1; i >= 0; i--) {
           const bullet = state.bullets[i];
-          const prevX = bullet.x;
-          const prevY = bullet.y;
+          const bulletStepStartTime = Math.max(0, currentTime - dt * 1000);
+
+          if (mpRef.current.roomId && mpRef.current.isHost && bullet.id) {
+            const currentAuthoritativeState = toAuthoritativeBulletState(bullet);
+            const previousAuthoritativeState = knownHostBulletStatesRef.current.get(String(bullet.id));
+            if (currentAuthoritativeState && !previousAuthoritativeState) {
+              queueAuthoritativeBulletEvent('spawn', bullet, bulletStepStartTime);
+            } else if (currentAuthoritativeState && previousAuthoritativeState) {
+              const transformed =
+                currentAuthoritativeState.dx !== previousAuthoritativeState.dx ||
+                currentAuthoritativeState.dy !== previousAuthoritativeState.dy ||
+                currentAuthoritativeState.isNeutral !== previousAuthoritativeState.isNeutral ||
+                currentAuthoritativeState.isPlayer !== previousAuthoritativeState.isPlayer ||
+                currentAuthoritativeState.ownerId !== previousAuthoritativeState.ownerId ||
+                currentAuthoritativeState.colorIdx !== previousAuthoritativeState.colorIdx ||
+                currentAuthoritativeState.repelMultiplied !== previousAuthoritativeState.repelMultiplied;
+              if (transformed) {
+                queueAuthoritativeBulletEvent('transform', bullet, bulletStepStartTime, 'ability');
+              }
+            }
+          }
 
           const sweepWasNeutral = !!bullet.isNeutral;
           const sweepWasPlayer = !!bullet.isPlayer;
-          const sweepOwnerId = bullet.ownerId;
           const sweepColorIdx = bullet.colorIdx !== undefined ? bullet.colorIdx : 0;
-
-          let sweepBulletColor = '#ff0066';
-          if (sweepWasNeutral) {
-            sweepBulletColor = '#aaaaaa';
-          } else if (sweepWasPlayer) {
-            const pDef = PLAYER_COLORS[sweepColorIdx] || PLAYER_COLORS[0];
-            sweepBulletColor = pDef?.n || '#00f0ff';
-          }
 
           // Initialize connected-area tracking arrays
           if (!bullet.allowedBlockKeys) {
@@ -10174,97 +10153,220 @@ export default function GameCanvas() {
           let normalsToProcess: { nx: number; ny: number }[] = [];
           let trailX = bullet.x;
           let trailY = bullet.y;
+          let authoritativeTargetHit: {
+            type: 'bouncer' | 'enemy' | 'spawner' | 'player';
+            id: string;
+            index: number;
+            isHost?: boolean;
+          } | null = null;
+          let authoritativeImpactTime = currentTime;
 
           if (isAuthoritativeMultiplayerBullet) {
-            // A. Run sweptMultiplayerBulletResolve from bulletBeforeX/Y to targetX/Y.
-            const bulletResolved = sweptMultiplayerBulletResolve(bulletBeforeX, bulletBeforeY, targetX, targetY, bullet.radius, activeWalls);
-            
-            // B. Run sweptBuildBlockCollision from bulletBeforeX/Y to the wall-resolved endpoint.
-            const blockCollision = sweptBuildBlockCollision(
-              bulletBeforeX,
-              bulletBeforeY,
-              bulletResolved.x,
-              bulletResolved.y,
-              bullet.radius,
-              state.blocks,
-              bullet.allowedBlockKeys || []
-            );
-
-            // C. Define the maximum statically reachable endpoint:
-            const staticEndX = blockCollision !== null ? blockCollision.x : bulletResolved.x;
-            const staticEndY = blockCollision !== null ? blockCollision.y : bulletResolved.y;
-
-            // D. Run the new relic sweep from bulletBeforeX/Y to that statically reachable endpoint.
             const startPhaseTime = Math.max(0, worldPhaseTime - dt * 1000);
-            const relicCollision = sweptMultiplayerBulletRelicCollision(
-              bulletBeforeX,
-              bulletBeforeY,
-              staticEndX,
-              staticEndY,
-              bullet.radius,
-              state.spawners,
-              startPhaseTime,
-              worldPhaseTime
+            const allowedBuildKeys = new Set(bullet.allowedBlockKeys || []);
+            const surfaces: AxisAlignedSurface[] = [
+              ...activeWalls.map((wall, index) => ({
+                id: `wall:${index}`,
+                kind: 'wall' as const,
+                x: wall.x,
+                y: wall.y,
+                w: wall.w,
+                h: wall.h,
+                data: { wall, index },
+              })),
+              ...state.blocks.flatMap((block, index) => {
+                if (allowedBuildKeys.has(`${block.x}_${block.y}`)) return [];
+                return [{
+                  id: `build:${index}:${block.x}:${block.y}`,
+                  kind: 'build' as const,
+                  x: block.x - block.size / 2,
+                  y: block.y - block.size / 2,
+                  w: block.size,
+                  h: block.size,
+                  data: { block, index },
+                }];
+              }),
+            ];
+
+            const motionTrace = traceReflectedBulletMotion({
+              x: bulletBeforeX,
+              y: bulletBeforeY,
+              dx: bullet.dx,
+              dy: bullet.dy,
+              durationSeconds: dt * speedMultiplier,
+              radius: bullet.radius,
+              surfaces,
+              dynamicSurface: (startX, startY, endX, endY, startFraction, endFraction): SurfaceHit | null => {
+                const relicCollision = sweptMultiplayerBulletRelicCollision(
+                  startX,
+                  startY,
+                  endX,
+                  endY,
+                  bullet.radius,
+                  state.spawners,
+                  startPhaseTime + (worldPhaseTime - startPhaseTime) * startFraction,
+                  startPhaseTime + (worldPhaseTime - startPhaseTime) * endFraction,
+                );
+                if (!relicCollision) return null;
+                const spawnerIndex = state.spawners.indexOf(relicCollision.spawner);
+                return {
+                  id: `relic:${spawnerIndex}:${relicCollision.specialType}`,
+                  kind: 'relic',
+                  t: relicCollision.t,
+                  x: startX + (endX - startX) * relicCollision.t,
+                  y: startY + (endY - startY) * relicCollision.t,
+                  normals: [{ nx: relicCollision.nx, ny: relicCollision.ny }],
+                  data: {
+                    spawner: relicCollision.spawner,
+                    index: spawnerIndex,
+                    specialType: relicCollision.specialType,
+                  },
+                };
+              },
+            });
+
+            const neutralAtSegment = (segmentIndex: number) => {
+              let neutral = sweepWasNeutral;
+              for (let segment = 0; segment < segmentIndex; segment += 1) {
+                const collision = motionTrace.segments[segment]?.collision;
+                if (collision?.kind === 'wall' || collision?.kind === 'build') neutral = true;
+              }
+              return neutral;
+            };
+
+            const targetHit = findEarliestCircleTargetHit(
+              motionTrace.segments,
+              (_segment, segmentIndex) => {
+                const targets: Array<{
+                  id: string;
+                  x: number;
+                  y: number;
+                  radius: number;
+                  priority: number;
+                  data: { type: 'bouncer' | 'enemy' | 'spawner' | 'player'; id: string; index: number; isHost?: boolean };
+                }> = [];
+                const segmentNeutral = neutralAtSegment(segmentIndex);
+                const segmentColor = segmentNeutral
+                  ? '#aaaaaa'
+                  : (sweepWasPlayer ? (PLAYER_COLORS[sweepColorIdx] || PLAYER_COLORS[0]).n : '#ff0066');
+
+                if (sweepWasPlayer || segmentNeutral) {
+                  state.bouncers.forEach((bouncer, index) => targets.push({
+                    id: `bouncer:${bouncer.id ?? index}`,
+                    x: bouncer.x,
+                    y: bouncer.y,
+                    radius: bouncer.radius + bullet.radius,
+                    priority: 0,
+                    data: { type: 'bouncer', id: String(bouncer.id ?? index), index },
+                  }));
+                }
+
+                if (segmentColor !== '#ff0066') {
+                  state.enemies.forEach((enemy, index) => targets.push({
+                    id: `enemy:${enemy.id ?? index}`,
+                    x: enemy.x,
+                    y: enemy.y,
+                    radius: enemy.radius + bullet.radius,
+                    priority: 1,
+                    data: { type: 'enemy', id: String(enemy.id ?? index), index },
+                  }));
+                }
+
+                if (sweepWasPlayer && !segmentNeutral) {
+                  state.spawners.forEach((spawner, index) => targets.push({
+                    id: `spawner:${index}`,
+                    x: spawner.x,
+                    y: spawner.y,
+                    radius: spawner.radius + bullet.radius,
+                    priority: 2,
+                    data: { type: 'spawner', id: String(index), index },
+                  }));
+                }
+
+                const hostId = socketRef.current?.id;
+                const hostMatchPlayer = hostId && state.matchPlayers ? state.matchPlayers[hostId] : null;
+                const hostColor = (PLAYER_COLORS[playerProfileRef.current.colorIdx] || PLAYER_COLORS[0]).n;
+                const hostAlive = STATUS === 'PLAYING' && !!hostId && !!hostMatchPlayer &&
+                  !hostMatchPlayer.isDead && !hostMatchPlayer.isDisconnected;
+                if (hostAlive && hostId && segmentColor !== hostColor &&
+                    !state.player.dash.active && !isOpeningProtectionActiveForHost(currentTime)) {
+                  targets.push({
+                    id: `player:${hostId}`,
+                    x: state.player.x,
+                    y: state.player.y,
+                    radius: state.player.radius + bullet.radius * 0.5,
+                    priority: 3,
+                    data: { type: 'player', id: hostId, index: -1, isHost: true },
+                  });
+                }
+
+                Object.keys(state.multiplayerPlayers).sort().forEach((playerId, index) => {
+                  const remote = state.multiplayerPlayers[playerId];
+                  const matchPlayer = state.matchPlayers?.[playerId];
+                  if (!remote || remote.isDead || !matchPlayer || matchPlayer.isDead || matchPlayer.isDisconnected) return;
+                  const remoteColor = (PLAYER_COLORS[remote.colorIdx ?? 0] || PLAYER_COLORS[0]).n;
+                  if (segmentColor === remoteColor || remote.isDash || isOpeningProtectionActiveForHost(currentTime)) return;
+                  targets.push({
+                    id: `player:${playerId}`,
+                    x: remote.x,
+                    y: remote.y,
+                    radius: remote.radius + bullet.radius * 0.5,
+                    priority: 3,
+                    data: { type: 'player', id: playerId, index, isHost: false },
+                  });
+                });
+                return targets;
+              },
             );
 
-            // Choose and apply winning collision
-            const hasPendingStaticCollision = blockCollision !== null || bulletResolved.collided;
-            const relicWins = relicCollision !== null && (!hasPendingStaticCollision || relicCollision.t < 1 - 1e-6);
+            const collisionSegmentLimit = targetHit ? targetHit.segmentIndex : motionTrace.segments.length;
+            for (let segmentIndex = 0; segmentIndex < collisionSegmentLimit; segmentIndex += 1) {
+              const segment = motionTrace.segments[segmentIndex];
+              const collision = segment.collision;
+              if (!collision) continue;
+              const nextSegment = motionTrace.segments[segmentIndex + 1];
+              bullet.x = collision.x;
+              bullet.y = collision.y;
+              bullet.dx = nextSegment?.dx ?? motionTrace.dx;
+              bullet.dy = nextSegment?.dy ?? motionTrace.dy;
+              bullet.bounceCount += 1;
+              if (collision.kind === 'wall' || collision.kind === 'build') bullet.isNeutral = true;
 
-            if (relicWins && relicCollision !== null) {
-              // The relic wins
-              bullet.x = relicCollision.x;
-              bullet.y = relicCollision.y;
-              trailX = relicCollision.x;
-              trailY = relicCollision.y;
-
-              const dot = bullet.dx * relicCollision.nx + bullet.dy * relicCollision.ny;
-              if (dot < 0) {
-                bullet.dx = bullet.dx - 2 * dot * relicCollision.nx;
-                bullet.dy = bullet.dy - 2 * dot * relicCollision.ny;
-                bullet.bounceCount++;
+              let particleColor = bullet.isNeutral ? '#aaaaaa' : '#00ccff';
+              let particleCount = 5;
+              if (collision.kind === 'build') {
+                const block = (collision.data as any)?.block;
+                particleColor = (PLAYER_COLORS[block?.colorIdx ?? 0] || PLAYER_COLORS[0]).n;
+              } else if (collision.kind === 'relic') {
+                const specialType = (collision.data as any)?.specialType;
+                particleCount = 8;
+                if (specialType === 'shield') particleColor = '#00f0ff';
+                else if (specialType === 'kinetic') particleColor = '#ffcc00';
+                else if (specialType === 'singularity') particleColor = '#b500ff';
+                else if (specialType === 'magma_gates') particleColor = '#ff5500';
+                else if (specialType === 'crystal') particleColor = '#00ffaa';
               }
-
-              let pColor = '#aaaaaa';
-              if (relicCollision.specialType === 'shield') pColor = '#00f0ff';
-              else if (relicCollision.specialType === 'kinetic') pColor = '#ffcc00';
-              else if (relicCollision.specialType === 'singularity') pColor = '#b500ff';
-              else if (relicCollision.specialType === 'magma_gates') pColor = '#ff5500';
-              else if (relicCollision.specialType === 'crystal') pColor = '#00ffaa';
-
-              spawnParticles(relicCollision.x, relicCollision.y, pColor, 8);
-              state.forceBroadcast = true;
-              normalsToProcess = []; // Clear to prevent wall reflection loop
-            } else {
-              // No earlier relic collision: apply static collision (Build block or wall)
-              if (blockCollision !== null) {
-                bullet.x = blockCollision.x;
-                bullet.y = blockCollision.y;
-                trailX = blockCollision.x;
-                trailY = blockCollision.y;
-
-                const dot = bullet.dx * blockCollision.nx + bullet.dy * blockCollision.ny;
-                if (dot < 0) {
-                  bullet.dx = bullet.dx - 2 * dot * blockCollision.nx;
-                  bullet.dy = bullet.dy - 2 * dot * blockCollision.ny;
-                }
-                bullet.bounceCount++;
-                bullet.isNeutral = true;
-
-                const blockColorIdx = blockCollision.block.colorIdx !== undefined ? blockCollision.block.colorIdx : 0;
-                const pDef = PLAYER_COLORS[blockColorIdx] || PLAYER_COLORS[0];
-                spawnParticles(blockCollision.contactX, blockCollision.contactY, pDef.n, 5);
-
-                state.forceBroadcast = true;
-                normalsToProcess = [];
-              } else {
-                bullet.x = bulletResolved.x;
-                bullet.y = bulletResolved.y;
-                normalsToProcess = bulletResolved.normals;
-                trailX = bulletResolved.x;
-                trailY = bulletResolved.y;
-              }
+              spawnParticles(collision.x, collision.y, particleColor, particleCount);
+              const collisionTime = currentTime - dt * 1000 + segment.endFraction * dt * 1000;
+              queueAuthoritativeBulletEvent('bounce', bullet, collisionTime, collision.kind);
             }
+
+            if (targetHit) {
+              bullet.x = targetHit.x;
+              bullet.y = targetHit.y;
+              bullet.dx = motionTrace.segments[targetHit.segmentIndex].dx;
+              bullet.dy = motionTrace.segments[targetHit.segmentIndex].dy;
+              authoritativeTargetHit = targetHit.target.data;
+              authoritativeImpactTime = currentTime - dt * 1000 + targetHit.stepFraction * dt * 1000;
+            } else {
+              bullet.x = motionTrace.x;
+              bullet.y = motionTrace.y;
+              bullet.dx = motionTrace.dx;
+              bullet.dy = motionTrace.dy;
+            }
+            trailX = bullet.x;
+            trailY = bullet.y;
+            normalsToProcess = [];
           } else {
             // Outside authoritative multiplayer: direct movement and direct resolveWallCollisions
             bullet.x = targetX;
@@ -10392,7 +10494,10 @@ export default function GameCanvas() {
               const bouncer = state.bouncers[b];
               const dx = bouncer.x - bullet.x;
               const dy = bouncer.y - bullet.y;
-              if (dx * dx + dy * dy < (bouncer.radius + bullet.radius) ** 2) {
+              const hitThisBouncer = isAuthoritativeMultiplayerBullet
+                ? authoritativeTargetHit?.type === 'bouncer' && authoritativeTargetHit.index === b
+                : dx * dx + dy * dy < (bouncer.radius + bullet.radius) ** 2;
+              if (hitThisBouncer) {
                 spawnParticles(bouncer.x, bouncer.y, '#ff3333', 20);
                 bulletDestroyed = true;
                 state.bouncers.splice(b, 1);
@@ -10465,7 +10570,10 @@ export default function GameCanvas() {
               const enemy = state.enemies[e];
               const dx = enemy.x - bullet.x;
               const dy = enemy.y - bullet.y;
-              if (dx * dx + dy * dy < (enemy.radius + bullet.radius) ** 2) {
+              const hitThisEnemy = isAuthoritativeMultiplayerBullet
+                ? authoritativeTargetHit?.type === 'enemy' && authoritativeTargetHit.index === e
+                : dx * dx + dy * dy < (enemy.radius + bullet.radius) ** 2;
+              if (hitThisEnemy) {
                 // Kill enemy
                 spawnParticles(enemy.x, enemy.y, '#ff3333', 30);
                 state.shockwaves.push({ x: enemy.x, y: enemy.y, color: '#ff3333', maxRadius: 80, age: 0, maxAge: 0.25, thickness: 8 });
@@ -10506,7 +10614,10 @@ export default function GameCanvas() {
               const spawner = state.spawners[s];
               const dx = spawner.x - bullet.x;
               const dy = spawner.y - bullet.y;
-              if (dx * dx + dy * dy < (spawner.radius + bullet.radius) ** 2) {
+              const hitThisSpawner = isAuthoritativeMultiplayerBullet
+                ? authoritativeTargetHit?.type === 'spawner' && authoritativeTargetHit.index === s
+                : dx * dx + dy * dy < (spawner.radius + bullet.radius) ** 2;
+              if (hitThisSpawner) {
                 if (state.gameMode !== 'impossible') {
                   spawner.hp -= 20; // 5 hits to destroy (100 HP)
                 }
@@ -10577,116 +10688,19 @@ export default function GameCanvas() {
           // Check hit Player/Remote Players
           if (!bulletDestroyed) {
             if (isAuthoritativeMultiplayerBullet) {
-              // Authoritative multiplayer swept player hit detection candidate pass
-              const candidates: {
-                id: string;
-                isHost: boolean;
-                x: number;
-                y: number;
-                radius: number;
-              }[] = [];
-
-              // Host candidate
-              const hostId = socketRef.current?.id;
-              const hostMatchPlayer = hostId && state.matchPlayers ? state.matchPlayers[hostId] : null;
-              const hostColorIdx = playerProfileRef.current.colorIdx;
-              const hostColor = PLAYER_COLORS[hostColorIdx]?.n || '#00f0ff';
-              const isHostProtected = state.player.dash.active || isOpeningProtectionActiveForHost(currentTime);
-              const hostAlive = STATUS === 'PLAYING' && !!hostId && !!hostMatchPlayer && !hostMatchPlayer.isDead && !hostMatchPlayer.isDisconnected;
-
-              if (hostAlive && hostId && sweepBulletColor !== hostColor && !isHostProtected) {
-                candidates.push({
-                  id: hostId,
-                  isHost: true,
-                  x: state.player.x,
-                  y: state.player.y,
-                  radius: state.player.radius + bullet.radius * 0.5
-                });
-              }
-
-              // Remote candidates
-              for (const pid in state.multiplayerPlayers) {
-                const mpPlayer = state.multiplayerPlayers[pid];
-                if (!mpPlayer) continue;
-
-                const mPlayer = state.matchPlayers ? state.matchPlayers[pid] : null;
-                if (!mPlayer || mPlayer.isDead || mPlayer.isDisconnected) continue;
-
-                if (mpPlayer.isDead) continue;
-
-                const mpColorIdx = mpPlayer.colorIdx;
-                const mpColor = PLAYER_COLORS[mpColorIdx]?.n || '#00f0ff';
-
-                if (sweepBulletColor !== mpColor) {
-                  const isProtected = mpPlayer.isDash || isOpeningProtectionActiveForHost(currentTime);
-                  if (!isProtected) {
-                    candidates.push({
-                      id: pid,
-                      isHost: false,
-                      x: mpPlayer.x,
-                      y: mpPlayer.y,
-                      radius: mpPlayer.radius + bullet.radius * 0.5
-                    });
-                  }
-                }
-              }
-
-              // Find earliest intersection for each candidate along the actual reachable path
-              const hits: {
-                id: string;
-                isHost: boolean;
-                t: number;
-                x: number;
-                y: number;
-              }[] = [];
-
-              for (const cand of candidates) {
-                const hit = segmentVersusCircle(
-                  bulletBeforeX,
-                  bulletBeforeY,
-                  bullet.x,
-                  bullet.y,
-                  cand.x,
-                  cand.y,
-                  cand.radius
-                );
-                if (hit !== null) {
-                  hits.push({
-                    id: cand.id,
-                    isHost: cand.isHost,
-                    t: hit.t,
-                    x: hit.x,
-                    y: hit.y
-                  });
-                }
-              }
-
-              if (hits.length > 0) {
-                // Select exactly one player hit: smallest t, then deterministic tie-break on player ID
-                hits.sort((a, b) => {
-                  if (Math.abs(a.t - b.t) < 1e-9) {
-                    return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
-                  }
-                  return a.t - b.t;
-                });
-
-                const winner = hits[0];
-
-                // Set bullet.x and bullet.y to the returned hit position
-                bullet.x = winner.x;
-                bullet.y = winner.y;
+              if (authoritativeTargetHit?.type === 'player') {
                 bulletDestroyed = true;
                 state.forceBroadcast = true;
 
-                if (winner.isHost) {
+                if (authoritativeTargetHit.isHost) {
                   let label = 'HOSTILE FIRE';
                   let causeCode = 'hostile_fire';
-                  if (sweepWasNeutral) {
+                  if (bullet.isNeutral) {
                     label = 'NEUTRAL RICOCHET';
                     causeCode = 'neutral_ricochet';
-                  } else if (sweepWasPlayer) {
+                  } else if (bullet.isPlayer) {
                     causeCode = 'player_shot';
-                    const attackerName = resolvePlayerName(sweepOwnerId);
+                    const attackerName = resolvePlayerName(bullet.ownerId);
                     label = attackerName ? `SHOT BY ${attackerName}` : 'SHOT BY RIVAL PLAYER';
                   }
 
@@ -10694,7 +10708,7 @@ export default function GameCanvas() {
                     outcome: 'defeat',
                     causeCode,
                     label,
-                    impactPos: { x: winner.x, y: winner.y },
+                    impactPos: { x: bullet.x, y: bullet.y },
                     markerColor: '#ff003c',
                     startTimestamp: performance.now(),
                   });
@@ -10704,8 +10718,11 @@ export default function GameCanvas() {
                     return uiRef.current;
                   });
                 } else {
-                  // Call eliminateRemotePlayerRef.current exactly once with the chosen remote player
-                  eliminateRemotePlayerRef.current?.(winner.id, { x: winner.x, y: winner.y }, currentTime);
+                  eliminateRemotePlayerRef.current?.(
+                    authoritativeTargetHit.id,
+                    { x: bullet.x, y: bullet.y },
+                    currentTime,
+                  );
                 }
               }
             } else {
@@ -10749,6 +10766,15 @@ export default function GameCanvas() {
           }
 
           if (bulletDestroyed) {
+             if (isAuthoritativeMultiplayerBullet) {
+               queueAuthoritativeBulletEvent(
+                 'hit',
+                 bullet,
+                 authoritativeImpactTime,
+                 authoritativeTargetHit?.type ?? 'collision',
+               );
+               if (bullet.id) knownHostBulletStatesRef.current.delete(String(bullet.id));
+             }
              state.bullets.splice(i, 1);
           }
         }
@@ -10815,7 +10841,8 @@ export default function GameCanvas() {
       // Host broadcasts state
       if (mpRef.current.isConnected && mpRef.current.roomId && mpRef.current.isHost && (STATUS === 'PLAYING' || STATUS === 'GAME_OVER')) {
           if (currentTime - state.lastBroadcastTime > 50 || state.forceBroadcast) {
-              const criticalSnapshot = state.forceBroadcast;
+              const bulletEvents = pendingHostBulletEventsRef.current.splice(0);
+              const criticalSnapshot = state.forceBroadcast || bulletEvents.length > 0;
               state.lastBroadcastTime = currentTime;
               state.forceBroadcast = false;
               const hostWorldPhaseTime = getMultiplayerWorldPhaseTime(currentTime);
@@ -10836,6 +10863,9 @@ export default function GameCanvas() {
                  playerActionAuthority: state.playerActionAuthority,
                 blocks: state.blocks,
                 bullets: state.bullets,
+                bulletEvents,
+                bulletEventSequence: hostBulletEventSequenceRef.current,
+                bulletSimulationTick: hostBulletSimulationTickRef.current,
                 enemies: state.enemies,
                 spawners: state.spawners,
                 bouncers: state.bouncers,
