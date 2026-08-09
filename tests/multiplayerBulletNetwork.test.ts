@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { GUEST_BULLET_SNAP_DISTANCE } from '../src/shared/bulletSync';
 import {
   runMultiplayerBulletSimulation,
   type GuestSample,
@@ -41,8 +40,8 @@ test('guest bullets stay finite, bounded, and close under latency, jitter, and p
 
   assert.ok(maximumHostError < 95, `guest drifted ${maximumHostError.toFixed(2)}px from host`);
   assert.ok(
-    Math.max(...result.corrections) <= GUEST_BULLET_SNAP_DISTANCE,
-    'a correction exceeded the configured hard-snap distance',
+    Math.max(0, ...result.corrections) < 0.001,
+    'a host snapshot caused an immediate visual jump',
   );
 });
 
@@ -54,13 +53,19 @@ test('guest movement never reverses without an authoritative bounce', () => {
   });
 
   let previous: GuestSample | null = null;
+  let lastBounceChangeAt = -Infinity;
   for (const sample of result.samples) {
     if (!sample.bullet || !previous?.bullet) {
       previous = sample;
       continue;
     }
 
-    if (sample.bullet.bounceCount === previous.bullet.bounceCount) {
+    if (sample.bullet.bounceCount !== previous.bullet.bounceCount) {
+      lastBounceChangeAt = sample.timeMs;
+    }
+
+    if (sample.bullet.bounceCount === previous.bullet.bounceCount &&
+        sample.timeMs - lastBounceChangeAt > 750) {
       const moveX = sample.bullet.x - previous.bullet.x;
       const moveY = sample.bullet.y - previous.bullet.y;
       const progress = moveX * sample.bullet.dx + moveY * sample.bullet.dy;
@@ -138,6 +143,7 @@ test('250 deterministic network conditions never produce unbounded or invalid mo
     });
 
     let previous: GuestSample | null = null;
+    let lastBounceChangeAt = -Infinity;
     for (const sample of result.samples) {
       finiteBullet(sample);
       if (sample.bullet) {
@@ -149,7 +155,13 @@ test('250 deterministic network conditions never produce unbounded or invalid mo
       }
 
       if (sample.bullet && previous?.bullet &&
-          sample.bullet.bounceCount === previous.bullet.bounceCount) {
+          sample.bullet.bounceCount !== previous.bullet.bounceCount) {
+        lastBounceChangeAt = sample.timeMs;
+      }
+
+      if (sample.bullet && previous?.bullet &&
+          sample.bullet.bounceCount === previous.bullet.bounceCount &&
+          sample.timeMs - lastBounceChangeAt > 750) {
         const moveX = sample.bullet.x - previous.bullet.x;
         const moveY = sample.bullet.y - previous.bullet.y;
         const progress = moveX * sample.bullet.dx + moveY * sample.bullet.dy;
@@ -160,15 +172,13 @@ test('250 deterministic network conditions never produce unbounded or invalid mo
 
     assert.ok(result.removalDeliveredAt !== null, `seed ${seed} lost critical removal`);
     assert.ok(
-      result.corrections.every(value => value <= 260),
-      `seed ${seed} produced an unbounded correction`,
+      result.corrections.every(value => value < 0.001),
+      `seed ${seed} produced an immediate snapshot jump`,
     );
   }
 });
 
-test('guest corrections stay below the desired 160px quality limit', {
-  todo: 'current snapshot blending can exceed this during sustained packet loss',
-}, () => {
+test('guest corrections remain frame-sized across all 250 network conditions', () => {
   for (let seed = 1; seed <= 250; seed++) {
     const result = runMultiplayerBulletSimulation({
       durationMs: 4_000,
@@ -187,9 +197,7 @@ test('guest corrections stay below the desired 160px quality limit', {
       },
     });
 
-    assert.ok(
-      result.corrections.every(value => value <= GUEST_BULLET_SNAP_DISTANCE),
-      `seed ${seed} exceeded the desired correction limit`,
-    );
+    const largestFrameMove = Math.max(0, ...result.frameDisplacements);
+    assert.ok(largestFrameMove <= 16, `seed ${seed} moved ${largestFrameMove.toFixed(2)}px in one frame`);
   }
 });

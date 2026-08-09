@@ -9,7 +9,11 @@ import {
   isValidGameMode,
   isValidMapId,
 } from '../shared/matchSettings';
-import { reconcileGuestBulletSnapshot } from '../shared/bulletSync';
+import {
+  ingestGuestBulletSnapshot,
+  sampleGuestBulletVisualTrack,
+  type GuestBulletVisualTrack,
+} from '../shared/bulletSync';
 
 interface ActiveMatchSettingsRequest {
   seq: number;
@@ -2439,6 +2443,7 @@ export default function GameCanvas() {
   const activeMultiplayerRoundIdRef = useRef<number>(0);
   const clientShotSeqRef = useRef<number>(0);
   const pendingGuestShotsRef = useRef<Map<string, PendingGuestShot>>(new Map());
+  const guestBulletTracksRef = useRef<Map<string, GuestBulletVisualTrack>>(new Map());
   const pendingSpecialRequestRef = useRef<{ roundId: number; requestedAt: number } | null>(null);
   const pendingBuildRequestRef = useRef<{ roundId: number; requestedAt: number } | null>(null);
 
@@ -2458,6 +2463,7 @@ export default function GameCanvas() {
       }
     }
     pendingGuestShotsRef.current.clear();
+    guestBulletTracksRef.current.clear();
   }, []);
 
   const multiplayerStartPendingRef = useRef<boolean>(false);
@@ -6856,6 +6862,7 @@ export default function GameCanvas() {
       let mappedHostPlayer: any;
       let mappedMultiplayerPlayers: Record<string, any>;
       let mappedIncomingBullets: any[];
+      let mappedBulletSnapshotTime: number;
       let mappedPlayerActionAuthority: any = undefined;
       let mappedFinalRunDeadline: number | null = null;
       let mappedOpeningProtectionDeadline: number | null = null;
@@ -6931,6 +6938,7 @@ export default function GameCanvas() {
             spawnTime: mapHostTime(ib.spawnTime)
           };
         });
+        mappedBulletSnapshotTime = mapHostTime(state.hostTime);
 
         if (state.playerActionAuthority !== undefined) {
           if (state.playerActionAuthority && typeof state.playerActionAuthority === 'object') {
@@ -7241,6 +7249,7 @@ export default function GameCanvas() {
 
         if (matchedLocal) {
           matchedPreviousIds.add(matchedLocal.id);
+          const initialPosition = { x: matchedLocal.x, y: matchedLocal.y };
 
           if (matchedLocal.id.toString().startsWith('local_')) {
             // Promote the predicted bullet to its authoritative identity.
@@ -7262,20 +7271,38 @@ export default function GameCanvas() {
             spawnTime: mappedSpawnTime,
           };
 
-          // A locally predicted shot is intentionally snapped on its first
-          // acknowledgement. After promotion, ordinary same-direction host
-          // snapshots may be blended, while bounces always snap immediately.
-          incomingBullets.push(
-            matchedLocal.id.toString().startsWith('local_')
-              ? authoritativeBullet
-              : reconcileGuestBulletSnapshot(matchedLocal, authoritativeBullet)
+          const track = ingestGuestBulletSnapshot(
+            guestBulletTracksRef.current.get(authoritativeIdStr),
+            authoritativeBullet,
+            now,
+            mappedBulletSnapshotTime,
+            initialPosition
           );
+          guestBulletTracksRef.current.set(authoritativeIdStr, track);
+          incomingBullets.push({
+            ...authoritativeBullet,
+            ...sampleGuestBulletVisualTrack(track, now),
+          });
         } else {
-          // Brand new bullet from host
+          // Brand new host bullet has no previous visual position to preserve.
+          const track = ingestGuestBulletSnapshot(
+            guestBulletTracksRef.current.get(authoritativeIdStr),
+            ib,
+            now,
+            mappedBulletSnapshotTime
+          );
+          guestBulletTracksRef.current.set(authoritativeIdStr, track);
           incomingBullets.push({
             ...ib,
-            spawnTime: mappedSpawnTime
+            spawnTime: mappedSpawnTime,
+            ...sampleGuestBulletVisualTrack(track, now),
           });
+        }
+      }
+
+      for (const trackedId of guestBulletTracksRef.current.keys()) {
+        if (!seenAuthoritativeIds.has(trackedId)) {
+          guestBulletTracksRef.current.delete(trackedId);
         }
       }
 
@@ -8494,8 +8521,23 @@ export default function GameCanvas() {
 
         // --- LOGIC UPDATES ---
 
-        // Smooth client-side coordinates interpolation for remote players
+        // Authoritative guest bullets are rendered from buffered host snapshots.
+        // Only local pending shots are projected independently before promotion.
         if (!mpRef.current.isHost) {
+          if (mpRef.current.roomId && guestBulletTracksRef.current.size > 0) {
+            for (const bullet of state.bullets) {
+              if (bullet.id === undefined || bullet.id === null) continue;
+              const id = bullet.id.toString();
+              if (id.startsWith('local_')) continue;
+              const track = guestBulletTracksRef.current.get(id);
+              if (!track) continue;
+              const visual = sampleGuestBulletVisualTrack(track, currentTime);
+              bullet.x = visual.x;
+              bullet.y = visual.y;
+            }
+          }
+
+          // Smooth client-side coordinates interpolation for remote players
           for (const pid in state.multiplayerPlayers) {
             const pData = state.multiplayerPlayers[pid];
             if (pData && pData.targetX !== undefined && pData.targetY !== undefined) {
@@ -8545,15 +8587,22 @@ export default function GameCanvas() {
               if (b.y > MAP_HEIGHT - b.radius) { b.y = MAP_HEIGHT - b.radius; b.dy *= -1; }
             }
 
-            // 3. Move Bullets and spawn local visual trails
+            // 3. Project only unacknowledged local shots. Authoritative bullets
+            // are already positioned by guestBulletTracksRef above.
             for (const bullet of state.bullets) {
-              let speedMultiplier = 1;
-              const timeAlive = currentTime - bullet.spawnTime;
-              if (bullet.isPlayer && timeAlive < 250) {
-                speedMultiplier = 3.5;
+              const isPendingLocalShot =
+                bullet.id !== undefined &&
+                bullet.id !== null &&
+                bullet.id.toString().startsWith('local_');
+              if (isPendingLocalShot) {
+                let speedMultiplier = 1;
+                const timeAlive = currentTime - bullet.spawnTime;
+                if (bullet.isPlayer && timeAlive < 250) {
+                  speedMultiplier = 3.5;
+                }
+                bullet.x += bullet.dx * speedMultiplier * dt;
+                bullet.y += bullet.dy * speedMultiplier * dt;
               }
-              bullet.x += bullet.dx * speedMultiplier * dt;
-              bullet.y += bullet.dy * speedMultiplier * dt;
 
               if (Math.random() > 0.3) {
                 let trailColor = '#ff0066';

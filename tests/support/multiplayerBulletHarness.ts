@@ -1,5 +1,7 @@
 import {
-  reconcileGuestBulletSnapshot,
+  ingestGuestBulletSnapshot,
+  sampleGuestBulletVisualTrack,
+  type GuestBulletVisualTrack,
   type SyncableBullet,
 } from '../../src/shared/bulletSync';
 
@@ -32,6 +34,7 @@ export interface GuestSample {
 export interface SimulationResult {
   samples: GuestSample[];
   corrections: number[];
+  frameDisplacements: number[];
   deliveredSnapshots: number;
   droppedSnapshots: number;
   deliveredCriticalSnapshots: number;
@@ -40,6 +43,7 @@ export interface SimulationResult {
 
 interface SnapshotEnvelope {
   deliverAt: number;
+  snapshotTimeMs: number;
   critical: boolean;
   bullet: SimulatedBullet;
 }
@@ -121,6 +125,7 @@ export function runMultiplayerBulletSimulation(
     ...options.bullet,
   };
   let guest: SimulatedBullet | null = null;
+  let guestTrack: GuestBulletVisualTrack | undefined;
   let nextSnapshotAt = 0;
   let lastQueuedDeliveryAt = -Infinity;
   let lastBroadcastBounceCount = host.bounceCount;
@@ -128,6 +133,8 @@ export function runMultiplayerBulletSimulation(
   const queue: SnapshotEnvelope[] = [];
   const samples: GuestSample[] = [];
   const corrections: number[] = [];
+  const frameDisplacements: number[] = [];
+  let previousRenderedGuest: SimulatedBullet | null = null;
   let deliveredSnapshots = 0;
   let droppedSnapshots = 0;
   let deliveredCriticalSnapshots = 0;
@@ -144,7 +151,7 @@ export function runMultiplayerBulletSimulation(
     const requestedDeliveryAt = timeMs + Math.max(0, network.latencyMs + jitter);
     const deliverAt = Math.max(requestedDeliveryAt, lastQueuedDeliveryAt + 0.001);
     lastQueuedDeliveryAt = deliverAt;
-    queue.push({ deliverAt, critical, bullet: cloneBullet(bullet) });
+    queue.push({ deliverAt, snapshotTimeMs: timeMs, critical, bullet: cloneBullet(bullet) });
   };
 
   for (let timeMs = 0; timeMs <= durationMs + 0.001; timeMs += frameMs) {
@@ -184,18 +191,47 @@ export function runMultiplayerBulletSimulation(
 
       if (envelope.bullet.removed) {
         guest = null;
+        guestTrack = undefined;
         removalDeliveredAt = timeMs;
         continue;
       }
 
       if (!guest || guest.id !== envelope.bullet.id) {
         guest = cloneBullet(envelope.bullet);
+        guestTrack = ingestGuestBulletSnapshot(
+          undefined,
+          envelope.bullet,
+          timeMs,
+          envelope.snapshotTimeMs,
+        );
       } else {
-        const previous = guest;
-        guest = reconcileGuestBulletSnapshot(previous, envelope.bullet);
+        const previousVisual = guestTrack
+          ? sampleGuestBulletVisualTrack(guestTrack, timeMs)
+          : { x: guest.x, y: guest.y };
+        const previous = { ...guest, ...previousVisual };
+        guestTrack = ingestGuestBulletSnapshot(
+          guestTrack,
+          envelope.bullet,
+          timeMs,
+          envelope.snapshotTimeMs,
+          previous,
+        );
+        const visual = sampleGuestBulletVisualTrack(guestTrack, timeMs);
+        guest = { ...envelope.bullet, ...visual };
         corrections.push(distance(previous, guest));
       }
     }
+
+    if (guest && guestTrack) {
+      const visual = sampleGuestBulletVisualTrack(guestTrack, timeMs);
+      guest.x = visual.x;
+      guest.y = visual.y;
+    }
+
+    if (guest && previousRenderedGuest && guest.id === previousRenderedGuest.id) {
+      frameDisplacements.push(distance(previousRenderedGuest, guest));
+    }
+    previousRenderedGuest = guest ? cloneBullet(guest) : null;
 
     samples.push({
       timeMs,
@@ -207,6 +243,7 @@ export function runMultiplayerBulletSimulation(
   return {
     samples,
     corrections,
+    frameDisplacements,
     deliveredSnapshots,
     droppedSnapshots,
     deliveredCriticalSnapshots,

@@ -3,7 +3,9 @@ import test from 'node:test';
 import {
   GUEST_BULLET_BLEND,
   GUEST_BULLET_SNAP_DISTANCE,
+  ingestGuestBulletSnapshot,
   reconcileGuestBulletSnapshot,
+  sampleGuestBulletVisualTrack,
   type SyncableBullet,
 } from './bulletSync';
 
@@ -60,4 +62,24 @@ test('snaps when velocity reverses even if bounce metadata is unchanged', () => 
 
   assert.equal(result.x, 102);
   assert.equal(result.dx, -120);
+});
+
+test('visual tracks interpolate between authoritative snapshots without an immediate jump', () => {
+  const first = ingestGuestBulletSnapshot(undefined, bullet(), 100, 50);
+  const second = ingestGuestBulletSnapshot(first, bullet({ x: 130 }), 150, 100);
+
+  assert.deepEqual(sampleGuestBulletVisualTrack(second, 150), { x: 100, y: 100 });
+  assert.deepEqual(sampleGuestBulletVisualTrack(second, 175), { x: 115, y: 100 });
+  assert.deepEqual(sampleGuestBulletVisualTrack(second, 200), { x: 130, y: 100 });
+});
+
+test('visual tracks retarget from the currently displayed position when packets arrive early', () => {
+  const first = ingestGuestBulletSnapshot(undefined, bullet(), 0, 0);
+  const second = ingestGuestBulletSnapshot(first, bullet({ x: 150 }), 50, 50);
+  const third = ingestGuestBulletSnapshot(second, bullet({ x: 200 }), 75, 100);
+
+  assert.deepEqual(sampleGuestBulletVisualTrack(third, 75), { x: 115, y: 100 });
+  const later = sampleGuestBulletVisualTrack(third, 125);
+  assert.ok(Math.abs(later.x - 145) < 0.0001);
+  assert.equal(later.y, 100);
 });
