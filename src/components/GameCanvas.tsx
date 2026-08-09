@@ -25,6 +25,10 @@ import {
   type AuthoritativeBulletState,
   type GuestBulletTimeline,
 } from '../shared/multiplayerBulletTimeline';
+import {
+  getGuestShotPreviewTravelSeconds,
+  MAX_GUEST_SHOT_PREVIEW_MS,
+} from '../shared/multiplayerShotPreview';
 
 interface ActiveMatchSettingsRequest {
   seq: number;
@@ -2445,6 +2449,16 @@ export default function GameCanvas() {
     roundId: number;
     spawnTime: number;
     status: 'pending' | 'accepted' | 'rejected';
+    preview?: {
+      x: number;
+      y: number;
+      dx: number;
+      dy: number;
+      radius: number;
+      colorIdx: number;
+      allowedBlockKeys: string[];
+      spawnWorldPhaseTime: number;
+    };
   }
 
   const [quickSaveExists, setQuickSaveExists] = useState<boolean>(false);
@@ -7287,21 +7301,26 @@ export default function GameCanvas() {
         guestBulletGapRequestedRef.current = false;
       }
 
+      const sampledGuestBullets = sampleGuestBulletTimeline(
+        bulletTimeline,
+        performance.now(),
+      ).bullets;
+
       for (const [shotId, pending] of pendingGuestShotsRef.current.entries()) {
         if (pending.roundId !== activeRoundId) {
           pendingGuestShotsRef.current.delete(shotId);
           continue;
         }
-        if (pending.status === 'accepted' && mappedIncomingBullets.some((bullet: any) =>
+        // Keep the immediate local-only preview until the authoritative bullet
+        // actually reaches the buffered render timeline, not merely until its
+        // future snapshot arrives over the network.
+        if (pending.status === 'accepted' && sampledGuestBullets.some((bullet: any) =>
           bullet.clientShotId === pending.clientShotId || bullet.id === pending.authoritativeBulletId)) {
           pendingGuestShotsRef.current.delete(shotId);
         }
       }
 
-      stateRef.current.bullets = sampleGuestBulletTimeline(
-        bulletTimeline,
-        performance.now(),
-      ).bullets;
+      stateRef.current.bullets = sampledGuestBullets;
 
       if (uiRef.current.status === 'PLAYING') {
         const targetScore = (mappedMultiplayerPlayers[myId] !== undefined)
@@ -7603,6 +7622,19 @@ export default function GameCanvas() {
                  return;
                }
 
+               if (action.x === undefined || typeof action.x !== 'number' || !Number.isFinite(action.x) ||
+                   action.y === undefined || typeof action.y !== 'number' || !Number.isFinite(action.y)) {
+                 socket.emit('host_action_result', mpRef.current.roomId, {
+                   targetClientId: clientId,
+                   roundId: activeMultiplayerRoundIdRef.current,
+                   actionType: 'shoot',
+                   clientShotId,
+                   status: 'rejected',
+                   reason: 'invalid_origin'
+                 });
+                 return;
+               }
+
                const len = Math.sqrt(action.dx * action.dx + action.dy * action.dy);
                if (len < 0.0001) {
                  socket.emit('host_action_result', mpRef.current.roomId, {
@@ -7651,12 +7683,27 @@ export default function GameCanvas() {
                const bvx = (action.dx / len) * BULLET_SPEED;
                const bvy = (action.dy / len) * BULLET_SPEED;
                const authoritativeBulletId = 'bl_' + stateRef.current.nextEntityId++;
+               // The reliable shoot action carries the guest's position from
+               // the exact local firing frame. Volatile movement packets can
+               // be dropped, so using only clientPlayer.x/y makes every shot
+               // originate from an older position. Resolve that requested
+               // origin through the same bounded swept wall validation used by
+               // normal guest movement; the host still owns the accepted
+               // origin, bullet simulation, collisions, damage, and removal.
+               const shotOrigin = sweptMultiplayerPlayerResolve(
+                 clientPlayer.x,
+                 clientPlayer.y,
+                 action.x,
+                 action.y,
+                 PLAYER_RADIUS,
+                 activeWalls
+               );
 
                stateRef.current.bullets.push({
                  id: authoritativeBulletId,
                  clientShotId,
-                 x: clientPlayer.x,
-                 y: clientPlayer.y,
+                 x: shotOrigin.x,
+                 y: shotOrigin.y,
                  dx: bvx,
                  dy: bvy,
                  radius: BULLET_RADIUS,
@@ -8512,6 +8559,17 @@ export default function GameCanvas() {
               guestBulletTimelineRef.current,
               currentTime,
             ).bullets;
+
+            for (const [shotId, pending] of pendingGuestShotsRef.current.entries()) {
+              if (pending.roundId !== activeMultiplayerRoundIdRef.current) {
+                pendingGuestShotsRef.current.delete(shotId);
+                continue;
+              }
+              if (pending.status === 'accepted' && state.bullets.some((bullet: any) =>
+                bullet.clientShotId === pending.clientShotId || bullet.id === pending.authoritativeBulletId)) {
+                pendingGuestShotsRef.current.delete(shotId);
+              }
+            }
           }
 
           // Smooth client-side coordinates interpolation for remote players
@@ -9879,6 +9937,22 @@ export default function GameCanvas() {
               }
             }
 
+            if (isGuest && clientShotId) {
+              const pending = pendingGuestShotsRef.current.get(clientShotId);
+              if (pending) {
+                pending.preview = {
+                  x: state.player.x,
+                  y: state.player.y,
+                  dx: bvx,
+                  dy: bvy,
+                  radius: BULLET_RADIUS,
+                  colorIdx: playerProfileRef.current.colorIdx,
+                  allowedBlockKeys: [...localAllowedKeys],
+                  spawnWorldPhaseTime: worldPhaseTime,
+                };
+              }
+            }
+
             // Only the host/single-player path creates gameplay bullets. A
             // multiplayer guest sends responsive input, then displays the
             // authoritative spawn on the short buffered timeline.
@@ -10047,6 +10121,7 @@ export default function GameCanvas() {
                 queueAuthoritativeBulletEvent('transform', bullet, bulletStepStartTime, 'ability');
               }
             }
+
           }
 
           const sweepWasNeutral = !!bullet.isNeutral;
@@ -11539,6 +11614,91 @@ export default function GameCanvas() {
         ctx.beginPath();
         ctx.arc(bullet.x, bullet.y, bullet.radius, 0, Math.PI * 2);
         ctx.fill();
+      }
+
+      // A guest sees its own shot leave the current local player immediately,
+      // while the authoritative bullet is travelling through the 150 ms event
+      // buffer. This preview is deliberately kept outside state.bullets: it can
+      // never collide, score, damage, remove an entity, or enter a snapshot.
+      if (mpRef.current.roomId && !mpRef.current.isHost) {
+        for (const pending of pendingGuestShotsRef.current.values()) {
+          const preview = pending.preview;
+          const elapsedMs = currentTime - pending.spawnTime;
+          if (!preview || elapsedMs < 0 || elapsedMs > MAX_GUEST_SHOT_PREVIEW_MS) continue;
+          if (state.bullets.some((bullet: any) =>
+            bullet.clientShotId === pending.clientShotId || bullet.id === pending.authoritativeBulletId)) continue;
+
+          const allowedBuildKeys = new Set(preview.allowedBlockKeys);
+          const previewSurfaces: AxisAlignedSurface[] = [
+            ...activeWalls.map((wall, index) => ({
+              id: `wall:${index}`,
+              kind: 'wall' as const,
+              x: wall.x,
+              y: wall.y,
+              w: wall.w,
+              h: wall.h,
+            })),
+            ...state.blocks.flatMap((block, index) => {
+              if (allowedBuildKeys.has(`${block.x}_${block.y}`)) return [];
+              return [{
+                id: `build:${index}:${block.x}:${block.y}`,
+                kind: 'build' as const,
+                x: block.x - block.size / 2,
+                y: block.y - block.size / 2,
+                w: block.size,
+                h: block.size,
+              }];
+            }),
+          ];
+          const previewTrace = traceReflectedBulletMotion({
+            x: preview.x,
+            y: preview.y,
+            dx: preview.dx,
+            dy: preview.dy,
+            durationSeconds: getGuestShotPreviewTravelSeconds(elapsedMs),
+            radius: preview.radius,
+            surfaces: previewSurfaces,
+            dynamicSurface: (startX, startY, endX, endY, startFraction, endFraction): SurfaceHit | null => {
+              const relicCollision = sweptMultiplayerBulletRelicCollision(
+                startX,
+                startY,
+                endX,
+                endY,
+                preview.radius,
+                state.spawners,
+                preview.spawnWorldPhaseTime + (worldPhaseTime - preview.spawnWorldPhaseTime) * startFraction,
+                preview.spawnWorldPhaseTime + (worldPhaseTime - preview.spawnWorldPhaseTime) * endFraction,
+              );
+              if (!relicCollision) return null;
+              const spawnerIndex = state.spawners.indexOf(relicCollision.spawner);
+              return {
+                id: `relic:${spawnerIndex}:${relicCollision.specialType}`,
+                kind: 'relic',
+                t: relicCollision.t,
+                x: startX + (endX - startX) * relicCollision.t,
+                y: startY + (endY - startY) * relicCollision.t,
+                normals: [{ nx: relicCollision.nx, ny: relicCollision.ny }],
+              };
+            },
+          });
+          const predictedNeutral = previewTrace.collisions.some(collision =>
+            collision.kind === 'wall' || collision.kind === 'build');
+          const colorDef = PLAYER_COLORS[preview.colorIdx] || PLAYER_COLORS[0];
+          const previewColor = predictedNeutral ? '#aaaaaa' : colorDef.n;
+          const previewGlow = predictedNeutral ? 'rgba(170, 170, 170, 0.3)' : colorDef.g;
+
+          ctx.save();
+          ctx.globalAlpha = Math.max(0, 1 - Math.max(0, elapsedMs - 60) / 40);
+          ctx.fillStyle = previewGlow;
+          ctx.beginPath();
+          ctx.arc(previewTrace.x, previewTrace.y, preview.radius * 2.5, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.fillStyle = previewColor;
+          ctx.beginPath();
+          ctx.arc(previewTrace.x, previewTrace.y, preview.radius, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.restore();
+        }
       }
 
       // Draw Particles

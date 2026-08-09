@@ -858,6 +858,16 @@ async function startServer() {
         return;
       }
 
+      if (isShoot && (
+        typeof action.x !== "number" || !Number.isFinite(action.x) ||
+        typeof action.y !== "number" || !Number.isFinite(action.y) ||
+        typeof action.dx !== "number" || !Number.isFinite(action.dx) ||
+        typeof action.dy !== "number" || !Number.isFinite(action.dy)
+      )) {
+        emitServerShootRejection("invalid_payload");
+        return;
+      }
+
       // Reject non-finite coordinates or directions
       const hasNonFinite =
         (action.x !== undefined && (typeof action.x !== "number" || !Number.isFinite(action.x))) ||
