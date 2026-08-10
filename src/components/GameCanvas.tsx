@@ -14105,6 +14105,7 @@ export default function GameCanvas() {
         const myId = socketRef.current?.id || 'local';
         const isZeroScoreTie = isWholeGameEnded && standings.length > 1 && standings.every(player => player.score === 0);
         const isLocalWinner = !isZeroScoreTie && isWholeGameEnded && (stateRef.current.winnerId === myId || (standings.length > 0 && standings[0].id === myId));
+        const hasOtherConnectedPlayers = Object.keys(lobbyPlayers).length > 0;
 
         return (
           <div className="absolute inset-0 bg-[#0a0000]/95 flex flex-col items-center justify-center p-2 sm:p-6 text-center backdrop-blur-md z-[70] overflow-y-auto">
@@ -14250,9 +14251,11 @@ export default function GameCanvas() {
                     {isWholeGameEnded && mpState.isHost && (
                       <button
                         onClick={handleMultiplayerRestart}
-                        disabled={multiplayerStartPending}
+                        disabled={multiplayerStartPending || !hasOtherConnectedPlayers}
                         className={`flex-1 py-3 sm:py-4 font-black tracking-[0.2em] transition-all duration-200 uppercase text-xs sm:text-sm border-2 pointer-events-auto ${
-                          multiplayerStartPending
+                          !hasOtherConnectedPlayers
+                            ? 'bg-zinc-900 text-zinc-600 border-zinc-700 cursor-not-allowed opacity-70 shadow-none'
+                            : multiplayerStartPending
                             ? 'bg-[#ffcc00]/40 text-black/40 border-[#ffcc00]/40 cursor-not-allowed opacity-60'
                             : 'bg-[#ffcc00] hover:bg-white text-black border-[#ffcc00] active:translate-x-1 active:translate-y-1 active:shadow-none hover:shadow-[5px_5px_0_#fff]'
                         }`}
