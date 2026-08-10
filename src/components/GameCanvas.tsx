@@ -12565,7 +12565,11 @@ export default function GameCanvas() {
 
                   <div className="flex gap-2 mt-3 items-stretch shrink-0">
                     <button
-                      onClick={() => setUiState(prev => ({ ...prev, status: 'LOBBY' }))}
+                      onClick={() => {
+                        setMpError(null);
+                        setMpState(prev => ({ ...prev, joinCode: '', error: '' }));
+                        setUiState(prev => ({ ...prev, status: 'LOBBY' }));
+                      }}
                       className="flex-1 py-2.5 sm:py-3 bg-[#0d0f1b] text-[#ffcc00] border-2 border-[#ffcc00]/60 hover:bg-[#ffcc00]/10 hover:border-[#ffcc00] font-black tracking-[0.15em] transition-all duration-200 uppercase text-[10px] sm:text-xs flex items-center justify-center shadow-[3px_3px_0_rgba(255,204,0,0.3)] hover:shadow-[3px_3px_0_rgba(255,204,0,0.6)] active:translate-x-[3px] active:translate-y-[3px] active:shadow-none"
                     >
                       MULTIPLAYER
@@ -13491,7 +13495,7 @@ export default function GameCanvas() {
                 setMultiplayerStartPending(false);
                 cancelPendingMatchSettingsUpdate();
                 closeMpMapSelector();
-                setMpState(prev => ({ ...prev, roomId: null, isHost: false, error: '' }));
+                setMpState(prev => ({ ...prev, roomId: null, isHost: false, joinCode: '', error: '' }));
                 setLobbyPlayers({});
                 setUiState(prev => ({ ...prev, status: 'MENU' }));
               }} className="mt-6 text-[#ffcc00]/60 hover:text-white uppercase tracking-widest text-xs font-bold transition-colors">
