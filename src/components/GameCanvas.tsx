@@ -14103,7 +14103,8 @@ export default function GameCanvas() {
       {mpState.roomId && (uiState.status === 'GAME_OVER' || uiState.status === 'VICTORY') && presentationStage === 'results' && (() => {
         const { list: standings, isWholeGameEnded } = getMultiplayerStandings();
         const myId = socketRef.current?.id || 'local';
-        const isLocalWinner = isWholeGameEnded && (stateRef.current.winnerId === myId || (standings.length > 0 && standings[0].id === myId));
+        const isZeroScoreTie = isWholeGameEnded && standings.length > 1 && standings.every(player => player.score === 0);
+        const isLocalWinner = !isZeroScoreTie && isWholeGameEnded && (stateRef.current.winnerId === myId || (standings.length > 0 && standings[0].id === myId));
 
         return (
           <div className="absolute inset-0 bg-[#0a0000]/95 flex flex-col items-center justify-center p-2 sm:p-6 text-center backdrop-blur-md z-[70] overflow-y-auto">
@@ -14112,20 +14113,24 @@ export default function GameCanvas() {
               animate={{ opacity: 1, scale: 1, y: 0 }}
               transition={{ duration: shouldReduceMotion ? 0 : 0.25, ease: 'easeOut' }}
               className={`max-w-xl w-full p-5 sm:p-8 md:p-10 my-auto border-2 ${
-                isWholeGameEnded && isLocalWinner
+                isZeroScoreTie
+                  ? 'bg-[#0d0a03] border-[#ffcc00] shadow-[10px_10px_0_#ffcc00]'
+                  : isWholeGameEnded && isLocalWinner
                   ? 'bg-[#030d0f] border-[#00f0ff] shadow-[10px_10px_0_#00f0ff]'
                   : 'bg-[#0d0404] border-[#ff005c] shadow-[10px_10px_0_#ff005c]'
               }`}
             >
               <h2
                 className={`text-4xl sm:text-5xl md:text-6xl font-black mb-4 sm:mb-6 tracking-tighter uppercase ${
-                  isLocalWinner
+                  isZeroScoreTie
+                    ? 'text-[#ffcc00] drop-shadow-[0_0_15px_rgba(255,204,0,0.5)]'
+                    : isLocalWinner
                     ? 'text-[#00f0ff] drop-shadow-[0_0_15px_rgba(0,240,255,0.5)]'
                     : 'text-[#ff005c] drop-shadow-[0_0_15px_rgba(255,0,92,0.5)]'
                 }`}
                 style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}
               >
-                {isWholeGameEnded ? (isLocalWinner ? 'VICTORY' : 'MATCH LOST') : 'ANNIHILATED'}
+                {isZeroScoreTie ? 'TIE' : isWholeGameEnded ? (isLocalWinner ? 'VICTORY' : 'MATCH LOST') : 'ANNIHILATED'}
               </h2>
 
               {!isWholeGameEnded && (
@@ -14161,9 +14166,9 @@ export default function GameCanvas() {
                       <div className="flex items-center gap-2 sm:gap-3 overflow-hidden text-left">
                         {/* Rank */}
                         <span className={`text-[12px] font-black font-mono tracking-tighter w-5 ${
-                          idx === 0 ? 'text-[#ffcc00]' : idx === 1 ? 'text-[#00f0ff]' : 'text-white/60'
+                          isZeroScoreTie ? 'text-[#ffcc00]' : idx === 0 ? 'text-[#ffcc00]' : idx === 1 ? 'text-[#00f0ff]' : 'text-white/60'
                         }`}>
-                          #{idx + 1}
+                          {isZeroScoreTie ? '—' : `#${idx + 1}`}
                         </span>
 
                         {/* Player Color Block */}
@@ -14179,7 +14184,7 @@ export default function GameCanvas() {
 
                       {/* Score and Alive/Dead Label / Winner Badge */}
                       <div className="flex items-center gap-2 sm:gap-4 font-mono">
-                        {isWholeGameEnded && p.id === stateRef.current.winnerId ? (
+                        {!isZeroScoreTie && isWholeGameEnded && p.id === stateRef.current.winnerId ? (
                           <span className="text-[#ffcc00] border-[#ffcc00]/50 bg-[#ffcc00]/15 font-black text-[9px] sm:text-[11px] tracking-widest uppercase px-2 py-0.5 rounded-sm shrink-0 border shadow-[0_0_8px_rgba(255,204,0,0.4)] animate-pulse">
                             WINNER
                           </span>
