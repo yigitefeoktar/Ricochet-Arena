@@ -13574,7 +13574,7 @@ export default function GameCanvas() {
                 )}
 
                 <div
-                  className="absolute top-0 left-0 right-0 p-3 sm:p-6 flex flex-row justify-between items-start pointer-events-none z-10 w-full max-w-7xl mx-auto"
+                  className="absolute top-0 left-0 right-0 p-3 sm:p-6 flex flex-row justify-between items-start pointer-events-none z-10 w-full"
                   style={{
                     paddingTop: 'calc(0.75rem + env(safe-area-inset-top, 0px))',
                     paddingLeft: 'calc(0.75rem + env(safe-area-inset-left, 0px))',
