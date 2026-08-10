@@ -14102,20 +14102,11 @@ export default function GameCanvas() {
 
       {mpState.roomId && (uiState.status === 'GAME_OVER' || uiState.status === 'VICTORY') && presentationStage === 'results' && (() => {
         const { list: standings, isWholeGameEnded } = getMultiplayerStandings();
-        const myName = playerProfileRef.current.name || 'YOU';
         const myId = socketRef.current?.id || 'local';
-
-        const myIndex = standings.findIndex(p => p.id === myId);
-        const myRank = myIndex >= 0 ? myIndex + 1 : 1;
         const isLocalWinner = isWholeGameEnded && (stateRef.current.winnerId === myId || (standings.length > 0 && standings[0].id === myId));
 
         return (
-          <motion.div
-            initial={shouldReduceMotion ? { opacity: 1 } : { opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: shouldReduceMotion ? 0 : 0.18 }}
-            className="absolute inset-0 bg-[#0a0000]/95 flex flex-col items-center justify-center p-2 sm:p-6 text-center backdrop-blur-md z-[70] overflow-y-auto"
-          >
+          <div className="absolute inset-0 bg-[#0a0000]/95 flex flex-col items-center justify-center p-2 sm:p-6 text-center backdrop-blur-md z-[70] overflow-y-auto">
             <motion.div
               initial={shouldReduceMotion ? { opacity: 1, scale: 1, y: 0 } : { opacity: 0, scale: 0.94, y: 16 }}
               animate={{ opacity: 1, scale: 1, y: 0 }}
@@ -14126,80 +14117,34 @@ export default function GameCanvas() {
                   : 'bg-[#0d0404] border-[#ff005c] shadow-[10px_10px_0_#ff005c]'
               }`}
             >
+              <h2
+                className={`text-4xl sm:text-5xl md:text-6xl font-black mb-4 sm:mb-6 tracking-tighter uppercase ${
+                  isLocalWinner
+                    ? 'text-[#00f0ff] drop-shadow-[0_0_15px_rgba(0,240,255,0.5)]'
+                    : 'text-[#ff005c] drop-shadow-[0_0_15px_rgba(255,0,92,0.5)]'
+                }`}
+                style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}
+              >
+                {isWholeGameEnded ? (isLocalWinner ? 'VICTORY' : 'MATCH LOST') : 'ANNIHILATED'}
+              </h2>
 
-              {/* GOAL display */}
-              <div className="text-[10px] font-mono text-[#ffcc00] tracking-[0.2em] uppercase mb-1 font-bold">
-                GOAL: GET THE HIGHEST SCORE BEFORE YOU DIE
-              </div>
-
-              {/* Title and outcome lines based on Requirement 8 */}
-              {isWholeGameEnded ? (
-                isLocalWinner ? (
-                  <>
-                    <motion.h2
-                      initial={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, scale: 1.15 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      transition={{ duration: shouldReduceMotion ? 0 : 0.15 }}
-                      className="text-4xl sm:text-5xl md:text-6xl font-black text-[#00f0ff] mb-2 tracking-tighter uppercase drop-shadow-[0_0_15px_rgba(0,240,255,0.5)]"
-                      style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}
-                    >
-                      VICTORY
-                    </motion.h2>
-                    <div className="text-xs sm:text-sm font-mono text-[#00f0ff] font-bold tracking-widest uppercase mb-4 bg-[#00f0ff]/10 py-1.5 px-3 border border-[#00f0ff]/30 inline-block rounded-sm">
-                      REASON // HIGHEST SCORE
+              {!isWholeGameEnded && (
+                <div className="mb-4 sm:mb-6 flex justify-center">
+                  {currentMatchPhase === 'FINAL_RUN' ? (
+                    <div className="bg-black/80 border border-[#FFCC00] text-[#FFCC00] shadow-[0_0_12px_rgba(255,204,0,0.3)] px-3 py-1.5 rounded-md font-mono font-black text-xs sm:text-sm tracking-widest uppercase flex items-center gap-2">
+                      <span>FINAL RUN</span>
+                      <span className="text-[#FFCC00]/50">//</span>
+                      <span className="text-white font-bold">{displayFinalRunSeconds}</span>
                     </div>
-                  </>
-                ) : (
-                  <>
-                    <motion.h2
-                      initial={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, scale: 1.15 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      transition={{ duration: shouldReduceMotion ? 0 : 0.15 }}
-                      className="text-4xl sm:text-5xl md:text-6xl font-black text-[#ff005c] mb-2 tracking-tighter uppercase drop-shadow-[0_0_15px_rgba(255,0,92,0.5)]"
-                      style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}
-                    >
-                      MATCH LOST
-                    </motion.h2>
-                    <div className="text-xs sm:text-sm font-mono text-[#ff005c] font-bold tracking-widest uppercase mb-4 bg-[#ff005c]/10 py-1.5 px-3 border border-[#ff005c]/30 inline-block rounded-sm">
-                      FINISHED #{myRank} // OUTSCORED
-                    </div>
-                  </>
-                )
-              ) : (
-                <>
-                  <motion.h2
-                    initial={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, scale: 1.15 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    transition={{ duration: shouldReduceMotion ? 0 : 0.15 }}
-                    className="text-4xl sm:text-5xl md:text-6xl font-black text-[#ff005c] mb-2 tracking-tighter uppercase drop-shadow-[0_0_15px_rgba(255,0,92,0.5)]"
-                    style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}
-                  >
-                    ANNIHILATED
-                  </motion.h2>
-                  <p className="text-[10px] sm:text-xs font-mono text-zinc-400 tracking-wider uppercase mb-6 sm:mb-8 border-b border-white/5 pb-4">
-                    YOU WERE ELIMINATED // SPECTATING LIVE MATCH...
-                  </p>
-                </>
-              )}
-
-              {/* FINAL RUN indicator in Spectator Card */}
-              {!isWholeGameEnded && currentMatchPhase === 'FINAL_RUN' && (
-                <div className="mb-4 flex justify-center">
-                  <div className="bg-black/80 border border-[#FFCC00] text-[#FFCC00] shadow-[0_0_12px_rgba(255,204,0,0.3)] px-3 py-1.5 rounded-md font-mono font-black text-xs sm:text-sm tracking-widest uppercase flex items-center gap-2">
-                    <span>FINAL RUN</span>
-                    <span className="text-[#FFCC00]/50">//</span>
-                    <span className="text-white font-bold">{displayFinalRunSeconds}</span>
-                  </div>
+                  ) : (
+                    <span className="font-mono text-[10px] sm:text-xs text-zinc-400 font-bold tracking-[0.2em] uppercase">
+                      SPECTATING
+                    </span>
+                  )}
                 </div>
               )}
 
-              {/* Leaderboard Table */}
-              <motion.div
-                initial={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, y: 6 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: shouldReduceMotion ? 0 : 0.2, delay: shouldReduceMotion ? 0 : 0.1 }}
-                className="w-full mb-6 sm:mb-8 space-y-2 max-h-[220px] overflow-y-auto pr-1"
-              >
+              <div className="w-full mb-6 sm:mb-8 space-y-2 max-h-[220px] overflow-y-auto pr-1">
                 {standings.map((p, idx) => {
                   const isMe = p.id === myId;
                   const colorDef = PLAYER_COLORS[p.colorIdx] || PLAYER_COLORS[0];
@@ -14255,15 +14200,9 @@ export default function GameCanvas() {
                     </div>
                   );
                 })}
-              </motion.div>
+              </div>
 
-              {/* Action Buttons */}
-              <motion.div
-                initial={shouldReduceMotion ? { opacity: 1 } : { opacity: 0, y: 6 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: shouldReduceMotion ? 0 : 0.2, delay: shouldReduceMotion ? 0 : 0.2 }}
-                className="flex flex-col gap-3"
-              >
+              <div className="flex flex-col gap-3">
                 {mpError && (
                   <div className="text-[#FF005C] font-mono text-xs sm:text-sm font-bold text-center uppercase">
                     {mpError}
@@ -14332,9 +14271,9 @@ export default function GameCanvas() {
                     </button>
                   </div>
                 )}
-              </motion.div>
+              </div>
             </motion.div>
-          </motion.div>
+          </div>
         );
       })()}
 
