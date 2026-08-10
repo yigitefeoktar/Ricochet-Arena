@@ -1,16 +1,28 @@
 import type { GameplayAnalyticsEventName, GameplayAnalyticsFields } from '../analytics/gameplayAnalytics';
 
-export const RELAYED_GAMEPLAY_EVENT_NAMES = [
+export const OWNER_RELAYED_GAMEPLAY_EVENT_NAMES = [
   'enemy_killed',
+  'spawner_engaged',
   'spawner_destroyed',
   'bouncer_destroyed',
   'special_activated',
   'build_activated',
 ] as const satisfies readonly GameplayAnalyticsEventName[];
 
+export const WORLD_RELAYED_GAMEPLAY_EVENT_NAMES = [
+  'enemy_spawned',
+] as const satisfies readonly GameplayAnalyticsEventName[];
+
+export const RELAYED_GAMEPLAY_EVENT_NAMES = [
+  ...OWNER_RELAYED_GAMEPLAY_EVENT_NAMES,
+  ...WORLD_RELAYED_GAMEPLAY_EVENT_NAMES,
+] as const satisfies readonly GameplayAnalyticsEventName[];
+
 export type RelayedGameplayEventName = typeof RELAYED_GAMEPLAY_EVENT_NAMES[number];
+export type WorldRelayedGameplayEventName = typeof WORLD_RELAYED_GAMEPLAY_EVENT_NAMES[number];
 
 export interface RelayedGameplayEvent {
+  eventId: string;
   roundId: number;
   eventName: RelayedGameplayEventName;
   occurredAtMs: number;
@@ -18,11 +30,14 @@ export interface RelayedGameplayEvent {
 }
 
 const ALLOWED_RELAY_FIELDS = new Set([
+  'event_source',
   'player_x',
   'player_y',
   'enemy_id',
   'enemy_x',
   'enemy_y',
+  'enemies_alive',
+  'spawn_type',
   'spawner_id',
   'spawner_x',
   'spawner_y',
@@ -34,6 +49,7 @@ const ALLOWED_RELAY_FIELDS = new Set([
   'bullet_id',
   'bullet_bounce_count',
   'points_awarded',
+  'player_to_spawner_distance',
 ]);
 
 const isFiniteCoordinate = (value: unknown): value is number =>
@@ -42,6 +58,12 @@ const isFiniteCoordinate = (value: unknown): value is number =>
 export function parseRelayedGameplayEvent(value: unknown): RelayedGameplayEvent | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   const event = value as Record<string, unknown>;
+  if (
+    typeof event.eventId !== 'string' ||
+    event.eventId.length < 1 ||
+    event.eventId.length > 160 ||
+    !/^[a-zA-Z0-9_\-:]+$/.test(event.eventId)
+  ) return null;
   if (!Number.isInteger(event.roundId) || (event.roundId as number) <= 0) return null;
   if (!RELAYED_GAMEPLAY_EVENT_NAMES.includes(event.eventName as RelayedGameplayEventName)) return null;
   if (typeof event.occurredAtMs !== 'number' || !Number.isFinite(event.occurredAtMs) || event.occurredAtMs < 0) return null;
@@ -70,9 +92,36 @@ export function parseRelayedGameplayEvent(value: unknown): RelayedGameplayEvent 
   }
 
   return {
+    eventId: event.eventId,
     roundId: event.roundId as number,
     eventName: event.eventName as RelayedGameplayEventName,
     occurredAtMs: event.occurredAtMs,
     fields: cleanFields,
   };
+}
+
+export function isWorldRelayedGameplayEvent(
+  event: RelayedGameplayEvent,
+): event is RelayedGameplayEvent & { eventName: typeof WORLD_RELAYED_GAMEPLAY_EVENT_NAMES[number] } {
+  return WORLD_RELAYED_GAMEPLAY_EVENT_NAMES.includes(
+    event.eventName as typeof WORLD_RELAYED_GAMEPLAY_EVENT_NAMES[number],
+  );
+}
+
+export function acceptRelayedGameplayEventId(
+  seenEventIds: Set<string>,
+  eventId: string,
+  maximumRememberedIds = 5000,
+): boolean {
+  if (seenEventIds.has(eventId)) return false;
+
+  if (seenEventIds.size >= maximumRememberedIds) {
+    const oldestEventId = seenEventIds.values().next().value;
+    if (typeof oldestEventId === 'string') {
+      seenEventIds.delete(oldestEventId);
+    }
+  }
+
+  seenEventIds.add(eventId);
+  return true;
 }

@@ -37,8 +37,13 @@ import {
   gameplayAnalytics,
   type GameplayAnalyticsEventName,
   type GameplayAnalyticsFields,
+  type GameplayRunOrigin,
 } from '../analytics/gameplayAnalytics';
-import { parseRelayedGameplayEvent } from '../shared/gameplayAnalyticsRelay';
+import {
+  acceptRelayedGameplayEventId,
+  parseRelayedGameplayEvent,
+  type WorldRelayedGameplayEventName,
+} from '../shared/gameplayAnalyticsRelay';
 
 interface ActiveMatchSettingsRequest {
   seq: number;
@@ -161,6 +166,7 @@ const ENEMY_FIRE_RATE = 2500;
 const ENEMY_SPEED = 60;
 const DASH_COOLDOWN = 25000;
 const BUILD_COOLDOWN = 25000;
+const GAMEPLAY_ANALYTICS_SAMPLE_INTERVAL_MS = 5000;
 
 const SAVE_FORMAT = "ricochet-arena-save";
 const SAVE_VERSION = 1;
@@ -3389,7 +3395,7 @@ export default function GameCanvas() {
               hardMode: gameMode !== 'normal',
               gameMode
             }));
-            beginAnalyticsRun(mapId, gameMode);
+            beginAnalyticsRun(mapId, gameMode, 'multiplayer_round');
           } else {
             setMpError("FAILED TO INITIALIZE MATCH");
           }
@@ -3462,23 +3468,40 @@ export default function GameCanvas() {
   });
 
   const analyticsOutcomeRecordedRef = useRef(false);
+  const analyticsRelaySequenceRef = useRef(0);
+  const analyticsSeenRelayEventIdsRef = useRef<Set<string>>(new Set());
+  const analyticsSpawnerEngagementsRef = useRef<Set<string>>(new Set());
+  const analyticsSampleIndexRef = useRef(0);
 
-  const beginAnalyticsRun = useCallback((mapId: string, gameMode: GameMode) => {
+  const beginAnalyticsRun = useCallback((
+    mapId: string,
+    gameMode: GameMode,
+    runOrigin: GameplayRunOrigin = 'fresh_start',
+  ) => {
     const roomId = mpRef.current.roomId;
     const roundId = activeMultiplayerRoundIdRef.current;
     const role = roomId ? (mpRef.current.isHost ? 'host' : 'guest') : 'single';
     const state = stateRef.current;
     analyticsOutcomeRecordedRef.current = false;
+    analyticsRelaySequenceRef.current = 0;
+    analyticsSeenRelayEventIdsRef.current.clear();
+    analyticsSpawnerEngagementsRef.current.clear();
+    analyticsSampleIndexRef.current = 0;
     gameplayAnalytics.beginRun({
       map_id: mapId,
       game_mode: gameMode,
       match_type: roomId ? 'multiplayer' : 'singleplayer',
       player_role: role,
       device_type: isMobileRef.current ? 'mobile' : 'desktop',
+      control_scheme: isMobileRef.current ? 'touch' : 'keyboard_mouse',
+      orientation: window.innerHeight > window.innerWidth ? 'portrait' : 'landscape',
+      run_origin: runOrigin,
       ...(roomId ? { match_id: `${roomId}_${roundId}`, round_id: roundId } : {}),
       player_x: state.player.x,
       player_y: state.player.y,
       initial_spawner_count: state.spawners.length,
+      world_width: MAP_WIDTH,
+      world_height: MAP_HEIGHT,
     });
   }, []);
 
@@ -3498,8 +3521,19 @@ export default function GameCanvas() {
     const eventFields: GameplayAnalyticsFields = {
       player_x: ownerPosition.x,
       player_y: ownerPosition.y,
+      event_source: mpRef.current.roomId ? 'host_authoritative' : 'local_authoritative',
       ...fields,
     };
+    if (
+      eventName === 'spawner_engaged' &&
+      typeof fields.spawner_x === 'number' &&
+      typeof fields.spawner_y === 'number'
+    ) {
+      eventFields.player_to_spawner_distance = Math.hypot(
+        fields.spawner_x - ownerPosition.x,
+        fields.spawner_y - ownerPosition.y,
+      );
+    }
 
     if (isLocalOwner) {
       gameplayAnalytics.track(eventName, eventFields);
@@ -3512,15 +3546,70 @@ export default function GameCanvas() {
     const roundId = activeMultiplayerRoundIdRef.current;
     const socket = socketRef.current;
     if (!mpRef.current.isHost || !roomId || !socket?.connected || !Number.isInteger(roundId) || roundId <= 0) return;
+    const occurredAtMs = performance.now();
+    const relaySequence = ++analyticsRelaySequenceRef.current;
+    const relaySource = (socket.id || 'host').replace(/[^a-zA-Z0-9_\-]/g, '_');
+    const eventId = `${roundId}:${relaySource}:${relaySequence}:${eventName}`;
     window.setTimeout(() => {
       if (!socket.connected || mpRef.current.roomId !== roomId) return;
       socket.emit('relay_analytics_event', roomId, ownerId, {
+        eventId,
         roundId,
         eventName,
-        occurredAtMs: performance.now(),
+        occurredAtMs,
         fields: eventFields,
       });
     }, 0);
+  }, []);
+
+  const trackAuthoritativeWorldEvent = useCallback((
+    eventName: WorldRelayedGameplayEventName,
+    fields: GameplayAnalyticsFields,
+  ) => {
+    const roomId = mpRef.current.roomId;
+    if (roomId && !mpRef.current.isHost) return;
+
+    const eventFields: GameplayAnalyticsFields = {
+      event_source: roomId ? 'host_authoritative' : 'local_authoritative',
+      ...fields,
+    };
+    gameplayAnalytics.track(eventName, eventFields);
+
+    const roundId = activeMultiplayerRoundIdRef.current;
+    const socket = socketRef.current;
+    if (!roomId || !socket?.connected || !Number.isInteger(roundId) || roundId <= 0) return;
+
+    const occurredAtMs = performance.now();
+    const relaySequence = ++analyticsRelaySequenceRef.current;
+    const relaySource = (socket.id || 'host').replace(/[^a-zA-Z0-9_\-]/g, '_');
+    const eventId = `${roundId}:${relaySource}:${relaySequence}:${eventName}`;
+    window.setTimeout(() => {
+      if (!socket.connected || mpRef.current.roomId !== roomId || !mpRef.current.isHost) return;
+      socket.emit('relay_analytics_world_event', roomId, {
+        eventId,
+        roundId,
+        eventName,
+        occurredAtMs,
+        fields,
+      });
+    }, 0);
+  }, []);
+
+  const endActiveAnalyticsRunAsAbandoned = useCallback((causeCode: string) => {
+    const state = stateRef.current;
+    const ui = uiRef.current;
+    gameplayAnalytics.endRun({
+      outcome: 'abandoned',
+      cause_code: causeCode,
+      final_score: ui.score,
+      player_x: state.player.x,
+      player_y: state.player.y,
+      spawners_remaining: state.spawners.length,
+      enemies_remaining: state.enemies.length,
+      bouncers_remaining: state.bouncers.length,
+      bullets_remaining: state.bullets.length,
+      blocks_remaining: state.blocks.length,
+    });
   }, []);
 
   useEffect(() => {
@@ -3547,12 +3636,49 @@ export default function GameCanvas() {
       player_x: state.player.x,
       player_y: state.player.y,
       spawners_remaining: state.spawners.length,
+      enemies_remaining: state.enemies.length,
+      bouncers_remaining: state.bouncers.length,
+      bullets_remaining: state.bullets.length,
+      blocks_remaining: state.blocks.length,
     };
     if (outcome === 'defeat') {
       gameplayAnalytics.track('player_defeated', fields);
     }
     gameplayAnalytics.endRun(fields);
   }, [uiState.status, uiState.score, endReason]);
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      if (document.hidden || uiRef.current.status !== 'PLAYING') return;
+
+      const state = stateRef.current;
+      let nearestSpawnerDistance: number | undefined;
+      for (const spawner of state.spawners) {
+        const distance = Math.hypot(spawner.x - state.player.x, spawner.y - state.player.y);
+        if (nearestSpawnerDistance === undefined || distance < nearestSpawnerDistance) {
+          nearestSpawnerDistance = distance;
+        }
+      }
+
+      analyticsSampleIndexRef.current += 1;
+      gameplayAnalytics.track('player_state_sample', {
+        event_source: 'local_observer',
+        sample_index: analyticsSampleIndexRef.current,
+        player_x: state.player.x,
+        player_y: state.player.y,
+        player_speed: Math.hypot(state.player.vx, state.player.vy),
+        score: uiRef.current.score,
+        enemies_alive: state.enemies.length,
+        spawners_remaining: state.spawners.length,
+        bouncers_alive: state.bouncers.length,
+        bullets_alive: state.bullets.length,
+        blocks_alive: state.blocks.length,
+        nearest_spawner_distance: nearestSpawnerDistance,
+      });
+    }, GAMEPLAY_ANALYTICS_SAMPLE_INTERVAL_MS);
+
+    return () => window.clearInterval(intervalId);
+  }, []);
 
   const toAuthoritativeBulletState = useCallback((bullet: typeof stateRef.current.bullets[number]): AuthoritativeBulletState | null => {
     if (!bullet.id) return null;
@@ -4927,7 +5053,14 @@ export default function GameCanvas() {
 
       // Now apply successfully
       stage = "applying a save";
+      endActiveAnalyticsRunAsAbandoned('quick_load');
       applyReconstructedSave(reconstructed);
+      beginAnalyticsRun(reconstructed.cleanUi.mapId, reconstructed.cleanUi.gameMode, 'quick_load');
+      gameplayAnalytics.track('game_paused', {
+        event_source: 'local_observer',
+        player_x: reconstructed.cleanState.player.x,
+        player_y: reconstructed.cleanState.player.y,
+      });
 
       // Close unrelated confirmations if active
       setConfirmResign(false);
@@ -4978,7 +5111,14 @@ export default function GameCanvas() {
         const reconstructed = parseAndReconstructSave(text);
 
         stage = "applying a save";
+        endActiveAnalyticsRunAsAbandoned('save_file_load');
         applyReconstructedSave(reconstructed);
+        beginAnalyticsRun(reconstructed.cleanUi.mapId, reconstructed.cleanUi.gameMode, 'save_file');
+        gameplayAnalytics.track('game_paused', {
+          event_source: 'local_observer',
+          player_x: reconstructed.cleanState.player.x,
+          player_y: reconstructed.cleanState.player.y,
+        });
         setLoadError(null);
 
         // A downloaded save file is successfully validated and applied, because that loaded file becomes a new run.
@@ -5717,7 +5857,11 @@ export default function GameCanvas() {
     return true;
   };
 
-  const startFreshSinglePlayerRun = (mapId?: string, gameMode?: GameMode): boolean => {
+  const startFreshSinglePlayerRun = (
+    mapId?: string,
+    gameMode?: GameMode,
+    runOrigin: GameplayRunOrigin = 'fresh_start',
+  ): boolean => {
     if (mpRef.current.roomId) return false;
 
     // Validate/fallback the requested map and game mode using existing definitions
@@ -5856,7 +6000,7 @@ export default function GameCanvas() {
 
       activeSinglePlayerRunIdRef.current += 1;
       invalidateQuickSave();
-      beginAnalyticsRun(selectedMapId, selectedGameMode);
+      beginAnalyticsRun(selectedMapId, selectedGameMode, runOrigin);
     }
 
     return ok;
@@ -6924,7 +7068,7 @@ export default function GameCanvas() {
           hardMode,
           gameMode: gameModeTyped
         }));
-        beginAnalyticsRun(mapId, gameModeTyped);
+        beginAnalyticsRun(mapId, gameModeTyped, 'multiplayer_round');
       } else {
         setMpError("INVALID START ASSIGNMENT");
       }
@@ -6965,6 +7109,7 @@ export default function GameCanvas() {
           const directionX = speed > 0 ? pending.preview.dx / speed : 0;
           const directionY = speed > 0 ? pending.preview.dy / speed : 0;
           gameplayAnalytics.track('player_bullet_fired', {
+            event_source: 'host_accepted_input',
             player_x: pending.preview.x,
             player_y: pending.preview.y,
             bullet_id: pending.authoritativeBulletId ?? pending.clientShotId,
@@ -6982,8 +7127,10 @@ export default function GameCanvas() {
       if (!isCurrentRoom(rawEvent.roomId)) return;
       const parsed = parseRelayedGameplayEvent(rawEvent);
       if (!parsed || parsed.roundId !== activeMultiplayerRoundIdRef.current) return;
+      if (!acceptRelayedGameplayEventId(analyticsSeenRelayEventIdsRef.current, parsed.eventId)) return;
       gameplayAnalytics.track(parsed.eventName, {
         ...parsed.fields,
+        event_source: 'host_authoritative',
         host_event_time_ms: parsed.occurredAtMs,
       });
     });
@@ -9402,6 +9549,16 @@ export default function GameCanvas() {
                     lastShoot: currentTime,
                     speed: ENEMY_SPEED
                   });
+                  const spawnedEnemy = state.enemies[state.enemies.length - 1];
+                  trackAuthoritativeWorldEvent('enemy_spawned', {
+                    enemy_id: spawnedEnemy.id,
+                    enemy_x: spawnedEnemy.x,
+                    enemy_y: spawnedEnemy.y,
+                    spawner_x: tutSpawner.x,
+                    spawner_y: tutSpawner.y,
+                    spawn_type: 'tutorial',
+                    enemies_alive: state.enemies.length,
+                  });
                   spawnParticles(tutSpawner.x, tutSpawner.y, state.hardMode ? '#ff3300' : '#ff00ff', 10);
                   state.tutorial.enemySpawned = true;
                 } else {
@@ -9443,6 +9600,16 @@ export default function GameCanvas() {
               radius: ENEMY_RADIUS,
               speed: ENEMY_SPEED + Math.random() * 20,
               lastShoot: currentTime + Math.random() * 1000,
+            });
+            const spawnedEnemy = state.enemies[state.enemies.length - 1];
+            trackAuthoritativeWorldEvent('enemy_spawned', {
+              enemy_id: spawnedEnemy.id,
+              enemy_x: spawnedEnemy.x,
+              enemy_y: spawnedEnemy.y,
+              spawner_x: spawner.x,
+              spawner_y: spawner.y,
+              spawn_type: 'regular',
+              enemies_alive: state.enemies.length,
             });
           }
         }
@@ -10291,6 +10458,7 @@ export default function GameCanvas() {
               const directionX = bulletSpeed > 0 ? bvx / bulletSpeed : 0;
               const directionY = bulletSpeed > 0 ? bvy / bulletSpeed : 0;
               gameplayAnalytics.track('player_bullet_fired', {
+                event_source: mpRef.current.roomId ? 'host_authoritative' : 'local_authoritative',
                 player_x: state.player.x,
                 player_y: state.player.y,
                 bullet_id: localBulletId,
@@ -11078,6 +11246,18 @@ export default function GameCanvas() {
                 ? authoritativeTargetHit?.type === 'spawner' && authoritativeTargetHit.index === s
                 : dx * dx + dy * dy < (spawner.radius + bullet.radius) ** 2;
               if (hitThisSpawner) {
+                const bulletOwner = bullet.ownerId || 'local';
+                const engagementKey = `${bulletOwner}:${uiRef.current.mapId}:${spawner.x}:${spawner.y}`;
+                if (!analyticsSpawnerEngagementsRef.current.has(engagementKey)) {
+                  analyticsSpawnerEngagementsRef.current.add(engagementKey);
+                  trackGameplayForOwner(bulletOwner, 'spawner_engaged', {
+                    spawner_x: spawner.x,
+                    spawner_y: spawner.y,
+                    spawners_remaining: state.spawners.length,
+                    bullet_id: bullet.id,
+                    bullet_bounce_count: bullet.bounceCount,
+                  });
+                }
                 if (state.gameMode !== 'impossible') {
                   spawner.hp -= 20; // 5 hits to destroy (100 HP)
                 }
@@ -13681,6 +13861,7 @@ export default function GameCanvas() {
                 closeMpMapSelector();
                 setMpState(prev => ({ ...prev, roomId: null, isHost: false, joinCode: '', error: '' }));
                 setLobbyPlayers({});
+                endActiveAnalyticsRunAsAbandoned('quit_to_menu');
                 setUiState(prev => ({ ...prev, status: 'MENU' }));
               }} className="mt-6 text-[#ffcc00]/60 hover:text-white uppercase tracking-widest text-xs font-bold transition-colors">
                 BACK TO MENU
@@ -14055,6 +14236,7 @@ export default function GameCanvas() {
                       setMultiplayerStartPending(false);
                       cancelPendingMatchSettingsUpdate();
                       setMpState(prev => ({ ...prev, roomId: null, isHost: false, error: '' }));
+                      endActiveAnalyticsRunAsAbandoned('quit_to_menu');
                       setUiState(prev => ({ ...prev, status: 'MENU' }));
                     }}
                     className="h-12 w-full bg-transparent border-2 border-[#FF003C] text-[#FF003C] hover:bg-[#FF003C]/10 font-mono font-black tracking-widest uppercase text-xs sm:text-sm active:scale-[0.98] transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#FF003C] focus-visible:ring-offset-black"
@@ -14194,7 +14376,7 @@ export default function GameCanvas() {
             >
               <button
                 onClick={() => {
-                  startFreshSinglePlayerRun(uiState.mapId, uiState.gameMode);
+                  startFreshSinglePlayerRun(uiState.mapId, uiState.gameMode, 'retry');
                 }}
                 className="flex-1 py-3 sm:py-4 bg-[#00f0ff] hover:bg-white text-black border-2 border-[#00f0ff] font-black tracking-[0.2em] transition-all duration-200 uppercase text-sm sm:text-base md:text-lg active:translate-x-1 active:translate-y-1 active:shadow-none hover:shadow-[5px_5px_0_#fff] pointer-events-auto"
               >
@@ -14209,6 +14391,7 @@ export default function GameCanvas() {
                   multiplayerStartPendingRef.current = false;
                   setMultiplayerStartPending(false);
                   setMpState(prev => ({ ...prev, roomId: null, isHost: false, error: '' }));
+                  endActiveAnalyticsRunAsAbandoned('quit_to_menu');
                   setUiState(prev => ({ ...prev, status: 'MENU' }));
                 }}
                 className="flex-1 py-3 sm:py-4 bg-transparent hover:bg-white/10 text-[#00f0ff] hover:text-white border-2 border-[#00f0ff] font-black tracking-[0.2em] transition-all duration-200 uppercase text-sm sm:text-base md:text-lg active:translate-x-1 active:translate-y-1 active:shadow-none hover:shadow-[5px_5px_0_rgba(0,240,255,0.4)] pointer-events-auto"
@@ -14261,7 +14444,7 @@ export default function GameCanvas() {
             >
               <button
                 onClick={() => {
-                  startFreshSinglePlayerRun(uiState.mapId, uiState.gameMode);
+                  startFreshSinglePlayerRun(uiState.mapId, uiState.gameMode, 'retry');
                 }}
                 className="flex-1 py-3 sm:py-4 bg-[#ff003c] hover:bg-white text-black border-2 border-[#ff003c] font-black tracking-[0.2em] transition-all duration-200 uppercase text-sm sm:text-base md:text-lg active:translate-x-1 active:translate-y-1 active:shadow-none hover:shadow-[5px_5px_0_#fff] pointer-events-auto"
               >
@@ -14277,6 +14460,7 @@ export default function GameCanvas() {
                   setMultiplayerStartPending(false);
                   cancelPendingMatchSettingsUpdate();
                   setMpState(prev => ({ ...prev, roomId: null, isHost: false, error: '' }));
+                  endActiveAnalyticsRunAsAbandoned('quit_to_menu');
                   setUiState(prev => ({ ...prev, status: 'MENU' }));
                 }}
                 className="flex-1 py-3 sm:py-4 bg-transparent hover:bg-white/10 text-[#ff003c] hover:text-white border-2 border-[#ff003c] font-black tracking-[0.2em] transition-all duration-200 uppercase text-sm sm:text-base md:text-lg active:translate-x-1 active:translate-y-1 active:shadow-none hover:shadow-[5px_5px_0_rgba(255,0,60,0.4)] pointer-events-auto"
@@ -14418,6 +14602,7 @@ export default function GameCanvas() {
                           setMultiplayerStartPending(false);
                           cancelPendingMatchSettingsUpdate();
                           setMpState(prev => ({ ...prev, roomId: null, isHost: false, error: '' }));
+                          endActiveAnalyticsRunAsAbandoned('quit_to_menu');
                           setUiState(prev => ({ ...prev, status: 'MENU' }));
                           setConfirmLeaveMatches(false);
                         }}

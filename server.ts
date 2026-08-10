@@ -4,7 +4,7 @@ import { createServer } from "http";
 import { Server } from "socket.io";
 import { randomBytes } from "crypto";
 import { MatchSettings, DEFAULT_MATCH_SETTINGS, isValidGameMode, isValidMapId } from "./src/shared/matchSettings.js";
-import { parseRelayedGameplayEvent } from "./src/shared/gameplayAnalyticsRelay.js";
+import { isWorldRelayedGameplayEvent, parseRelayedGameplayEvent } from "./src/shared/gameplayAnalyticsRelay.js";
 
 async function startServer() {
   const app = express();
@@ -981,9 +981,29 @@ async function startServer() {
       if (!target || target.isHost) return;
 
       const event = parseRelayedGameplayEvent(rawEvent);
-      if (!event || event.roundId !== room.roundId) return;
+      if (!event || isWorldRelayedGameplayEvent(event) || event.roundId !== room.roundId) return;
 
       io.to(target.id).emit("analytics_gameplay_event", {
+        roomId: roomIdUpper,
+        ...event,
+      });
+    });
+
+    // Important host-authoritative world events are analytics-only broadcasts.
+    // They never enter or influence the gameplay-state protocol.
+    socket.on("relay_analytics_world_event", (roomId, rawEvent) => {
+      const roomIdUpper = normalizeRoomCode(roomId);
+      if (!roomIdUpper) return;
+      const room = rooms.get(roomIdUpper);
+      if (!room || !room.matchActive) return;
+
+      const host = room.players.find(player => player.isHost);
+      if (!host || host.id !== socket.id) return;
+
+      const event = parseRelayedGameplayEvent(rawEvent);
+      if (!event || !isWorldRelayedGameplayEvent(event) || event.roundId !== room.roundId) return;
+
+      socket.to(roomIdUpper).emit("analytics_gameplay_event", {
         roomId: roomIdUpper,
         ...event,
       });
