@@ -14131,7 +14131,7 @@ export default function GameCanvas() {
                 }`}
                 style={{ fontFamily: 'var(--font-display, Anton, sans-serif)' }}
               >
-                {isZeroScoreTie ? 'TIE' : isWholeGameEnded ? (isLocalWinner ? 'VICTORY' : 'MATCH LOST') : 'ANNIHILATED'}
+                {isZeroScoreTie ? 'STALEMATE' : isWholeGameEnded ? (isLocalWinner ? 'VICTORY' : 'MATCH LOST') : 'ANNIHILATED'}
               </h2>
 
               {!isWholeGameEnded && (
@@ -14254,13 +14254,13 @@ export default function GameCanvas() {
                         disabled={multiplayerStartPending || !hasOtherConnectedPlayers}
                         className={`flex-1 py-3 sm:py-4 font-black tracking-[0.2em] transition-all duration-200 uppercase text-xs sm:text-sm border-2 pointer-events-auto ${
                           !hasOtherConnectedPlayers
-                            ? 'bg-zinc-900 text-zinc-600 border-zinc-700 cursor-not-allowed opacity-70 shadow-none'
+                            ? 'bg-[#15161a] text-[#737680] border-[#454852] cursor-not-allowed shadow-none grayscale'
                             : multiplayerStartPending
                             ? 'bg-[#ffcc00]/40 text-black/40 border-[#ffcc00]/40 cursor-not-allowed opacity-60'
                             : 'bg-[#ffcc00] hover:bg-white text-black border-[#ffcc00] active:translate-x-1 active:translate-y-1 active:shadow-none hover:shadow-[5px_5px_0_#fff]'
                         }`}
                       >
-                        {multiplayerStartPending ? "STARTING..." : "RESTART MATCH"}
+                        {!hasOtherConnectedPlayers ? "NO PLAYERS" : multiplayerStartPending ? "STARTING..." : "RESTART MATCH"}
                       </button>
                     )}
 
