@@ -13740,6 +13740,16 @@ export default function GameCanvas() {
                     type="button"
                     onClick={(e) => {
                       e.stopPropagation();
+                      handleSaveMatch();
+                    }}
+                    className="h-12 w-full bg-[rgba(245,247,255,0.035)] border-2 border-[rgba(245,247,255,0.32)] text-[#D5DAE6] font-mono font-black tracking-widest uppercase text-xs sm:text-sm hover:bg-[rgba(251,191,36,0.08)] hover:border-[#FBBF24] hover:text-[#FBBF24] shadow-[0_0_6px_rgba(245,247,255,0.06)] hover:shadow-[0_0_8px_rgba(251,191,36,0.16)] active:scale-[0.98] transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#FBBF24] focus-visible:ring-offset-black"
+                  >
+                    DOWNLOAD SAVE FILE
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
                       handleQuickSave();
                     }}
                     className="h-12 w-full bg-[rgba(245,247,255,0.035)] border-2 border-[rgba(245,247,255,0.32)] text-[#D5DAE6] font-mono font-black tracking-widest uppercase text-xs sm:text-sm hover:bg-[rgba(251,191,36,0.08)] hover:border-[#FBBF24] hover:text-[#FBBF24] shadow-[0_0_6px_rgba(245,247,255,0.06)] hover:shadow-[0_0_8px_rgba(251,191,36,0.16)] active:scale-[0.98] transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#FBBF24] focus-visible:ring-offset-black"
@@ -13756,16 +13766,6 @@ export default function GameCanvas() {
                     className="h-12 w-full bg-[rgba(245,247,255,0.035)] border-2 border-[rgba(245,247,255,0.32)] text-[#D5DAE6] font-mono font-black tracking-widest uppercase text-xs sm:text-sm hover:bg-[rgba(251,191,36,0.08)] hover:border-[#FBBF24] hover:text-[#FBBF24] shadow-[0_0_6px_rgba(245,247,255,0.06)] hover:shadow-[0_0_8px_rgba(251,191,36,0.16)] active:scale-[0.98] transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#FBBF24] focus-visible:ring-offset-black disabled:bg-[rgba(245,247,255,0.02)] disabled:border-[rgba(245,247,255,0.14)] disabled:text-[rgba(245,247,255,0.25)] disabled:shadow-none disabled:cursor-default disabled:pointer-events-none disabled:active:scale-100"
                   >
                     QUICK LOAD
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleSaveMatch();
-                    }}
-                    className="h-12 w-full bg-[rgba(245,247,255,0.035)] border-2 border-[rgba(245,247,255,0.32)] text-[#D5DAE6] font-mono font-black tracking-widest uppercase text-xs sm:text-sm hover:bg-[rgba(251,191,36,0.08)] hover:border-[#FBBF24] hover:text-[#FBBF24] shadow-[0_0_6px_rgba(245,247,255,0.06)] hover:shadow-[0_0_8px_rgba(251,191,36,0.16)] active:scale-[0.98] transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[#FBBF24] focus-visible:ring-offset-black"
-                  >
-                    DOWNLOAD SAVE FILE
                   </button>
                 </div>
               </div>
