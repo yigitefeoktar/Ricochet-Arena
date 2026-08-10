@@ -1,8 +1,9 @@
 import express from "express";
 import path from "path";
+import { readFileSync } from "fs";
 import { createServer } from "http";
 import { Server } from "socket.io";
-import { randomBytes } from "crypto";
+import { createHash, randomBytes } from "crypto";
 import { MatchSettings, DEFAULT_MATCH_SETTINGS, isValidGameMode, isValidMapId } from "./src/shared/matchSettings.js";
 import { isWorldRelayedGameplayEvent, parseRelayedGameplayEvent } from "./src/shared/gameplayAnalyticsRelay.js";
 
@@ -1124,9 +1125,26 @@ async function startServer() {
   } else {
     // Production
     const distPath = path.join(process.cwd(), 'dist');
-    app.use(express.static(distPath));
-    app.get('*', (req, res) => {
-      res.sendFile(path.join(distPath, 'index.html'));
+    const indexPath = path.join(distPath, 'index.html');
+    const indexHtml = readFileSync(indexPath, 'utf8');
+    const indexEtag = `"${createHash('sha256').update(indexHtml).digest('hex')}"`;
+    const assetsPathPrefix = `${path.join(distPath, 'assets')}${path.sep}`;
+
+    app.use(express.static(distPath, {
+      index: false,
+      setHeaders: (res, filePath) => {
+        if (filePath.startsWith(assetsPathPrefix)) {
+          res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+        }
+      }
+    }));
+    app.get('*', (_req, res) => {
+      // The entry document must be re-fetched after every deployment. A
+      // content-derived ETag prevents stale HTML from pointing at removed
+      // fingerprinted bundles even when build timestamps and file sizes match.
+      res.setHeader('Cache-Control', 'no-store, max-age=0, must-revalidate');
+      res.setHeader('ETag', indexEtag);
+      res.type('html').send(indexHtml);
     });
   }
 
