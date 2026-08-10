@@ -11763,8 +11763,8 @@ export default function GameCanvas() {
         // Hexagon shape
         const isImpossibleMode = state.gameMode === 'impossible';
         ctx.shadowBlur = 10;
-        ctx.fillStyle = isImpossibleMode ? '#E5E7EB' : (state.hardMode ? '#2a0500' : '#1a001a');
-        ctx.strokeStyle = isImpossibleMode ? '#E5E7EB' : glowColor;
+        ctx.fillStyle = isImpossibleMode ? '#AEB4BE' : (state.hardMode ? '#2a0500' : '#1a001a');
+        ctx.strokeStyle = isImpossibleMode ? '#AEB4BE' : glowColor;
         ctx.lineWidth = 3;
         ctx.beginPath();
         const hexRot = worldPhaseTime / (1500 / spawnerSpeedScale);
