@@ -33,6 +33,12 @@ import {
   GUEST_SHOT_VISUAL_END_FADE_MS,
   type GuestShotVisualState,
 } from '../shared/multiplayerShotPreview';
+import {
+  gameplayAnalytics,
+  type GameplayAnalyticsEventName,
+  type GameplayAnalyticsFields,
+} from '../analytics/gameplayAnalytics';
+import { parseRelayedGameplayEvent } from '../shared/gameplayAnalyticsRelay';
 
 interface ActiveMatchSettingsRequest {
   seq: number;
@@ -2454,6 +2460,7 @@ export default function GameCanvas() {
     spawnTime: number;
     status: 'pending' | 'accepted' | 'rejected';
     authoritativeSeen: boolean;
+    analyticsRecorded?: boolean;
     preview?: GuestShotVisualState;
   }
 
@@ -3382,6 +3389,7 @@ export default function GameCanvas() {
               hardMode: gameMode !== 'normal',
               gameMode
             }));
+            beginAnalyticsRun(mapId, gameMode);
           } else {
             setMpError("FAILED TO INITIALIZE MATCH");
           }
@@ -3452,6 +3460,99 @@ export default function GameCanvas() {
     hardMode: false,
     tutorial: { active: false, spawnerIndex: null as number | null, enemySpawned: false, timer: 0 },
   });
+
+  const analyticsOutcomeRecordedRef = useRef(false);
+
+  const beginAnalyticsRun = useCallback((mapId: string, gameMode: GameMode) => {
+    const roomId = mpRef.current.roomId;
+    const roundId = activeMultiplayerRoundIdRef.current;
+    const role = roomId ? (mpRef.current.isHost ? 'host' : 'guest') : 'single';
+    const state = stateRef.current;
+    analyticsOutcomeRecordedRef.current = false;
+    gameplayAnalytics.beginRun({
+      map_id: mapId,
+      game_mode: gameMode,
+      match_type: roomId ? 'multiplayer' : 'singleplayer',
+      player_role: role,
+      device_type: isMobileRef.current ? 'mobile' : 'desktop',
+      ...(roomId ? { match_id: `${roomId}_${roundId}`, round_id: roundId } : {}),
+      player_x: state.player.x,
+      player_y: state.player.y,
+      initial_spawner_count: state.spawners.length,
+    });
+  }, []);
+
+  const trackGameplayForOwner = useCallback((
+    ownerId: string | undefined,
+    eventName: GameplayAnalyticsEventName,
+    fields: GameplayAnalyticsFields,
+  ) => {
+    const state = stateRef.current;
+    const localId = socketRef.current?.id;
+    const isLocalOwner = !mpRef.current.roomId || ownerId === 'local' || !ownerId || ownerId === localId;
+    const ownerPosition = isLocalOwner
+      ? state.player
+      : state.multiplayerPlayers[ownerId];
+    if (!ownerPosition) return;
+
+    const eventFields: GameplayAnalyticsFields = {
+      player_x: ownerPosition.x,
+      player_y: ownerPosition.y,
+      ...fields,
+    };
+
+    if (isLocalOwner) {
+      gameplayAnalytics.track(eventName, eventFields);
+      return;
+    }
+
+    // The host relays only already-resolved outcome metadata. Scheduling the
+    // emit keeps analytics transport outside the authoritative simulation step.
+    const roomId = mpRef.current.roomId;
+    const roundId = activeMultiplayerRoundIdRef.current;
+    const socket = socketRef.current;
+    if (!mpRef.current.isHost || !roomId || !socket?.connected || !Number.isInteger(roundId) || roundId <= 0) return;
+    window.setTimeout(() => {
+      if (!socket.connected || mpRef.current.roomId !== roomId) return;
+      socket.emit('relay_analytics_event', roomId, ownerId, {
+        roundId,
+        eventName,
+        occurredAtMs: performance.now(),
+        fields: eventFields,
+      });
+    }, 0);
+  }, []);
+
+  useEffect(() => {
+    if (uiState.status === 'PLAYING') {
+      analyticsOutcomeRecordedRef.current = false;
+      return;
+    }
+    if (
+      analyticsOutcomeRecordedRef.current ||
+      (uiState.status !== 'GAME_OVER' && uiState.status !== 'VICTORY') ||
+      !endReason
+    ) {
+      return;
+    }
+
+    analyticsOutcomeRecordedRef.current = true;
+    const state = stateRef.current;
+    const reason = endReason;
+    const outcome = uiState.status === 'VICTORY' ? 'victory' : 'defeat';
+    const fields: GameplayAnalyticsFields = {
+      outcome,
+      cause_code: reason?.causeCode ?? (outcome === 'victory' ? 'spawner_destroyed' : 'arena_elimination'),
+      final_score: uiState.score,
+      player_x: state.player.x,
+      player_y: state.player.y,
+      spawners_remaining: state.spawners.length,
+    };
+    if (outcome === 'defeat') {
+      gameplayAnalytics.track('player_defeated', fields);
+    }
+    gameplayAnalytics.endRun(fields);
+  }, [uiState.status, uiState.score, endReason]);
 
   const toAuthoritativeBulletState = useCallback((bullet: typeof stateRef.current.bullets[number]): AuthoritativeBulletState | null => {
     if (!bullet.id) return null;
@@ -3855,6 +3956,10 @@ export default function GameCanvas() {
     const newUi = { ...uiRef.current, status: 'PAUSED' as const };
     uiRef.current = newUi;
     setUiState(newUi);
+    gameplayAnalytics.track('game_paused', {
+      player_x: stateRef.current.player.x,
+      player_y: stateRef.current.player.y,
+    });
   };
 
   const resumeSinglePlayerFromPause = () => {
@@ -3873,6 +3978,10 @@ export default function GameCanvas() {
     const newUi = { ...uiRef.current, status: 'PLAYING' as const };
     uiRef.current = newUi;
     setUiState(newUi);
+    gameplayAnalytics.track('game_resumed', {
+      player_x: stateRef.current.player.x,
+      player_y: stateRef.current.player.y,
+    });
   };
 
   const constructSaveEnvelope = () => {
@@ -5747,6 +5856,7 @@ export default function GameCanvas() {
 
       activeSinglePlayerRunIdRef.current += 1;
       invalidateQuickSave();
+      beginAnalyticsRun(selectedMapId, selectedGameMode);
     }
 
     return ok;
@@ -6180,6 +6290,7 @@ export default function GameCanvas() {
              const finalY = stateRef.current.player.y;
              const cIdx = playerProfileRef.current.colorIdx;
              applySpecialAbility(finalX, finalY, cIdx, 'local');
+             trackGameplayForOwner('local', 'special_activated', {});
          }
      } else if (isHost) {
          const dash = stateRef.current.player.dash;
@@ -6201,6 +6312,7 @@ export default function GameCanvas() {
              auth.specialReadyAt = currentTime + 6000 + DASH_COOLDOWN;
 
              stateRef.current.forceBroadcast = true;
+             trackGameplayForOwner(myId, 'special_activated', {});
          }
      } else {
          const socket = socketRef.current;
@@ -6228,7 +6340,7 @@ export default function GameCanvas() {
              }
          }
      }
-  }, [applySpecialAbility, isGuestSpecialReady]);
+  }, [applySpecialAbility, isGuestSpecialReady, trackGameplayForOwner]);
 
   const requestBuildActivation = useCallback((currentTime: number) => {
      if (mpRef.current.roomId && (!mpRef.current.isConnected || awaitingResumeSnapshotRef.current)) return;
@@ -6255,6 +6367,7 @@ export default function GameCanvas() {
 
              const cIdx = playerProfileRef.current.colorIdx;
              tryPlaceBuildBlock(currentTime, gridX, gridY, cIdx);
+             trackGameplayForOwner('local', 'build_activated', {});
          }
      } else if (isHost) {
          const build = stateRef.current.player.build;
@@ -6278,6 +6391,7 @@ export default function GameCanvas() {
              auth.buildReadyAt = currentTime + 8000 + BUILD_COOLDOWN;
 
              stateRef.current.forceBroadcast = true;
+             trackGameplayForOwner(myId, 'build_activated', {});
          }
      } else {
          const socket = socketRef.current;
@@ -6305,7 +6419,7 @@ export default function GameCanvas() {
              }
          }
      }
-  }, [tryPlaceBuildBlock, authMultiplayerPlaceBlock, isGuestBuildReady]);
+  }, [tryPlaceBuildBlock, authMultiplayerPlaceBlock, isGuestBuildReady, trackGameplayForOwner]);
 
   const handleHostRoleTransition = useCallback((newIsHost: boolean) => {
     const oldIsHost = mpRef.current.isHost;
@@ -6810,6 +6924,7 @@ export default function GameCanvas() {
           hardMode,
           gameMode: gameModeTyped
         }));
+        beginAnalyticsRun(mapId, gameModeTyped);
       } else {
         setMpError("INVALID START ASSIGNMENT");
       }
@@ -6844,7 +6959,33 @@ export default function GameCanvas() {
         if (typeof result.authoritativeBulletId === 'string' && result.authoritativeBulletId.length > 0 && result.authoritativeBulletId.length <= 96 && /^[a-zA-Z0-9_\-:]+$/.test(result.authoritativeBulletId)) {
           pending.authoritativeBulletId = result.authoritativeBulletId;
         }
+        if (!pending.analyticsRecorded && pending.preview) {
+          pending.analyticsRecorded = true;
+          const speed = Math.hypot(pending.preview.dx, pending.preview.dy);
+          const directionX = speed > 0 ? pending.preview.dx / speed : 0;
+          const directionY = speed > 0 ? pending.preview.dy / speed : 0;
+          gameplayAnalytics.track('player_bullet_fired', {
+            player_x: pending.preview.x,
+            player_y: pending.preview.y,
+            bullet_id: pending.authoritativeBulletId ?? pending.clientShotId,
+            direction_x: directionX,
+            direction_y: directionY,
+            target_x: pending.preview.x + directionX * 500,
+            target_y: pending.preview.y + directionY * 500,
+          });
+        }
       }
+    });
+
+    socket.on('analytics_gameplay_event', (rawEvent: any) => {
+      if (!rawEvent || typeof rawEvent !== 'object' || Array.isArray(rawEvent)) return;
+      if (!isCurrentRoom(rawEvent.roomId)) return;
+      const parsed = parseRelayedGameplayEvent(rawEvent);
+      if (!parsed || parsed.roundId !== activeMultiplayerRoundIdRef.current) return;
+      gameplayAnalytics.track(parsed.eventName, {
+        ...parsed.fields,
+        host_event_time_ms: parsed.occurredAtMs,
+      });
     });
 
     socket.on('game_state', (state: any) => {
@@ -7800,6 +7941,7 @@ export default function GameCanvas() {
 
                   // Use authoritative player position and frozen color
                   applySpecialAbility(clientPlayer.x, clientPlayer.y, matchPlayer.colorIdx, clientId);
+                  trackGameplayForOwner(clientId, 'special_activated', {});
               }
               stateRef.current.forceBroadcast = true;
           } else if (action.type === 'build_start') {
@@ -7809,6 +7951,7 @@ export default function GameCanvas() {
               if (currentTime >= auth.buildReadyAt) {
                   auth.buildActiveUntil = currentTime + 8000;
                   auth.buildReadyAt = currentTime + 8000 + BUILD_COOLDOWN;
+                  trackGameplayForOwner(clientId, 'build_activated', {});
               }
               stateRef.current.forceBroadcast = true;
           } else if (action.type === 'build') {
@@ -10144,6 +10287,22 @@ export default function GameCanvas() {
                 allowedBlockKeys: localAllowedKeys,
                 leftBlockKeys: []
               });
+              const bulletSpeed = Math.hypot(bvx, bvy);
+              const directionX = bulletSpeed > 0 ? bvx / bulletSpeed : 0;
+              const directionY = bulletSpeed > 0 ? bvy / bulletSpeed : 0;
+              gameplayAnalytics.track('player_bullet_fired', {
+                player_x: state.player.x,
+                player_y: state.player.y,
+                bullet_id: localBulletId,
+                direction_x: directionX,
+                direction_y: directionY,
+                target_x: uiRef.current.deviceType === 'desktop'
+                  ? state.player.x + shootDirX
+                  : state.player.x + directionX * 500,
+                target_y: uiRef.current.deviceType === 'desktop'
+                  ? state.player.y + shootDirY
+                  : state.player.y + directionY * 500,
+              });
             }
 
             // In multiplayer client mode, also notify the host to create the authoritative bullet
@@ -10823,6 +10982,15 @@ export default function GameCanvas() {
                   if (pts > 0) {
                     const bOwner = bullet.ownerId || 'local';
                     const hostId = socketRef.current?.id || 'local';
+                    trackGameplayForOwner(bOwner, 'bouncer_destroyed', {
+                      bouncer_id: bouncer.id,
+                      bouncer_x: bouncer.x,
+                      bouncer_y: bouncer.y,
+                      bouncer_size: bouncer.size,
+                      bullet_id: bullet.id,
+                      bullet_bounce_count: bullet.bounceCount,
+                      points_awarded: pts,
+                    });
                     if (bOwner === hostId || bOwner === 'local') {
                       setUiState(prev => {
                          const newScore = prev.score + pts;
@@ -10872,6 +11040,14 @@ export default function GameCanvas() {
                 if (pts > 0) {
                   const bOwner = bullet.ownerId || 'local';
                   const hostId = socketRef.current?.id || 'local';
+                  trackGameplayForOwner(bOwner, 'enemy_killed', {
+                    enemy_id: enemy.id,
+                    enemy_x: enemy.x,
+                    enemy_y: enemy.y,
+                    bullet_id: bullet.id,
+                    bullet_bounce_count: bullet.bounceCount,
+                    points_awarded: pts,
+                  });
                   if (bOwner === hostId || bOwner === 'local') {
                     setUiState(prev => {
                       const newScore = prev.score + pts;
@@ -10928,6 +11104,14 @@ export default function GameCanvas() {
 
                   const bOwner = bullet.ownerId || 'local';
                   const hostId = socketRef.current?.id || 'local';
+                  trackGameplayForOwner(bOwner, 'spawner_destroyed', {
+                    spawner_x: spawner.x,
+                    spawner_y: spawner.y,
+                    spawners_remaining: state.spawners.length,
+                    bullet_id: bullet.id,
+                    bullet_bounce_count: bullet.bounceCount,
+                    points_awarded: pts,
+                  });
 
                   const isSinglePlayerVictory = state.spawners.length === 0 && !mpRef.current.roomId;
                   if (isSinglePlayerVictory) {

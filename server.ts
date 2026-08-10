@@ -4,6 +4,7 @@ import { createServer } from "http";
 import { Server } from "socket.io";
 import { randomBytes } from "crypto";
 import { MatchSettings, DEFAULT_MATCH_SETTINGS, isValidGameMode, isValidMapId } from "./src/shared/matchSettings.js";
+import { parseRelayedGameplayEvent } from "./src/shared/gameplayAnalyticsRelay.js";
 
 async function startServer() {
   const app = express();
@@ -20,6 +21,26 @@ async function startServer() {
   // Basic API route
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
+  });
+
+  // ByteBrew's web credentials are delivered at runtime instead of being
+  // committed to the browser bundle. Like every browser analytics SDK, these
+  // values are visible to a user who inspects their own network traffic; they
+  // are identifiers for event ingestion, not server authorization secrets.
+  app.get("/api/analytics-config", (_req, res) => {
+    res.setHeader("Cache-Control", "no-store, max-age=0");
+    const appId = process.env.BYTEBREW_WEB_APP_ID?.trim();
+    const sdkKey = process.env.BYTEBREW_WEB_SDK_KEY?.trim();
+    if (!appId || !sdkKey) {
+      res.json({ enabled: false });
+      return;
+    }
+    res.json({
+      enabled: true,
+      appId,
+      sdkKey,
+      appVersion: process.env.BYTEBREW_APP_VERSION?.trim() || "0.0.0-test",
+    });
   });
 
   interface Player {
@@ -943,6 +964,29 @@ async function startServer() {
       }
 
       io.to(result.targetClientId).emit("client_action_result", sanitizedResult);
+    });
+
+    // Analytics-only authoritative outcome relay. Gameplay state never reads
+    // this channel: the current host may merely tell the affected player's
+    // browser about an already-resolved event for that player's own timeline.
+    socket.on("relay_analytics_event", (roomId, targetClientId, rawEvent) => {
+      const roomIdUpper = normalizeRoomCode(roomId);
+      if (!roomIdUpper || typeof targetClientId !== "string") return;
+      const room = rooms.get(roomIdUpper);
+      if (!room || !room.matchActive) return;
+
+      const host = room.players.find(player => player.isHost);
+      if (!host || host.id !== socket.id) return;
+      const target = room.players.find(player => player.id === targetClientId);
+      if (!target || target.isHost) return;
+
+      const event = parseRelayedGameplayEvent(rawEvent);
+      if (!event || event.roundId !== room.roundId) return;
+
+      io.to(target.id).emit("analytics_gameplay_event", {
+        roomId: roomIdUpper,
+        ...event,
+      });
     });
 
     // Host explicitly starts the game to sync all clients

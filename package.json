@@ -14,9 +14,10 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "test": "tsx --test src/shared/multiplayerBulletPhysics.test.ts src/shared/multiplayerBulletTimeline.test.ts src/shared/multiplayerShotPreview.test.ts"
+    "test": "tsx --test src/shared/multiplayerBulletPhysics.test.ts src/shared/multiplayerBulletTimeline.test.ts src/shared/multiplayerShotPreview.test.ts src/analytics/gameplayAnalytics.test.ts src/shared/gameplayAnalyticsRelay.test.ts"
   },
   "dependencies": {
+    "bytebrew-web-sdk": "^1.0.1",
     "express": "^4.21.2",
     "lucide-react": "^0.546.0",
     "motion": "^12.23.24",
