@@ -13947,7 +13947,7 @@ export default function GameCanvas() {
                   }}
                 >
                   {/* Left: Score & Spawners / Target Counters */}
-                  <div ref={hudTopLeftRef} className="flex items-stretch gap-2 sm:gap-6 ml-20 sm:ml-24 lg:ml-28">
+                  <div ref={hudTopLeftRef} className="flex items-stretch gap-2 sm:gap-6 ml-28 sm:ml-32 lg:ml-36">
                     <motion.div
                       animate={flashScore ? {
                         filter: [
