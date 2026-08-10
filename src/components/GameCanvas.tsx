@@ -13122,7 +13122,7 @@ export default function GameCanvas() {
 
                           <button
                             onClick={downloadQrCode}
-                            className="w-full py-1.5 bg-[#ffcc00]/10 hover:bg-[#ffcc00]/25 text-[#ffcc00] border border-[#ffcc00]/30 hover:border-[#ffcc00] font-sans font-black text-[9px] tracking-widest uppercase transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                            className="w-full py-1.5 bg-white/5 hover:bg-[#ffcc00]/15 text-white/50 hover:text-[#ffcc00] border border-white/10 hover:border-[#ffcc00]/50 font-sans font-black text-[9px] tracking-widest uppercase transition-all flex items-center justify-center gap-1.5 cursor-pointer"
                           >
                             <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
