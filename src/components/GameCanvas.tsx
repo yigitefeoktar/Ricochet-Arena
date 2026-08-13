@@ -44,7 +44,12 @@ import {
   parseRelayedGameplayEvent,
   type WorldRelayedGameplayEventName,
 } from '../shared/gameplayAnalyticsRelay';
-import { getColossusBladeSegments } from '../shared/relicGeometry';
+import {
+  getTitanRelicCarry,
+  getTitanRelicPrimitives,
+  getTitanRelicVisualRadius,
+  isTitanRelicType,
+} from '../shared/relicGeometry';
 
 interface ActiveMatchSettingsRequest {
   seq: number;
@@ -938,32 +943,18 @@ const MAPS: Record<string, MapDefinition> = {
   titan_orbit: {
     name: "Titan Orbit",
     difficulty: "EXPERT",
-    description: "Five colossal relic engines sweep across an open asymmetric forge, constantly rewriting its firing lanes.",
+    description: "Five different titan relics orbit an open drift field. Their enormous moving shapes carry anything caught in their path.",
     walls: [
-      ...BASE_WALLS,
-
-      // Sparse asymmetric cover keeps the colossal moving relics as the main obstacle.
-      { x: 1050, y: 330, w: 420, h: 55 },
-      { x: 1510, y: 500, w: 55, h: 330 },
-
-      { x: 250, y: 1320, w: 500, h: 55 },
-      { x: 700, y: 1375, w: 55, h: 350 },
-
-      { x: 2080, y: 1190, w: 610, h: 55 },
-      { x: 2080, y: 1245, w: 55, h: 340 },
-
-      { x: 1040, y: 2240, w: 500, h: 55 },
-      { x: 1490, y: 1880, w: 55, h: 360 },
-
-      { x: 1120, y: 1080, w: 180, h: 55 },
-      { x: 1680, y: 1650, w: 55, h: 180 }
+      // The moving titan shapes are the map's walls. Keeping the field open prevents
+      // them from visually passing through static geometry and makes their motion legible.
+      ...BASE_WALLS
     ],
     spawners: [
-      { x: 560, y: 560, radius: 40, hp: 100, maxHp: 100, specialType: 'colossus' },
-      { x: 2350, y: 540, radius: 40, hp: 100, maxHp: 100, specialType: 'colossus' },
-      { x: 1470, y: 1390, radius: 40, hp: 100, maxHp: 100, specialType: 'colossus' },
-      { x: 520, y: 2320, radius: 40, hp: 100, maxHp: 100, specialType: 'colossus' },
-      { x: 2380, y: 2290, radius: 40, hp: 100, maxHp: 100, specialType: 'colossus' }
+      { x: 700, y: 720, radius: 40, hp: 100, maxHp: 100, specialType: 'titan_sweeper' },
+      { x: 2310, y: 620, radius: 40, hp: 100, maxHp: 100, specialType: 'titan_cross' },
+      { x: 1510, y: 1470, radius: 40, hp: 100, maxHp: 100, specialType: 'titan_triangle' },
+      { x: 590, y: 2350, radius: 40, hp: 100, maxHp: 100, specialType: 'titan_moons' },
+      { x: 2360, y: 2360, radius: 40, hp: 100, maxHp: 100, specialType: 'titan_gate' }
     ]
   }
 };
@@ -1717,8 +1708,14 @@ function isValidPlayerSpawnPos(px: number, py: number, targetSpawner: {x: number
   for (const spawner of mapDef.spawners) {
     const dx = px - spawner.x;
     const dy = py - spawner.y;
-    const safeDistance = spawner.specialType === 'colossus' ? 270 : 160;
+    const safeDistance = 160;
     if (Math.sqrt(dx*dx + dy*dy) < safeDistance) {
+      return false;
+    }
+    if (
+      isTitanRelicType(spawner.specialType) &&
+      getTitanRelicCarry(px, py, PLAYER_RADIUS, spawner, 0, 0)
+    ) {
       return false;
     }
   }
@@ -1811,8 +1808,14 @@ function generateMultiplayerSpawnAssignments(
       for (const spawner of spawnersList) {
         const dx = sx - spawner.x;
         const dy = sy - spawner.y;
-        const safeDistance = spawner.specialType === 'colossus' ? 270 : 160;
+        const safeDistance = 160;
         if (Math.hypot(dx, dy) < safeDistance) {
+          return null;
+        }
+        if (
+          isTitanRelicType(spawner.specialType) &&
+          getTitanRelicCarry(sx, sy, PLAYER_RADIUS, spawner, 0, 0)
+        ) {
           return null;
         }
       }
@@ -1941,8 +1944,8 @@ function getPlayerSpawn(mapDef: MapDefinition): { pos: { x: number; y: number },
 
   for (const idx of spawnerIndices) {
     const spawner = mapDef.spawners[idx];
-    const minSpawnDistance = spawner.specialType === 'colossus' ? 285 : 220;
-    const maxSpawnDistance = spawner.specialType === 'colossus' ? 360 : 320;
+    const minSpawnDistance = isTitanRelicType(spawner.specialType) ? 175 : 220;
+    const maxSpawnDistance = isTitanRelicType(spawner.specialType) ? 205 : 320;
 
     // try random angles/distances first
     for (let attempt = 0; attempt < 50; attempt++) {
@@ -2163,15 +2166,17 @@ function getBulletRelicCollision(
       const col4 = checkSegment(p4x, p4y, p1x, p1y);
       if (col4) return col4;
     }
-  } else if (spawner.specialType === 'colossus') {
-    for (const blade of getColossusBladeSegments(spawner, currentTime)) {
-      const collision = checkSegment(
-        blade.ax,
-        blade.ay,
-        blade.bx,
-        blade.by,
-        blade.thickness
-      );
+  } else if (isTitanRelicType(spawner.specialType)) {
+    for (const primitive of getTitanRelicPrimitives(spawner, currentTime)) {
+      const collision = primitive.kind === 'circle'
+        ? checkCircle(primitive.cx, primitive.cy, primitive.radius)
+        : checkSegment(
+            primitive.ax,
+            primitive.ay,
+            primitive.bx,
+            primitive.by,
+            primitive.radius,
+          );
       if (collision) return collision;
     }
   }
@@ -9258,6 +9263,27 @@ export default function GameCanvas() {
           }
         }
 
+        // Titan relics are moving platforms, not lethal hazards. Carry the local
+        // player by the exact contact point's frame-to-frame movement, then let the
+        // normal wall resolver keep the result inside the arena.
+        if (STATUS === 'PLAYING' && dt > 0) {
+          const previousWorldPhaseTime = Math.max(0, worldPhaseTime - dt * 1000);
+          for (const spawner of state.spawners) {
+            if (!isTitanRelicType(spawner.specialType)) continue;
+            const carry = getTitanRelicCarry(
+              state.player.x,
+              state.player.y,
+              state.player.radius,
+              spawner,
+              previousWorldPhaseTime,
+              worldPhaseTime,
+            );
+            if (!carry) continue;
+            state.player.x += carry.dx;
+            state.player.y += carry.dy;
+          }
+        }
+
         // Core Player Wall Collisions & Clamping (Run locally on BOTH Client and Host to prevent wall-phasing)
         const playerResolved = mpRef.current.roomId
           ? sweptMultiplayerPlayerResolve(pBeforeX, pBeforeY, state.player.x, state.player.y, state.player.radius, activeWalls)
@@ -9329,10 +9355,11 @@ export default function GameCanvas() {
             }
           }
 
-          // 3. Collide with Spawner Orbiting Special Obstacles (Shield, Kinetic, Singularity, Magma gates, Crystal)
+          // 3. Older orbiting relics remain lethal. Titan relics are handled above
+          // as moving platforms and deliberately never end a run on contact.
           if (uiRef.current.status === 'PLAYING' && !state.player.dash.active && !isOpeningProtectionActiveLocal(currentTime)) {
             for (const spawner of state.spawners) {
-              if (spawner.specialType) {
+              if (spawner.specialType && !isTitanRelicType(spawner.specialType)) {
                 const collision = getBulletRelicCollision(state.player.x, state.player.y, state.player.radius, spawner, worldPhaseTime);
                 if (collision) {
                   const impactX = state.player.x - collision.nx * state.player.radius;
@@ -9498,23 +9525,6 @@ export default function GameCanvas() {
                 vx = (Math.random() - 0.5) * 15;
                 vy = (Math.random() - 0.5) * 15;
                 radius = Math.random() * 3 + 1.5;
-              } else if (spawner.specialType === 'colossus') {
-                pColor = '#f4f1ff';
-                const angle = Math.random() * Math.PI * 2;
-                const spawnRadius = 175 + Math.random() * 55;
-                const px = spawner.x + Math.cos(angle) * spawnRadius;
-                const py = spawner.y + Math.sin(angle) * spawnRadius;
-                state.particles.push({
-                  x: px,
-                  y: py,
-                  vx: -Math.sin(angle) * 35,
-                  vy: Math.cos(angle) * 35,
-                  life: 0,
-                  maxLife: 1.4,
-                  color: pColor,
-                  radius: Math.random() * 3 + 1
-                });
-                continue;
               } else {
                 continue; // Do not emit for default or unknown spawner types
               }
@@ -10361,7 +10371,7 @@ export default function GameCanvas() {
         // B4: Host-side Orbiting relic obstacles checks against living remote players
         if (mpRef.current.roomId && mpRef.current.isHost) {
           for (const spawner of state.spawners) {
-            if (spawner.specialType) {
+            if (spawner.specialType && !isTitanRelicType(spawner.specialType)) {
               for (const pid in state.multiplayerPlayers) {
                 const mpPlayer = state.multiplayerPlayers[pid];
                 if (mpPlayer && !mpPlayer.isDead) {
@@ -11003,7 +11013,7 @@ export default function GameCanvas() {
                 else if (specialType === 'singularity') particleColor = '#b500ff';
                 else if (specialType === 'magma_gates') particleColor = '#ff5500';
                 else if (specialType === 'crystal') particleColor = '#00ffaa';
-                else if (specialType === 'colossus') particleColor = '#f4f1ff';
+                else if (isTitanRelicType(specialType)) particleColor = '#b9b5c2';
               }
               spawnParticles(collision.x, collision.y, particleColor, particleCount);
               const collisionTime = hasMultiplayerCatchUp && bullet.isPlayer
@@ -11111,7 +11121,7 @@ export default function GameCanvas() {
                     else if (spawner.specialType === 'singularity') pColor = '#b500ff';
                     else if (spawner.specialType === 'magma_gates') pColor = '#ff5500';
                     else if (spawner.specialType === 'crystal') pColor = '#00ffaa';
-                    else if (spawner.specialType === 'colossus') pColor = '#f4f1ff';
+                    else if (isTitanRelicType(spawner.specialType)) pColor = '#b9b5c2';
 
                     spawnParticles(bullet.x, bullet.y, pColor, 8);
                   }
@@ -11662,7 +11672,10 @@ export default function GameCanvas() {
 
       // Draw Spawners
       for (const spawner of state.spawners) {
-        const spawnerVisualRadius = spawner.specialType === 'colossus' ? 300 : spawner.radius;
+        const spawnerVisualRadius = Math.max(
+          spawner.radius,
+          getTitanRelicVisualRadius(spawner.specialType),
+        );
         if (
           spawner.x + spawnerVisualRadius < state.camera.x ||
           spawner.x - spawnerVisualRadius > state.camera.x + state.camera.width ||
@@ -11809,64 +11822,31 @@ export default function GameCanvas() {
           ctx.fill();
           ctx.stroke();
           ctx.restore();
-        } else if (spawner.specialType === 'colossus') {
+        } else if (isTitanRelicType(spawner.specialType)) {
           ctx.save();
+          ctx.lineCap = 'round';
+          ctx.lineJoin = 'round';
+          ctx.strokeStyle = '#b9b5c2';
+          ctx.fillStyle = '#b9b5c2';
+          ctx.shadowColor = 'rgba(181, 0, 255, 0.55)';
+          ctx.shadowBlur = 8;
 
-          // A faint guide orbit keeps the movement readable without becoming a solid shield.
-          ctx.strokeStyle = 'rgba(244, 241, 255, 0.22)';
-          ctx.lineWidth = 2;
-          ctx.setLineDash([18, 22]);
-          ctx.beginPath();
-          ctx.arc(spawner.x, spawner.y, 190, 0, Math.PI * 2);
-          ctx.stroke();
-          ctx.setLineDash([]);
-
-          for (const blade of getColossusBladeSegments(spawner, worldPhaseTime)) {
-            const centerX = (blade.ax + blade.bx) / 2;
-            const centerY = (blade.ay + blade.by) / 2;
-
-            ctx.save();
-            ctx.lineCap = 'round';
-            ctx.strokeStyle = 'rgba(181, 0, 255, 0.22)';
-            ctx.shadowColor = '#b500ff';
-            ctx.shadowBlur = 28;
-            ctx.lineWidth = blade.thickness * 2.8;
+          for (const primitive of getTitanRelicPrimitives(spawner, worldPhaseTime)) {
             ctx.beginPath();
-            ctx.moveTo(blade.ax, blade.ay);
-            ctx.lineTo(blade.bx, blade.by);
-            ctx.stroke();
-
-            ctx.strokeStyle = '#e8e3f0';
-            ctx.shadowColor = '#f4f1ff';
-            ctx.shadowBlur = 14;
-            ctx.lineWidth = blade.thickness * 1.65;
-            ctx.beginPath();
-            ctx.moveTo(blade.ax, blade.ay);
-            ctx.lineTo(blade.bx, blade.by);
-            ctx.stroke();
-
-            ctx.strokeStyle = '#b500ff';
-            ctx.shadowBlur = 8;
-            ctx.lineWidth = 3;
-            ctx.beginPath();
-            ctx.moveTo(blade.ax, blade.ay);
-            ctx.lineTo(blade.bx, blade.by);
-            ctx.stroke();
-
-            ctx.fillStyle = '#08040d';
-            ctx.strokeStyle = '#f4f1ff';
-            ctx.lineWidth = 4;
-            ctx.beginPath();
-            ctx.arc(centerX, centerY, 22, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.stroke();
-            ctx.fillStyle = '#b500ff';
-            ctx.beginPath();
-            ctx.arc(centerX, centerY, 9, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.restore();
+            if (primitive.kind === 'circle') {
+              ctx.arc(primitive.cx, primitive.cy, primitive.radius, 0, Math.PI * 2);
+              ctx.fill();
+              ctx.strokeStyle = '#6f397f';
+              ctx.lineWidth = 5;
+              ctx.stroke();
+              ctx.strokeStyle = '#b9b5c2';
+            } else {
+              ctx.lineWidth = primitive.radius * 2;
+              ctx.moveTo(primitive.ax, primitive.ay);
+              ctx.lineTo(primitive.bx, primitive.by);
+              ctx.stroke();
+            }
           }
-
           ctx.restore();
         }
 
@@ -13205,22 +13185,29 @@ export default function GameCanvas() {
                                    {/* Render Spawners */}
                                    {selMap.spawners.map((s, i) => (
                                      <g key={`spawner-${i}`}>
-                                       {s.specialType === 'colossus' && (
-                                         <>
-                                           <circle cx={s.x} cy={s.y} r={190} fill="none" stroke="rgba(244,241,255,0.4)" strokeWidth={10} strokeDasharray="35 28" />
-                                           {getColossusBladeSegments(s, 0).map((blade, bladeIndex) => (
-                                             <line
-                                               key={`blade-${bladeIndex}`}
-                                               x1={blade.ax}
-                                               y1={blade.ay}
-                                               x2={blade.bx}
-                                               y2={blade.by}
-                                               stroke="#e8e3f0"
-                                               strokeWidth={blade.thickness * 2}
-                                               strokeLinecap="round"
-                                             />
-                                           ))}
-                                         </>
+                                       {isTitanRelicType(s.specialType) && getTitanRelicPrimitives(s, 0).map(primitive =>
+                                         primitive.kind === 'circle' ? (
+                                           <circle
+                                             key={`titan-${primitive.id}`}
+                                             cx={primitive.cx}
+                                             cy={primitive.cy}
+                                             r={primitive.radius}
+                                             fill="#b9b5c2"
+                                             stroke="#6f397f"
+                                             strokeWidth={12}
+                                           />
+                                         ) : (
+                                           <line
+                                             key={`titan-${primitive.id}`}
+                                             x1={primitive.ax}
+                                             y1={primitive.ay}
+                                             x2={primitive.bx}
+                                             y2={primitive.by}
+                                             stroke="#b9b5c2"
+                                             strokeWidth={primitive.radius * 2}
+                                             strokeLinecap="round"
+                                           />
+                                         )
                                        )}
                                        <circle
                                          cx={s.x}
@@ -13446,22 +13433,29 @@ export default function GameCanvas() {
                                    {/* Render Spawners */}
                                    {selMap.spawners.map((s, i) => (
                                      <g key={`spawner-${i}`}>
-                                       {s.specialType === 'colossus' && (
-                                         <>
-                                           <circle cx={s.x} cy={s.y} r={190} fill="none" stroke="rgba(244,241,255,0.4)" strokeWidth={10} strokeDasharray="35 28" />
-                                           {getColossusBladeSegments(s, 0).map((blade, bladeIndex) => (
-                                             <line
-                                               key={`blade-${bladeIndex}`}
-                                               x1={blade.ax}
-                                               y1={blade.ay}
-                                               x2={blade.bx}
-                                               y2={blade.by}
-                                               stroke="#e8e3f0"
-                                               strokeWidth={blade.thickness * 2}
-                                               strokeLinecap="round"
-                                             />
-                                           ))}
-                                         </>
+                                       {isTitanRelicType(s.specialType) && getTitanRelicPrimitives(s, 0).map(primitive =>
+                                         primitive.kind === 'circle' ? (
+                                           <circle
+                                             key={`titan-${primitive.id}`}
+                                             cx={primitive.cx}
+                                             cy={primitive.cy}
+                                             r={primitive.radius}
+                                             fill="#b9b5c2"
+                                             stroke="#6f397f"
+                                             strokeWidth={12}
+                                           />
+                                         ) : (
+                                           <line
+                                             key={`titan-${primitive.id}`}
+                                             x1={primitive.ax}
+                                             y1={primitive.ay}
+                                             x2={primitive.bx}
+                                             y2={primitive.by}
+                                             stroke="#b9b5c2"
+                                             strokeWidth={primitive.radius * 2}
+                                             strokeLinecap="round"
+                                           />
+                                         )
                                        )}
                                        <circle
                                          cx={s.x}

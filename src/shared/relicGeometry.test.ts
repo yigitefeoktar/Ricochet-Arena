@@ -1,32 +1,78 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { getColossusBladeSegments } from './relicGeometry';
+import {
+  TITAN_RELIC_TYPES,
+  getTitanRelicCarry,
+  getTitanRelicPrimitives,
+  getTitanRelicVisualRadius,
+} from './relicGeometry';
 
-test('colossus geometry produces three equal colossal blades on a stable orbit', () => {
-  const spawner = { x: 1_500, y: 1_500 };
-  const blades = getColossusBladeSegments(spawner, 0);
+test('every titan spawner has a distinct deterministic simple geometry', () => {
+  const signatures = new Set<string>();
 
-  assert.equal(blades.length, 3);
-  for (const blade of blades) {
-    const centerX = (blade.ax + blade.bx) / 2;
-    const centerY = (blade.ay + blade.by) / 2;
-    assert.ok(Math.abs(Math.hypot(centerX - spawner.x, centerY - spawner.y) - 190) < 1e-9);
-    assert.ok(Math.abs(Math.hypot(blade.bx - blade.ax, blade.by - blade.ay) - 184) < 1e-9);
-    assert.equal(blade.thickness, 16);
+  for (const specialType of TITAN_RELIC_TYPES) {
+    const spawner = { x: 1_500, y: 1_500, specialType };
+    const first = getTitanRelicPrimitives(spawner, 4_000);
+    const repeated = getTitanRelicPrimitives(spawner, 4_000);
+
+    assert.ok(first.length >= 1 && first.length <= 3);
+    assert.deepEqual(first, repeated);
+    signatures.add(first.map(primitive => primitive.kind === 'circle'
+      ? `circle:${primitive.radius}`
+      : `segment:${Math.round(Math.hypot(primitive.bx - primitive.ax, primitive.by - primitive.ay))}:${primitive.radius}`
+    ).join('|'));
+    assert.ok(getTitanRelicVisualRadius(specialType) >= 560);
+  }
+
+  assert.equal(signatures.size, TITAN_RELIC_TYPES.length);
+});
+
+test('titan relic structures are genuinely massive and rotate without changing shape', () => {
+  for (const specialType of TITAN_RELIC_TYPES) {
+    const spawner = { x: 1_500, y: 1_500, specialType };
+    const first = getTitanRelicPrimitives(spawner, 0);
+    const later = getTitanRelicPrimitives(spawner, 1_000);
+
+    assert.notDeepEqual(first, later);
+    const furthestExtent = Math.max(...first.flatMap(primitive => {
+      if (primitive.kind === 'circle') {
+        return [Math.hypot(primitive.cx - spawner.x, primitive.cy - spawner.y) + primitive.radius];
+      }
+      return [
+        Math.hypot(primitive.ax - spawner.x, primitive.ay - spawner.y) + primitive.radius,
+        Math.hypot(primitive.bx - spawner.x, primitive.by - spawner.y) + primitive.radius,
+      ];
+    }));
+    assert.ok(furthestExtent >= 500);
   }
 });
 
-test('colossus geometry is deterministic and rotates without changing its dimensions', () => {
-  const spawner = { x: 560, y: 560 };
-  const first = getColossusBladeSegments(spawner, 5_000);
-  const repeated = getColossusBladeSegments(spawner, 5_000);
-  const later = getColossusBladeSegments(spawner, 6_000);
+test('contact with a moving titan relic produces finite carry instead of a lethal result', () => {
+  for (const specialType of TITAN_RELIC_TYPES) {
+    const spawner = { x: 1_500, y: 1_500, specialType };
+    const previousTime = 5_000;
+    const currentTime = 5_016;
+    const primitive = getTitanRelicPrimitives(spawner, currentTime)[0];
+    const playerX = primitive.kind === 'circle' ? primitive.cx : (primitive.ax + primitive.bx) / 2;
+    const playerY = primitive.kind === 'circle' ? primitive.cy : (primitive.ay + primitive.by) / 2;
+    const carry = getTitanRelicCarry(
+      playerX,
+      playerY,
+      20,
+      spawner,
+      previousTime,
+      currentTime,
+    );
 
-  assert.deepEqual(first, repeated);
-  assert.notDeepEqual(first, later);
-  for (let index = 0; index < first.length; index += 1) {
-    const firstLength = Math.hypot(first[index].bx - first[index].ax, first[index].by - first[index].ay);
-    const laterLength = Math.hypot(later[index].bx - later[index].ax, later[index].by - later[index].ay);
-    assert.ok(Math.abs(firstLength - laterLength) < 1e-9);
+    assert.ok(carry);
+    assert.ok(Number.isFinite(carry.dx));
+    assert.ok(Number.isFinite(carry.dy));
+    assert.ok(carry.overlap > 0);
+    assert.ok(Math.hypot(carry.dx, carry.dy) > 0);
   }
+});
+
+test('players outside a titan relic receive no carry', () => {
+  const spawner = { x: 1_500, y: 1_500, specialType: 'titan_sweeper' };
+  assert.equal(getTitanRelicCarry(2_900, 2_900, 20, spawner, 0, 16), null);
 });
