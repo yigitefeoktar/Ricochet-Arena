@@ -44,6 +44,7 @@ import {
   parseRelayedGameplayEvent,
   type WorldRelayedGameplayEventName,
 } from '../shared/gameplayAnalyticsRelay';
+import { getColossusBladeSegments } from '../shared/relicGeometry';
 
 interface ActiveMatchSettingsRequest {
   seq: number;
@@ -933,6 +934,37 @@ const MAPS: Record<string, MapDefinition> = {
       { x: 300, y: 2700, radius: 40, hp: 100, maxHp: 100 },
       { x: 2700, y: 2700, radius: 40, hp: 100, maxHp: 100 }
     ]
+  },
+  titan_orbit: {
+    name: "Titan Orbit",
+    difficulty: "EXPERT",
+    description: "Five colossal relic engines sweep across an open asymmetric forge, constantly rewriting its firing lanes.",
+    walls: [
+      ...BASE_WALLS,
+
+      // Sparse asymmetric cover keeps the colossal moving relics as the main obstacle.
+      { x: 1050, y: 330, w: 420, h: 55 },
+      { x: 1510, y: 500, w: 55, h: 330 },
+
+      { x: 250, y: 1320, w: 500, h: 55 },
+      { x: 700, y: 1375, w: 55, h: 350 },
+
+      { x: 2080, y: 1190, w: 610, h: 55 },
+      { x: 2080, y: 1245, w: 55, h: 340 },
+
+      { x: 1040, y: 2240, w: 500, h: 55 },
+      { x: 1490, y: 1880, w: 55, h: 360 },
+
+      { x: 1120, y: 1080, w: 180, h: 55 },
+      { x: 1680, y: 1650, w: 55, h: 180 }
+    ],
+    spawners: [
+      { x: 560, y: 560, radius: 40, hp: 100, maxHp: 100, specialType: 'colossus' },
+      { x: 2350, y: 540, radius: 40, hp: 100, maxHp: 100, specialType: 'colossus' },
+      { x: 1470, y: 1390, radius: 40, hp: 100, maxHp: 100, specialType: 'colossus' },
+      { x: 520, y: 2320, radius: 40, hp: 100, maxHp: 100, specialType: 'colossus' },
+      { x: 2380, y: 2290, radius: 40, hp: 100, maxHp: 100, specialType: 'colossus' }
+    ]
   }
 };
 
@@ -1685,7 +1717,8 @@ function isValidPlayerSpawnPos(px: number, py: number, targetSpawner: {x: number
   for (const spawner of mapDef.spawners) {
     const dx = px - spawner.x;
     const dy = py - spawner.y;
-    if (Math.sqrt(dx*dx + dy*dy) < 160) {
+    const safeDistance = spawner.specialType === 'colossus' ? 270 : 160;
+    if (Math.sqrt(dx*dx + dy*dy) < safeDistance) {
       return false;
     }
   }
@@ -1778,7 +1811,8 @@ function generateMultiplayerSpawnAssignments(
       for (const spawner of spawnersList) {
         const dx = sx - spawner.x;
         const dy = sy - spawner.y;
-        if (Math.hypot(dx, dy) < 160) {
+        const safeDistance = spawner.specialType === 'colossus' ? 270 : 160;
+        if (Math.hypot(dx, dy) < safeDistance) {
           return null;
         }
       }
@@ -1907,11 +1941,13 @@ function getPlayerSpawn(mapDef: MapDefinition): { pos: { x: number; y: number },
 
   for (const idx of spawnerIndices) {
     const spawner = mapDef.spawners[idx];
+    const minSpawnDistance = spawner.specialType === 'colossus' ? 285 : 220;
+    const maxSpawnDistance = spawner.specialType === 'colossus' ? 360 : 320;
 
     // try random angles/distances first
     for (let attempt = 0; attempt < 50; attempt++) {
       const angle = Math.random() * Math.PI * 2;
-      const dist = 220 + Math.random() * 100; // 220 to 320
+      const dist = minSpawnDistance + Math.random() * (maxSpawnDistance - minSpawnDistance);
       const px = spawner.x + Math.cos(angle) * dist;
       const py = spawner.y + Math.sin(angle) * dist;
 
@@ -1921,7 +1957,7 @@ function getPlayerSpawn(mapDef: MapDefinition): { pos: { x: number; y: number },
     }
 
     // deterministic sweep if random fails
-    for (let dist = 220; dist <= 320; dist += 20) {
+    for (let dist = minSpawnDistance; dist <= maxSpawnDistance; dist += 15) {
       for (let a = 0; a < 360; a += 15) {
         const angle = a * Math.PI / 180;
         const px = spawner.x + Math.cos(angle) * dist;
@@ -2126,6 +2162,17 @@ function getBulletRelicCollision(
       if (col3) return col3;
       const col4 = checkSegment(p4x, p4y, p1x, p1y);
       if (col4) return col4;
+    }
+  } else if (spawner.specialType === 'colossus') {
+    for (const blade of getColossusBladeSegments(spawner, currentTime)) {
+      const collision = checkSegment(
+        blade.ax,
+        blade.ay,
+        blade.bx,
+        blade.by,
+        blade.thickness
+      );
+      if (collision) return collision;
     }
   }
 
@@ -9451,6 +9498,23 @@ export default function GameCanvas() {
                 vx = (Math.random() - 0.5) * 15;
                 vy = (Math.random() - 0.5) * 15;
                 radius = Math.random() * 3 + 1.5;
+              } else if (spawner.specialType === 'colossus') {
+                pColor = '#f4f1ff';
+                const angle = Math.random() * Math.PI * 2;
+                const spawnRadius = 175 + Math.random() * 55;
+                const px = spawner.x + Math.cos(angle) * spawnRadius;
+                const py = spawner.y + Math.sin(angle) * spawnRadius;
+                state.particles.push({
+                  x: px,
+                  y: py,
+                  vx: -Math.sin(angle) * 35,
+                  vy: Math.cos(angle) * 35,
+                  life: 0,
+                  maxLife: 1.4,
+                  color: pColor,
+                  radius: Math.random() * 3 + 1
+                });
+                continue;
               } else {
                 continue; // Do not emit for default or unknown spawner types
               }
@@ -10939,6 +11003,7 @@ export default function GameCanvas() {
                 else if (specialType === 'singularity') particleColor = '#b500ff';
                 else if (specialType === 'magma_gates') particleColor = '#ff5500';
                 else if (specialType === 'crystal') particleColor = '#00ffaa';
+                else if (specialType === 'colossus') particleColor = '#f4f1ff';
               }
               spawnParticles(collision.x, collision.y, particleColor, particleCount);
               const collisionTime = hasMultiplayerCatchUp && bullet.isPlayer
@@ -11046,6 +11111,7 @@ export default function GameCanvas() {
                     else if (spawner.specialType === 'singularity') pColor = '#b500ff';
                     else if (spawner.specialType === 'magma_gates') pColor = '#ff5500';
                     else if (spawner.specialType === 'crystal') pColor = '#00ffaa';
+                    else if (spawner.specialType === 'colossus') pColor = '#f4f1ff';
 
                     spawnParticles(bullet.x, bullet.y, pColor, 8);
                   }
@@ -11596,11 +11662,12 @@ export default function GameCanvas() {
 
       // Draw Spawners
       for (const spawner of state.spawners) {
+        const spawnerVisualRadius = spawner.specialType === 'colossus' ? 300 : spawner.radius;
         if (
-          spawner.x + spawner.radius < state.camera.x ||
-          spawner.x - spawner.radius > state.camera.x + state.camera.width ||
-          spawner.y + spawner.radius < state.camera.y ||
-          spawner.y - spawner.radius > state.camera.y + state.camera.height
+          spawner.x + spawnerVisualRadius < state.camera.x ||
+          spawner.x - spawnerVisualRadius > state.camera.x + state.camera.width ||
+          spawner.y + spawnerVisualRadius < state.camera.y ||
+          spawner.y - spawnerVisualRadius > state.camera.y + state.camera.height
         ) continue;
 
         // Draw Special Relic effects next to spawners
@@ -11741,6 +11808,65 @@ export default function GameCanvas() {
           ctx.arc(0, 0, 22, 0, Math.PI * 2);
           ctx.fill();
           ctx.stroke();
+          ctx.restore();
+        } else if (spawner.specialType === 'colossus') {
+          ctx.save();
+
+          // A faint guide orbit keeps the movement readable without becoming a solid shield.
+          ctx.strokeStyle = 'rgba(244, 241, 255, 0.22)';
+          ctx.lineWidth = 2;
+          ctx.setLineDash([18, 22]);
+          ctx.beginPath();
+          ctx.arc(spawner.x, spawner.y, 190, 0, Math.PI * 2);
+          ctx.stroke();
+          ctx.setLineDash([]);
+
+          for (const blade of getColossusBladeSegments(spawner, worldPhaseTime)) {
+            const centerX = (blade.ax + blade.bx) / 2;
+            const centerY = (blade.ay + blade.by) / 2;
+
+            ctx.save();
+            ctx.lineCap = 'round';
+            ctx.strokeStyle = 'rgba(181, 0, 255, 0.22)';
+            ctx.shadowColor = '#b500ff';
+            ctx.shadowBlur = 28;
+            ctx.lineWidth = blade.thickness * 2.8;
+            ctx.beginPath();
+            ctx.moveTo(blade.ax, blade.ay);
+            ctx.lineTo(blade.bx, blade.by);
+            ctx.stroke();
+
+            ctx.strokeStyle = '#e8e3f0';
+            ctx.shadowColor = '#f4f1ff';
+            ctx.shadowBlur = 14;
+            ctx.lineWidth = blade.thickness * 1.65;
+            ctx.beginPath();
+            ctx.moveTo(blade.ax, blade.ay);
+            ctx.lineTo(blade.bx, blade.by);
+            ctx.stroke();
+
+            ctx.strokeStyle = '#b500ff';
+            ctx.shadowBlur = 8;
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(blade.ax, blade.ay);
+            ctx.lineTo(blade.bx, blade.by);
+            ctx.stroke();
+
+            ctx.fillStyle = '#08040d';
+            ctx.strokeStyle = '#f4f1ff';
+            ctx.lineWidth = 4;
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, 22, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.stroke();
+            ctx.fillStyle = '#b500ff';
+            ctx.beginPath();
+            ctx.arc(centerX, centerY, 9, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+          }
+
           ctx.restore();
         }
 
@@ -13078,15 +13204,33 @@ export default function GameCanvas() {
 
                                    {/* Render Spawners */}
                                    {selMap.spawners.map((s, i) => (
-                                     <circle
-                                       key={`spawner-${i}`}
-                                       cx={s.x}
-                                       cy={s.y}
-                                       r={s.radius}
-                                       fill="#ff00ff"
-                                       stroke="rgba(255, 255, 255, 0.5)"
-                                       strokeWidth="8"
-                                     />
+                                     <g key={`spawner-${i}`}>
+                                       {s.specialType === 'colossus' && (
+                                         <>
+                                           <circle cx={s.x} cy={s.y} r={190} fill="none" stroke="rgba(244,241,255,0.4)" strokeWidth={10} strokeDasharray="35 28" />
+                                           {getColossusBladeSegments(s, 0).map((blade, bladeIndex) => (
+                                             <line
+                                               key={`blade-${bladeIndex}`}
+                                               x1={blade.ax}
+                                               y1={blade.ay}
+                                               x2={blade.bx}
+                                               y2={blade.by}
+                                               stroke="#e8e3f0"
+                                               strokeWidth={blade.thickness * 2}
+                                               strokeLinecap="round"
+                                             />
+                                           ))}
+                                         </>
+                                       )}
+                                       <circle
+                                         cx={s.x}
+                                         cy={s.y}
+                                         r={s.radius}
+                                         fill="#ff00ff"
+                                         stroke="rgba(255, 255, 255, 0.5)"
+                                         strokeWidth="8"
+                                       />
+                                     </g>
                                    ))}
 
                                    {/* Render Spawn Point */}
@@ -13301,15 +13445,33 @@ export default function GameCanvas() {
 
                                    {/* Render Spawners */}
                                    {selMap.spawners.map((s, i) => (
-                                     <circle
-                                       key={`spawner-${i}`}
-                                       cx={s.x}
-                                       cy={s.y}
-                                       r={s.radius}
-                                       fill="#ff00ff"
-                                       stroke="rgba(255, 255, 255, 0.5)"
-                                       strokeWidth="8"
-                                     />
+                                     <g key={`spawner-${i}`}>
+                                       {s.specialType === 'colossus' && (
+                                         <>
+                                           <circle cx={s.x} cy={s.y} r={190} fill="none" stroke="rgba(244,241,255,0.4)" strokeWidth={10} strokeDasharray="35 28" />
+                                           {getColossusBladeSegments(s, 0).map((blade, bladeIndex) => (
+                                             <line
+                                               key={`blade-${bladeIndex}`}
+                                               x1={blade.ax}
+                                               y1={blade.ay}
+                                               x2={blade.bx}
+                                               y2={blade.by}
+                                               stroke="#e8e3f0"
+                                               strokeWidth={blade.thickness * 2}
+                                               strokeLinecap="round"
+                                             />
+                                           ))}
+                                         </>
+                                       )}
+                                       <circle
+                                         cx={s.x}
+                                         cy={s.y}
+                                         r={s.radius}
+                                         fill="#ff00ff"
+                                         stroke="rgba(255, 255, 255, 0.5)"
+                                         strokeWidth="8"
+                                       />
+                                     </g>
                                    ))}
 
                                    {/* Render Spawn Point */}

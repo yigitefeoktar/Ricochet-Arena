@@ -122,7 +122,7 @@ test('Build surfaces use the same continuous collision path as walls', () => {
 });
 
 test('all relic variants can participate as deterministic swept dynamic surfaces', () => {
-  for (const relicType of ['shield', 'kinetic', 'singularity', 'magma_gates', 'crystal']) {
+  for (const relicType of ['shield', 'kinetic', 'singularity', 'magma_gates', 'crystal', 'colossus']) {
     const trace = traceReflectedBulletMotion({
       x: 0,
       y: 50,
