@@ -14,7 +14,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist",
     "lint": "tsc --noEmit",
-    "test": "tsx --test src/shared/multiplayerBulletPhysics.test.ts src/shared/multiplayerBulletTimeline.test.ts src/shared/multiplayerShotPreview.test.ts src/shared/multiplayerEntityInterpolation.test.ts src/analytics/gameplayAnalytics.test.ts src/shared/gameplayAnalyticsRelay.test.ts src/shared/relicGeometry.test.ts"
+    "test": "tsx --test src/shared/multiplayerBulletPhysics.test.ts src/shared/multiplayerBulletTimeline.test.ts src/shared/multiplayerShotPreview.test.ts src/shared/multiplayerEntityInterpolation.test.ts src/shared/matchSettings.test.ts src/analytics/gameplayAnalytics.test.ts src/shared/gameplayAnalyticsRelay.test.ts src/shared/relicGeometry.test.ts"
   },
   "dependencies": {
     "bytebrew-web-sdk": "^1.0.1",

@@ -35,6 +35,8 @@ export const VALID_MAP_IDS = [
   'labyrinth',
   'scattered_ruins',
   'checkerboard',
+  'titan_orbit',
+  'titan_tempest',
 ] as const;
 
 export function isValidMapId(mapId: unknown): mapId is string {
