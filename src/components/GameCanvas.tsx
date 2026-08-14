@@ -961,16 +961,16 @@ const MAPS: Record<string, MapDefinition> = {
   titan_tempest: {
     name: "Titan Tempest",
     difficulty: "EXPERT",
-    description: "Overdrive titan relics fill the arena with paired and clustered moving structures. Read the rotations or be swept away.",
+    description: "Five unique mechanisms fill isolated motion zones with orbiting orbs, bar carousels, twin rings, diamonds and a geometric turbine.",
     walls: [
       ...BASE_WALLS
     ],
     spawners: [
-      { x: 650, y: 650, radius: 40, hp: 100, maxHp: 100, specialType: 'titan_sweeper_overdrive' },
-      { x: 2350, y: 690, radius: 40, hp: 100, maxHp: 100, specialType: 'titan_cross_overdrive' },
-      { x: 1460, y: 1460, radius: 40, hp: 100, maxHp: 100, specialType: 'titan_triangle_overdrive' },
-      { x: 660, y: 2370, radius: 40, hp: 100, maxHp: 100, specialType: 'titan_moons_overdrive' },
-      { x: 2380, y: 2320, radius: 40, hp: 100, maxHp: 100, specialType: 'titan_gate_overdrive' }
+      { x: 600, y: 600, radius: 40, hp: 100, maxHp: 100, specialType: 'titan_sweeper_overdrive' },
+      { x: 2400, y: 600, radius: 40, hp: 100, maxHp: 100, specialType: 'titan_cross_overdrive' },
+      { x: 1500, y: 1500, radius: 40, hp: 100, maxHp: 100, specialType: 'titan_gate_overdrive' },
+      { x: 600, y: 2400, radius: 40, hp: 100, maxHp: 100, specialType: 'titan_moons_overdrive' },
+      { x: 2400, y: 2400, radius: 40, hp: 100, maxHp: 100, specialType: 'titan_triangle_overdrive' }
     ]
   }
 };

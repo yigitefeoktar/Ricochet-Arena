@@ -142,6 +142,51 @@ function triangleAt(
   });
 }
 
+function circleAt(
+  id: string,
+  centerX: number,
+  centerY: number,
+  angle: number,
+  orbitRadius: number,
+  radius: number,
+): TitanRelicCircle {
+  return {
+    kind: 'circle',
+    id,
+    cx: centerX + Math.cos(angle) * orbitRadius,
+    cy: centerY + Math.sin(angle) * orbitRadius,
+    radius,
+  };
+}
+
+function diamondAt(
+  idPrefix: string,
+  centerX: number,
+  centerY: number,
+  angle: number,
+  radius: number,
+): TitanRelicSegment[] {
+  const points = Array.from({ length: 4 }, (_, index) => {
+    const pointAngle = angle + Math.PI / 4 + index * Math.PI / 2;
+    return {
+      x: centerX + Math.cos(pointAngle) * radius,
+      y: centerY + Math.sin(pointAngle) * radius,
+    };
+  });
+  return points.map((point, index) => {
+    const next = points[(index + 1) % points.length];
+    return {
+      kind: 'segment' as const,
+      id: `${idPrefix}-${index}`,
+      ax: point.x,
+      ay: point.y,
+      bx: next.x,
+      by: next.y,
+      radius: 18,
+    };
+  });
+}
+
 export function getTitanRelicPrimitives(
   spawner: { x: number; y: number; specialType?: string },
   currentTime: number,
@@ -151,6 +196,83 @@ export function getTitanRelicPrimitives(
 
   const standardType = getStandardType(type);
   const overdrive = isOverdriveTitanRelicType(type);
+
+  // Titan Tempest uses many smaller pieces in five deliberately different
+  // arrangements. Each arrangement stays inside a bounded motion zone so
+  // relic systems belonging to neighboring spawners never intersect.
+  if (overdrive && standardType === 'titan_sweeper') {
+    const angle = getOrbitAngle(spawner, currentTime, 0.00031, true);
+    return Array.from({ length: 10 }, (_, index) => circleAt(
+      `orb-chain-${index}`,
+      spawner.x,
+      spawner.y,
+      angle + index * Math.PI * 2 / 10,
+      460,
+      52,
+    ));
+  }
+
+  if (overdrive && standardType === 'titan_cross') {
+    const angle = getOrbitAngle(spawner, currentTime, 0.00035, true);
+    return Array.from({ length: 10 }, (_, index) => {
+      const blockAngle = angle + index * Math.PI * 2 / 10;
+      const centerX = spawner.x + Math.cos(blockAngle) * 470;
+      const centerY = spawner.y + Math.sin(blockAngle) * 470;
+      return segmentAt(`bar-carousel-${index}`, centerX, centerY, blockAngle + Math.PI / 2, 68, 26);
+    });
+  }
+
+  if (overdrive && standardType === 'titan_moons') {
+    const outerAngle = getOrbitAngle(spawner, currentTime, 0.00028, true);
+    const innerAngle = getOrbitAngle(spawner, currentTime, -0.00040, true) + Math.PI / 6;
+    return [
+      ...Array.from({ length: 6 }, (_, index) => circleAt(
+        `double-ring-outer-${index}`,
+        spawner.x,
+        spawner.y,
+        outerAngle + index * Math.PI / 3,
+        460,
+        50,
+      )),
+      ...Array.from({ length: 6 }, (_, index) => circleAt(
+        `double-ring-inner-${index}`,
+        spawner.x,
+        spawner.y,
+        innerAngle + index * Math.PI / 3,
+        255,
+        34,
+      )),
+    ];
+  }
+
+  if (overdrive && standardType === 'titan_gate') {
+    const angle = getOrbitAngle(spawner, currentTime, 0.00033, true);
+    return Array.from({ length: 4 }, (_, index) => {
+      const diamondAngle = angle + index * Math.PI / 2;
+      const centerX = spawner.x + Math.cos(diamondAngle) * 420;
+      const centerY = spawner.y + Math.sin(diamondAngle) * 420;
+      return diamondAt(`diamond-chain-${index}`, centerX, centerY, -diamondAngle, 72);
+    }).flat();
+  }
+
+  if (overdrive && standardType === 'titan_triangle') {
+    const angle = getOrbitAngle(spawner, currentTime, 0.00038, true);
+    const bars = Array.from({ length: 8 }, (_, index) => {
+      const turbineAngle = angle + index * Math.PI / 4;
+      const centerX = spawner.x + Math.cos(turbineAngle) * 400;
+      const centerY = spawner.y + Math.sin(turbineAngle) * 400;
+      return segmentAt(`turbine-bar-${index}`, centerX, centerY, turbineAngle, 78, 23);
+    });
+    const nodes = Array.from({ length: 4 }, (_, index) => circleAt(
+      `turbine-node-${index}`,
+      spawner.x,
+      spawner.y,
+      -angle + Math.PI / 8 + index * Math.PI / 2,
+      220,
+      34,
+    ));
+    return [...bars, ...nodes];
+  }
 
   if (standardType === 'titan_sweeper') {
     const angle = getOrbitAngle(spawner, currentTime, 0.00023, overdrive);
@@ -306,9 +428,16 @@ export function getTitanRelicCarry(
 export function getTitanRelicVisualRadius(specialType: string | undefined): number {
   if (!isTitanRelicType(specialType)) return 0;
   const standardType = getStandardType(specialType);
+  if (isOverdriveTitanRelicType(specialType)) {
+    if (standardType === 'titan_sweeper') return 520;
+    if (standardType === 'titan_cross') return 510;
+    if (standardType === 'titan_moons') return 520;
+    if (standardType === 'titan_gate') return 520;
+    return 510;
+  }
   if (standardType === 'titan_sweeper') return 710;
   if (standardType === 'titan_cross') return 750;
   if (standardType === 'titan_moons') return 560;
-  if (standardType === 'titan_gate') return isOverdriveTitanRelicType(specialType) ? 820 : 740;
+  if (standardType === 'titan_gate') return 740;
   return 730;
 }
