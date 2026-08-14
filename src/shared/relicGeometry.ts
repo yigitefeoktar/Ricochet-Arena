@@ -569,6 +569,61 @@ export function getTitanRelicCarriedPositionWithContact(
   };
 }
 
+/**
+ * Advances a known carried entity from one shared relic phase to another.
+ * This is intended for render-only multiplayer reconciliation: it reproduces
+ * the same curved platform motion without changing authoritative gameplay.
+ */
+export function projectTitanRelicContactPosition(
+  entity: { x: number; y: number; radius: number },
+  spawners: ReadonlyArray<{ x: number; y: number; specialType?: string }>,
+  fromTime: number,
+  toTime: number,
+  contact: TitanRelicContact,
+  maximumStepMs: number = 16,
+): TitanRelicContactResult | null {
+  if (
+    !Number.isFinite(fromTime) ||
+    !Number.isFinite(toTime) ||
+    toTime < fromTime ||
+    toTime - fromTime > 1_000 ||
+    !Number.isFinite(maximumStepMs) ||
+    maximumStepMs <= 0
+  ) {
+    return null;
+  }
+
+  let x = entity.x;
+  let y = entity.y;
+  let phase = fromTime;
+  let activeContact: TitanRelicContact | null = contact;
+
+  while (phase < toTime - 1e-6) {
+    const nextPhase = Math.min(toTime, phase + maximumStepMs);
+    const carried = getTitanRelicCarriedPositionWithContact(
+      { x, y, radius: entity.radius },
+      spawners,
+      phase,
+      nextPhase,
+      activeContact,
+    );
+    if (!carried.contact) return null;
+    x = carried.x;
+    y = carried.y;
+    activeContact = carried.contact;
+    phase = nextPhase;
+  }
+
+  return {
+    x,
+    y,
+    dx: x - entity.x,
+    dy: y - entity.y,
+    contactCount: activeContact ? 1 : 0,
+    contact: activeContact,
+  };
+}
+
 export function getTitanRelicCarriedPosition(
   entity: { x: number; y: number; radius: number },
   spawners: ReadonlyArray<{ x: number; y: number; specialType?: string }>,

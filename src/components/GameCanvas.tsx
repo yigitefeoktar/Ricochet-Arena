@@ -51,6 +51,7 @@ import {
   getTitanRelicPrimitives,
   getTitanRelicVisualRadius,
   isTitanRelicType,
+  projectTitanRelicContactPosition,
   TITAN_ORBIT_RELIC_LAYOUT,
   type TitanRelicContact,
 } from '../shared/relicGeometry';
@@ -3499,7 +3500,7 @@ export default function GameCanvas() {
   const initialSpawn = useRef({ x: 500, y: 500 }).current;
   const stateRef = useRef({
     player: { x: initialSpawn.x, y: initialSpawn.y, vx: 0, vy: 0, kbvx: 0, kbvy: 0, processedZoneKbs: [] as number[], radius: PLAYER_RADIUS, lastShoot: 0, dash: { active: false, endTime: 0, targetX: 0, targetY: 0, shieldRadius: 60, lastTime: performance.now() - DASH_COOLDOWN, wasReady: true }, build: { active: false, endTime: 0, lastBlockX: 0, lastBlockY: 0, lastTime: performance.now() - BUILD_COOLDOWN }, recentBlocks: [] as { key: string, x: number, y: number, timestamp: number }[] },
-    multiplayerPlayers: {} as Record<string, { x: number, y: number, radius: number, isDash: boolean, name?: string, colorIdx?: number, isDead?: boolean, kbvx?: number, kbvy?: number, recentBlocks?: { key: string, x: number, y: number, timestamp: number }[] }>,
+    multiplayerPlayers: {} as Record<string, { x: number, y: number, radius: number, isDash: boolean, name?: string, colorIdx?: number, isDead?: boolean, kbvx?: number, kbvy?: number, recentBlocks?: { key: string, x: number, y: number, timestamp: number }[], titanCarryContact?: TitanRelicContact | null, titanCarryPhaseTime?: number | null, targetX?: number, targetY?: number }>,
     matchPhase: 'PLAYING' as 'PLAYING' | 'FINAL_RUN' | 'FINISHED',
     finalRunnerId: null as string | null,
     finalRunDeadline: null as number | null,
@@ -7826,6 +7827,39 @@ export default function GameCanvas() {
       if (typeof input.x !== 'number' || !Number.isFinite(input.x)) return;
       if (typeof input.y !== 'number' || !Number.isFinite(input.y)) return;
 
+      // Validate optional carried-player display metadata against the active
+      // map. It is stored for observer rendering only and never changes the
+      // authoritative coordinate or collision result below.
+      let titanCarryContact: TitanRelicContact | null = null;
+      let titanCarryPhaseTime: number | null = null;
+      if (
+        input.titanCarryContact &&
+        typeof input.titanCarryContact === 'object' &&
+        Number.isInteger(input.titanCarryContact.spawnerIndex) &&
+        typeof input.titanCarryContact.primitiveId === 'string' &&
+        typeof input.titanCarryPhaseTime === 'number' &&
+        Number.isFinite(input.titanCarryPhaseTime) &&
+        input.titanCarryPhaseTime >= 0
+      ) {
+        const candidateSpawner = stateRef.current.spawners[input.titanCarryContact.spawnerIndex];
+        const currentPhase = getMultiplayerWorldPhaseTime(performance.now());
+        const phaseDelta = currentPhase - input.titanCarryPhaseTime;
+        if (
+          candidateSpawner &&
+          isTitanRelicType(candidateSpawner.specialType) &&
+          phaseDelta >= -100 &&
+          phaseDelta <= 1_000 &&
+          getTitanRelicPrimitives(candidateSpawner, input.titanCarryPhaseTime)
+            .some(primitive => primitive.id === input.titanCarryContact.primitiveId)
+        ) {
+          titanCarryContact = {
+            spawnerIndex: input.titanCarryContact.spawnerIndex,
+            primitiveId: input.titanCarryContact.primitiveId,
+          };
+          titanCarryPhaseTime = input.titanCarryPhaseTime;
+        }
+      }
+
       const resolved = sweptMultiplayerPlayerResolve(prevPlayer.x, prevPlayer.y, input.x, input.y, PLAYER_RADIUS, activeWalls);
       const clampedX = resolved.x;
       const clampedY = resolved.y;
@@ -7984,7 +8018,9 @@ export default function GameCanvas() {
             radius: PLAYER_RADIUS,
             name: matchPlayer.name,
             colorIdx: matchPlayer.colorIdx,
-            score
+            score,
+            titanCarryContact: null,
+            titanCarryPhaseTime: null,
           };
 
           if (winner.type === 'bullet' && winner.ref) {
@@ -8015,7 +8051,9 @@ export default function GameCanvas() {
         radius: PLAYER_RADIUS,
         name: matchPlayer.name,
         colorIdx: matchPlayer.colorIdx,
-        score
+        score,
+        titanCarryContact,
+        titanCarryPhaseTime,
       };
 
       setMpTick(t => t + 1);
@@ -8940,7 +8978,13 @@ export default function GameCanvas() {
         socketRef.current?.emit('client_input', mpRef.current.roomId, {
           roundId: activeMultiplayerRoundIdRef.current,
           x: state.player.x,
-          y: state.player.y
+          y: state.player.y,
+          titanCarryContact: playerTitanRelicContactRef.current,
+          // Input is emitted before this frame's movement update, so its
+          // coordinate belongs to the preceding world phase.
+          titanCarryPhaseTime: playerTitanRelicContactRef.current
+            ? Math.max(0, worldPhaseTime - dt * 1_000)
+            : null,
         });
       }
 
@@ -11673,7 +11717,15 @@ export default function GameCanvas() {
                 criticalSnapshot,
                 roundId: activeMultiplayerRoundIdRef.current,
                 hostId: socketRef.current?.id,
-                hostPlayer: { ...state.player, isDead: STATUS === 'GAME_OVER', name: playerProfileRef.current.name, colorIdx: playerProfileRef.current.colorIdx, score: uiRef.current.score },
+                hostPlayer: {
+                  ...state.player,
+                  isDead: STATUS === 'GAME_OVER',
+                  name: playerProfileRef.current.name,
+                  colorIdx: playerProfileRef.current.colorIdx,
+                  score: uiRef.current.score,
+                  titanCarryContact: playerTitanRelicContactRef.current,
+                  titanCarryPhaseTime: playerTitanRelicContactRef.current ? hostWorldPhaseTime : null,
+                },
                 multiplayerPlayers: state.multiplayerPlayers,
                 matchPhase: state.matchPhase,
                 finalRunnerId: state.finalRunnerId,
@@ -12465,6 +12517,33 @@ export default function GameCanvas() {
       for (const tId in state.multiplayerPlayers) {
          const pData = state.multiplayerPlayers[tId];
          if (pData.isDead) continue;
+         let drawX = pData.x;
+         let drawY = pData.y;
+         const carryContact = pData.titanCarryContact;
+         const carryPhaseTime = pData.titanCarryPhaseTime;
+         if (
+           carryContact &&
+           typeof carryPhaseTime === 'number' &&
+           Number.isFinite(carryPhaseTime) &&
+           carryPhaseTime <= worldPhaseTime
+         ) {
+           // Snapshot metadata describes targetX/targetY. Bypass ordinary
+           // network lerping only while a moving relic owns the render pose,
+           // then advance that pose along the exact shared relic curve.
+           const sourceX = typeof pData.targetX === 'number' ? pData.targetX : pData.x;
+           const sourceY = typeof pData.targetY === 'number' ? pData.targetY : pData.y;
+           const projected = projectTitanRelicContactPosition(
+             { x: sourceX, y: sourceY, radius: pData.radius },
+             state.spawners,
+             carryPhaseTime,
+             worldPhaseTime,
+             carryContact,
+           );
+           if (projected) {
+             drawX = projected.x;
+             drawY = projected.y;
+           }
+         }
          const pDef = PLAYER_COLORS[pData.colorIdx] || PLAYER_COLORS[0];
          const pColor = pDef.n;
          const pGlow = pDef.g;
@@ -12473,7 +12552,7 @@ export default function GameCanvas() {
          if (pData.isDash) {
            ctx.fillStyle = pGlow;
            ctx.beginPath();
-           ctx.arc(pData.x, pData.y, pData.radius * 3.75, 0, Math.PI * 2);
+           ctx.arc(drawX, drawY, pData.radius * 3.75, 0, Math.PI * 2);
            ctx.fill();
            ctx.strokeStyle = pColor;
            ctx.lineWidth = 2;
@@ -12481,13 +12560,13 @@ export default function GameCanvas() {
          } else {
            ctx.fillStyle = pGlow;
            ctx.beginPath();
-           ctx.arc(pData.x, pData.y, pData.radius * 2, 0, Math.PI * 2);
+           ctx.arc(drawX, drawY, pData.radius * 2, 0, Math.PI * 2);
            ctx.fill();
          }
 
          ctx.fillStyle = pColor;
          ctx.beginPath();
-         ctx.arc(pData.x, pData.y, pData.radius, 0, Math.PI * 2);
+         ctx.arc(drawX, drawY, pData.radius, 0, Math.PI * 2);
          ctx.fill();
 
          ctx.strokeStyle = '#000';
@@ -12497,13 +12576,13 @@ export default function GameCanvas() {
          ctx.fillStyle = '#ffffff';
          ctx.font = '10px "Space Grotesk", sans-serif';
          ctx.textAlign = 'center';
-         ctx.fillText(pName, pData.x, pData.y - pData.radius - 8);
+         ctx.fillText(pName, drawX, drawY - pData.radius - 8);
 
          if (isOpeningProtectionActiveLocal(currentTime)) {
            ctx.save();
            ctx.beginPath();
            const shieldRadius = pData.radius + 8 + Math.sin(currentTime * 0.008) * 2;
-           ctx.arc(pData.x, pData.y, shieldRadius, 0, Math.PI * 2);
+           ctx.arc(drawX, drawY, shieldRadius, 0, Math.PI * 2);
            ctx.strokeStyle = pColor;
            ctx.lineWidth = 2;
            ctx.globalAlpha = 0.6 + 0.2 * Math.sin(currentTime * 0.01);
@@ -13917,17 +13996,42 @@ export default function GameCanvas() {
                                       />
                                     ))}
 
-                                    {/* Spawners */}
+                                    {/* Spawners and their colored titan geometry */}
                                     {currentMap.spawners.map((s, i) => (
-                                      <circle
-                                        key={`spawner-${i}`}
-                                        cx={s.x}
-                                        cy={s.y}
-                                        r={s.radius}
-                                        fill="#ff00ff"
-                                        stroke="rgba(255, 255, 255, 0.5)"
-                                        strokeWidth="8"
-                                      />
+                                      <g key={`spawner-${i}`}>
+                                        {isTitanRelicType(s.specialType) && getTitanRelicPrimitives(s, 0).map(primitive =>
+                                          primitive.kind === 'circle' ? (
+                                            <circle
+                                              key={`match-titan-${i}-${primitive.id}`}
+                                              cx={primitive.cx}
+                                              cy={primitive.cy}
+                                              r={primitive.radius}
+                                              fill={getTitanRelicPalette(s.specialType).fill}
+                                              stroke={getTitanRelicPalette(s.specialType).accent}
+                                              strokeWidth={12}
+                                            />
+                                          ) : (
+                                            <line
+                                              key={`match-titan-${i}-${primitive.id}`}
+                                              x1={primitive.ax}
+                                              y1={primitive.ay}
+                                              x2={primitive.bx}
+                                              y2={primitive.by}
+                                              stroke={getTitanRelicPalette(s.specialType).fill}
+                                              strokeWidth={primitive.radius * 2}
+                                              strokeLinecap="round"
+                                            />
+                                          )
+                                        )}
+                                        <circle
+                                          cx={s.x}
+                                          cy={s.y}
+                                          r={s.radius}
+                                          fill="#ff00ff"
+                                          stroke="rgba(255, 255, 255, 0.5)"
+                                          strokeWidth="8"
+                                        />
+                                      </g>
                                     ))}
 
                                     {/* Spawn Point */}

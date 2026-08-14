@@ -786,12 +786,43 @@ async function startServer() {
       if (typeof input.x !== "number" || !Number.isFinite(input.x)) return;
       if (typeof input.y !== "number" || !Number.isFinite(input.y)) return;
 
-      const sanitizedInput: { roomId: string; x: number; y: number; roundId: number } = {
+      const sanitizedInput: {
+        roomId: string;
+        x: number;
+        y: number;
+        roundId: number;
+        titanCarryContact?: { spawnerIndex: number; primitiveId: string };
+        titanCarryPhaseTime?: number;
+      } = {
         roomId: roomIdUpper,
         x: input.x,
         y: input.y,
         roundId: input.roundId,
       };
+
+      // Titan-carry data is render-only metadata. Keep it strictly bounded and
+      // relay it to the host, but never use it to decide movement or collisions.
+      const carryContact = input.titanCarryContact;
+      const carryPhaseTime = input.titanCarryPhaseTime;
+      if (
+        carryContact &&
+        typeof carryContact === "object" &&
+        Number.isInteger(carryContact.spawnerIndex) &&
+        carryContact.spawnerIndex >= 0 &&
+        carryContact.spawnerIndex <= 255 &&
+        typeof carryContact.primitiveId === "string" &&
+        /^[A-Za-z0-9_-]{1,64}$/.test(carryContact.primitiveId) &&
+        typeof carryPhaseTime === "number" &&
+        Number.isFinite(carryPhaseTime) &&
+        carryPhaseTime >= 0 &&
+        carryPhaseTime <= 1_000_000_000_000
+      ) {
+        sanitizedInput.titanCarryContact = {
+          spawnerIndex: carryContact.spawnerIndex,
+          primitiveId: carryContact.primitiveId,
+        };
+        sanitizedInput.titanCarryPhaseTime = carryPhaseTime;
+      }
 
       // Send gameplay input strictly to the room's host
       const host = room.players.find(p => p.isHost);

@@ -10,6 +10,7 @@ import {
   getTitanRelicCarriedPositionWithContact,
   getTitanRelicPrimitives,
   getTitanRelicVisualRadius,
+  projectTitanRelicContactPosition,
 } from './relicGeometry';
 
 test('every titan spawner has a distinct deterministic simple geometry', () => {
@@ -253,4 +254,46 @@ test('latched contact releases when the entity genuinely moves away', () => {
   );
   assert.equal(released.contact, null);
   assert.equal(released.contactCount, 0);
+});
+
+test('render-only projection follows the same curved carry path as frame steps', () => {
+  const spawner = { x: 1_500, y: 1_500, specialType: 'titan_moons' };
+  const moon = getTitanRelicPrimitives(spawner, 16)[0];
+  assert.equal(moon.kind, 'circle');
+  if (moon.kind !== 'circle') return;
+
+  const acquired = getTitanRelicCarriedPositionWithContact(
+    { x: moon.cx, y: moon.cy, radius: 20 },
+    [spawner],
+    0,
+    16,
+    null,
+  );
+  assert.ok(acquired.contact);
+
+  const projected = projectTitanRelicContactPosition(
+    { x: acquired.x, y: acquired.y, radius: 20 },
+    [spawner],
+    16,
+    160,
+    acquired.contact!,
+  );
+  assert.ok(projected?.contact);
+
+  let stepped = { x: acquired.x, y: acquired.y, radius: 20 };
+  let steppedContact = acquired.contact;
+  for (let phase = 16; phase < 160; phase += 16) {
+    const next = getTitanRelicCarriedPositionWithContact(
+      stepped,
+      [spawner],
+      phase,
+      Math.min(160, phase + 16),
+      steppedContact,
+    );
+    stepped = { x: next.x, y: next.y, radius: 20 };
+    steppedContact = next.contact;
+  }
+
+  assert.ok(projected);
+  assert.ok(Math.hypot(projected.x - stepped.x, projected.y - stepped.y) < 0.001);
 });
