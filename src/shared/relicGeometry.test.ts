@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  OVERDRIVE_TITAN_RELIC_TYPES,
+  STANDARD_TITAN_RELIC_TYPES,
   TITAN_RELIC_TYPES,
   getTitanRelicCarry,
   getTitanRelicPrimitives,
@@ -15,7 +17,7 @@ test('every titan spawner has a distinct deterministic simple geometry', () => {
     const first = getTitanRelicPrimitives(spawner, 4_000);
     const repeated = getTitanRelicPrimitives(spawner, 4_000);
 
-    assert.ok(first.length >= 1 && first.length <= 3);
+    assert.ok(first.length >= 1 && first.length <= 6);
     assert.deepEqual(first, repeated);
     signatures.add(first.map(primitive => primitive.kind === 'circle'
       ? `circle:${primitive.radius}`
@@ -25,6 +27,18 @@ test('every titan spawner has a distinct deterministic simple geometry', () => {
   }
 
   assert.equal(signatures.size, TITAN_RELIC_TYPES.length);
+});
+
+test('overdrive titan relics add moving geometry without changing the base identity', () => {
+  for (let index = 0; index < STANDARD_TITAN_RELIC_TYPES.length; index += 1) {
+    const standardType = STANDARD_TITAN_RELIC_TYPES[index];
+    const overdriveType = OVERDRIVE_TITAN_RELIC_TYPES[index];
+    const spawner = { x: 1_500, y: 1_500 };
+    const standard = getTitanRelicPrimitives({ ...spawner, specialType: standardType }, 2_000);
+    const overdrive = getTitanRelicPrimitives({ ...spawner, specialType: overdriveType }, 2_000);
+
+    assert.ok(overdrive.length > standard.length);
+  }
 });
 
 test('titan relic structures are genuinely massive and rotate without changing shape', () => {
@@ -44,6 +58,7 @@ test('titan relic structures are genuinely massive and rotate without changing s
       ];
     }));
     assert.ok(furthestExtent >= 500);
+    assert.ok(getTitanRelicVisualRadius(specialType) >= furthestExtent);
   }
 });
 

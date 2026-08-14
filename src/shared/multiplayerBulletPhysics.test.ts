@@ -133,6 +133,11 @@ test('all relic variants can participate as deterministic swept dynamic surfaces
     'titan_moons',
     'titan_gate',
     'titan_triangle',
+    'titan_sweeper_overdrive',
+    'titan_cross_overdrive',
+    'titan_moons_overdrive',
+    'titan_gate_overdrive',
+    'titan_triangle_overdrive',
   ]) {
     const trace = traceReflectedBulletMotion({
       x: 0,

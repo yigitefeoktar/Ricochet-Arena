@@ -46,6 +46,7 @@ import {
 } from '../shared/gameplayAnalyticsRelay';
 import {
   getTitanRelicCarry,
+  getTitanRelicPalette,
   getTitanRelicPrimitives,
   getTitanRelicVisualRadius,
   isTitanRelicType,
@@ -942,7 +943,7 @@ const MAPS: Record<string, MapDefinition> = {
   },
   titan_orbit: {
     name: "Titan Orbit",
-    difficulty: "EXPERT",
+    difficulty: "MEDIUM",
     description: "Five different titan relics orbit an open drift field. Their enormous moving shapes carry anything caught in their path.",
     walls: [
       // The moving titan shapes are the map's walls. Keeping the field open prevents
@@ -955,6 +956,21 @@ const MAPS: Record<string, MapDefinition> = {
       { x: 1510, y: 1470, radius: 40, hp: 100, maxHp: 100, specialType: 'titan_triangle' },
       { x: 590, y: 2350, radius: 40, hp: 100, maxHp: 100, specialType: 'titan_moons' },
       { x: 2360, y: 2360, radius: 40, hp: 100, maxHp: 100, specialType: 'titan_gate' }
+    ]
+  },
+  titan_tempest: {
+    name: "Titan Tempest",
+    difficulty: "EXPERT",
+    description: "Overdrive titan relics fill the arena with paired and clustered moving structures. Read the rotations or be swept away.",
+    walls: [
+      ...BASE_WALLS
+    ],
+    spawners: [
+      { x: 650, y: 650, radius: 40, hp: 100, maxHp: 100, specialType: 'titan_sweeper_overdrive' },
+      { x: 2350, y: 690, radius: 40, hp: 100, maxHp: 100, specialType: 'titan_cross_overdrive' },
+      { x: 1460, y: 1460, radius: 40, hp: 100, maxHp: 100, specialType: 'titan_triangle_overdrive' },
+      { x: 660, y: 2370, radius: 40, hp: 100, maxHp: 100, specialType: 'titan_moons_overdrive' },
+      { x: 2380, y: 2320, radius: 40, hp: 100, maxHp: 100, specialType: 'titan_gate_overdrive' }
     ]
   }
 };
@@ -11013,7 +11029,7 @@ export default function GameCanvas() {
                 else if (specialType === 'singularity') particleColor = '#b500ff';
                 else if (specialType === 'magma_gates') particleColor = '#ff5500';
                 else if (specialType === 'crystal') particleColor = '#00ffaa';
-                else if (isTitanRelicType(specialType)) particleColor = '#b9b5c2';
+                else if (isTitanRelicType(specialType)) particleColor = getTitanRelicPalette(specialType).fill;
               }
               spawnParticles(collision.x, collision.y, particleColor, particleCount);
               const collisionTime = hasMultiplayerCatchUp && bullet.isPlayer
@@ -11121,7 +11137,7 @@ export default function GameCanvas() {
                     else if (spawner.specialType === 'singularity') pColor = '#b500ff';
                     else if (spawner.specialType === 'magma_gates') pColor = '#ff5500';
                     else if (spawner.specialType === 'crystal') pColor = '#00ffaa';
-                    else if (isTitanRelicType(spawner.specialType)) pColor = '#b9b5c2';
+                    else if (isTitanRelicType(spawner.specialType)) pColor = getTitanRelicPalette(spawner.specialType).fill;
 
                     spawnParticles(bullet.x, bullet.y, pColor, 8);
                   }
@@ -11824,22 +11840,23 @@ export default function GameCanvas() {
           ctx.restore();
         } else if (isTitanRelicType(spawner.specialType)) {
           ctx.save();
+          const titanPalette = getTitanRelicPalette(spawner.specialType);
           ctx.lineCap = 'round';
           ctx.lineJoin = 'round';
-          ctx.strokeStyle = '#b9b5c2';
-          ctx.fillStyle = '#b9b5c2';
-          ctx.shadowColor = 'rgba(181, 0, 255, 0.55)';
-          ctx.shadowBlur = 8;
+          ctx.strokeStyle = titanPalette.fill;
+          ctx.fillStyle = titanPalette.fill;
+          ctx.shadowColor = titanPalette.fill;
+          ctx.shadowBlur = 11;
 
           for (const primitive of getTitanRelicPrimitives(spawner, worldPhaseTime)) {
             ctx.beginPath();
             if (primitive.kind === 'circle') {
               ctx.arc(primitive.cx, primitive.cy, primitive.radius, 0, Math.PI * 2);
               ctx.fill();
-              ctx.strokeStyle = '#6f397f';
+              ctx.strokeStyle = titanPalette.accent;
               ctx.lineWidth = 5;
               ctx.stroke();
-              ctx.strokeStyle = '#b9b5c2';
+              ctx.strokeStyle = titanPalette.fill;
             } else {
               ctx.lineWidth = primitive.radius * 2;
               ctx.moveTo(primitive.ax, primitive.ay);
@@ -13192,8 +13209,8 @@ export default function GameCanvas() {
                                              cx={primitive.cx}
                                              cy={primitive.cy}
                                              r={primitive.radius}
-                                             fill="#b9b5c2"
-                                             stroke="#6f397f"
+                                             fill={getTitanRelicPalette(s.specialType).fill}
+                                             stroke={getTitanRelicPalette(s.specialType).accent}
                                              strokeWidth={12}
                                            />
                                          ) : (
@@ -13203,7 +13220,7 @@ export default function GameCanvas() {
                                              y1={primitive.ay}
                                              x2={primitive.bx}
                                              y2={primitive.by}
-                                             stroke="#b9b5c2"
+                                             stroke={getTitanRelicPalette(s.specialType).fill}
                                              strokeWidth={primitive.radius * 2}
                                              strokeLinecap="round"
                                            />
@@ -13440,8 +13457,8 @@ export default function GameCanvas() {
                                              cx={primitive.cx}
                                              cy={primitive.cy}
                                              r={primitive.radius}
-                                             fill="#b9b5c2"
-                                             stroke="#6f397f"
+                                             fill={getTitanRelicPalette(s.specialType).fill}
+                                             stroke={getTitanRelicPalette(s.specialType).accent}
                                              strokeWidth={12}
                                            />
                                          ) : (
@@ -13451,7 +13468,7 @@ export default function GameCanvas() {
                                              y1={primitive.ay}
                                              x2={primitive.bx}
                                              y2={primitive.by}
-                                             stroke="#b9b5c2"
+                                             stroke={getTitanRelicPalette(s.specialType).fill}
                                              strokeWidth={primitive.radius * 2}
                                              strokeLinecap="round"
                                            />

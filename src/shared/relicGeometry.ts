@@ -1,4 +1,4 @@
-export const TITAN_RELIC_TYPES = [
+export const STANDARD_TITAN_RELIC_TYPES = [
   'titan_sweeper',
   'titan_cross',
   'titan_moons',
@@ -6,6 +6,20 @@ export const TITAN_RELIC_TYPES = [
   'titan_triangle',
 ] as const;
 
+export const OVERDRIVE_TITAN_RELIC_TYPES = [
+  'titan_sweeper_overdrive',
+  'titan_cross_overdrive',
+  'titan_moons_overdrive',
+  'titan_gate_overdrive',
+  'titan_triangle_overdrive',
+] as const;
+
+export const TITAN_RELIC_TYPES = [
+  ...STANDARD_TITAN_RELIC_TYPES,
+  ...OVERDRIVE_TITAN_RELIC_TYPES,
+] as const;
+
+export type StandardTitanRelicType = typeof STANDARD_TITAN_RELIC_TYPES[number];
 export type TitanRelicType = typeof TITAN_RELIC_TYPES[number];
 
 export type TitanRelicSegment = {
@@ -36,19 +50,47 @@ export type TitanRelicCarry = {
   overlap: number;
 };
 
+export type TitanRelicPalette = {
+  fill: string;
+  accent: string;
+};
+
+const TITAN_PALETTES: Record<StandardTitanRelicType, TitanRelicPalette> = {
+  titan_sweeper: { fill: '#45d9ff', accent: '#126b82' },
+  titan_cross: { fill: '#ffd34d', accent: '#806200' },
+  titan_moons: { fill: '#ff7597', accent: '#7d2440' },
+  titan_gate: { fill: '#66e39b', accent: '#17683d' },
+  titan_triangle: { fill: '#c681ff', accent: '#612b88' },
+};
+
 export function isTitanRelicType(value: string | undefined): value is TitanRelicType {
   return TITAN_RELIC_TYPES.includes(value as TitanRelicType);
+}
+
+export function isOverdriveTitanRelicType(value: string | undefined): boolean {
+  return typeof value === 'string' && value.endsWith('_overdrive') && isTitanRelicType(value);
+}
+
+function getStandardType(value: TitanRelicType): StandardTitanRelicType {
+  return value.replace('_overdrive', '') as StandardTitanRelicType;
+}
+
+export function getTitanRelicPalette(value: string | undefined): TitanRelicPalette {
+  if (!isTitanRelicType(value)) return { fill: '#b9b5c2', accent: '#6f397f' };
+  return TITAN_PALETTES[getStandardType(value)];
 }
 
 function getOrbitAngle(
   spawner: { x: number; y: number },
   currentTime: number,
   speed: number,
+  overdrive: boolean,
 ): number {
   const seed = Math.round(spawner.x / 10) * 17 + Math.round(spawner.y / 10) * 31;
   const direction = seed % 2 === 0 ? 1 : -1;
   const phaseOffset = (seed % 360) * Math.PI / 180;
-  return phaseOffset + direction * currentTime * speed;
+  const speedScale = overdrive ? 1.38 : 1;
+  return phaseOffset + direction * currentTime * speed * speedScale;
 }
 
 function segmentAt(
@@ -72,57 +114,12 @@ function segmentAt(
   };
 }
 
-export function getTitanRelicPrimitives(
-  spawner: { x: number; y: number; specialType?: string },
-  currentTime: number,
-): TitanRelicPrimitive[] {
-  const type = spawner.specialType;
-  if (!isTitanRelicType(type)) return [];
-
-  if (type === 'titan_sweeper') {
-    const angle = getOrbitAngle(spawner, currentTime, 0.00016);
-    const centerX = spawner.x + Math.cos(angle) * 360;
-    const centerY = spawner.y + Math.sin(angle) * 360;
-    return [segmentAt('sweeper', centerX, centerY, angle + Math.PI / 2, 310, 34)];
-  }
-
-  if (type === 'titan_cross') {
-    const angle = getOrbitAngle(spawner, currentTime, 0.00019);
-    const centerX = spawner.x + Math.cos(angle) * 500;
-    const centerY = spawner.y + Math.sin(angle) * 500;
-    return [
-      segmentAt('cross-a', centerX, centerY, angle, 210, 31),
-      segmentAt('cross-b', centerX, centerY, angle + Math.PI / 2, 210, 31),
-    ];
-  }
-
-  if (type === 'titan_moons') {
-    const angle = getOrbitAngle(spawner, currentTime, 0.00014);
-    return [0, 1].map(index => {
-      const moonAngle = angle + index * Math.PI;
-      return {
-        kind: 'circle' as const,
-        id: `moon-${index}`,
-        cx: spawner.x + Math.cos(moonAngle) * 410,
-        cy: spawner.y + Math.sin(moonAngle) * 410,
-        radius: 112,
-      };
-    });
-  }
-
-  if (type === 'titan_gate') {
-    const angle = getOrbitAngle(spawner, currentTime, 0.00017);
-    return [-1, 1].map((side, index) => {
-      const orbitRadius = 360 + side * 105;
-      const centerX = spawner.x + Math.cos(angle) * orbitRadius;
-      const centerY = spawner.y + Math.sin(angle) * orbitRadius;
-      return segmentAt(`gate-${index}`, centerX, centerY, angle + Math.PI / 2, 245, 30);
-    });
-  }
-
-  const angle = getOrbitAngle(spawner, currentTime, 0.00015);
-  const centerX = spawner.x + Math.cos(angle) * 500;
-  const centerY = spawner.y + Math.sin(angle) * 500;
+function triangleAt(
+  idPrefix: string,
+  centerX: number,
+  centerY: number,
+  angle: number,
+): TitanRelicSegment[] {
   const triangleRadius = 190;
   const vertices = Array.from({ length: 3 }, (_, index) => {
     const vertexAngle = angle + index * Math.PI * 2 / 3;
@@ -135,7 +132,7 @@ export function getTitanRelicPrimitives(
     const next = vertices[(index + 1) % vertices.length];
     return {
       kind: 'segment' as const,
-      id: `triangle-${index}`,
+      id: `${idPrefix}-${index}`,
       ax: vertex.x,
       ay: vertex.y,
       bx: next.x,
@@ -143,6 +140,76 @@ export function getTitanRelicPrimitives(
       radius: 27,
     };
   });
+}
+
+export function getTitanRelicPrimitives(
+  spawner: { x: number; y: number; specialType?: string },
+  currentTime: number,
+): TitanRelicPrimitive[] {
+  const type = spawner.specialType;
+  if (!isTitanRelicType(type)) return [];
+
+  const standardType = getStandardType(type);
+  const overdrive = isOverdriveTitanRelicType(type);
+
+  if (standardType === 'titan_sweeper') {
+    const angle = getOrbitAngle(spawner, currentTime, 0.00023, overdrive);
+    const count = overdrive ? 2 : 1;
+    return Array.from({ length: count }, (_, index) => {
+      const orbitAngle = angle + index * Math.PI;
+      const centerX = spawner.x + Math.cos(orbitAngle) * 360;
+      const centerY = spawner.y + Math.sin(orbitAngle) * 360;
+      return segmentAt(`sweeper-${index}`, centerX, centerY, orbitAngle + Math.PI / 2, 310, 34);
+    });
+  }
+
+  if (standardType === 'titan_cross') {
+    const angle = getOrbitAngle(spawner, currentTime, 0.00026, overdrive);
+    const count = overdrive ? 2 : 1;
+    return Array.from({ length: count }, (_, index) => {
+      const orbitAngle = angle + index * Math.PI;
+      const centerX = spawner.x + Math.cos(orbitAngle) * 500;
+      const centerY = spawner.y + Math.sin(orbitAngle) * 500;
+      return [
+        segmentAt(`cross-${index}-a`, centerX, centerY, orbitAngle, 210, 31),
+        segmentAt(`cross-${index}-b`, centerX, centerY, orbitAngle + Math.PI / 2, 210, 31),
+      ];
+    }).flat();
+  }
+
+  if (standardType === 'titan_moons') {
+    const angle = getOrbitAngle(spawner, currentTime, 0.00021, overdrive);
+    const count = overdrive ? 4 : 2;
+    return Array.from({ length: count }, (_, index) => {
+      const moonAngle = angle + index * Math.PI * 2 / count;
+      return {
+        kind: 'circle' as const,
+        id: `moon-${index}`,
+        cx: spawner.x + Math.cos(moonAngle) * 410,
+        cy: spawner.y + Math.sin(moonAngle) * 410,
+        radius: 112,
+      };
+    });
+  }
+
+  if (standardType === 'titan_gate') {
+    const angle = getOrbitAngle(spawner, currentTime, 0.00024, overdrive);
+    const orbitRadii = overdrive ? [300, 420, 540] : [255, 465];
+    return orbitRadii.map((orbitRadius, index) => {
+      const centerX = spawner.x + Math.cos(angle) * orbitRadius;
+      const centerY = spawner.y + Math.sin(angle) * orbitRadius;
+      return segmentAt(`gate-${index}`, centerX, centerY, angle + Math.PI / 2, 245, 30);
+    });
+  }
+
+  const angle = getOrbitAngle(spawner, currentTime, 0.00022, overdrive);
+  const count = overdrive ? 2 : 1;
+  return Array.from({ length: count }, (_, index) => {
+    const orbitAngle = angle + index * Math.PI;
+    const centerX = spawner.x + Math.cos(orbitAngle) * 500;
+    const centerY = spawner.y + Math.sin(orbitAngle) * 500;
+    return triangleAt(`triangle-${index}`, centerX, centerY, orbitAngle);
+  }).flat();
 }
 
 function closestPointOnSegment(
@@ -237,12 +304,11 @@ export function getTitanRelicCarry(
 }
 
 export function getTitanRelicVisualRadius(specialType: string | undefined): number {
-  switch (specialType) {
-    case 'titan_sweeper': return 710;
-    case 'titan_cross': return 750;
-    case 'titan_moons': return 560;
-    case 'titan_gate': return 570;
-    case 'titan_triangle': return 730;
-    default: return 0;
-  }
+  if (!isTitanRelicType(specialType)) return 0;
+  const standardType = getStandardType(specialType);
+  if (standardType === 'titan_sweeper') return 710;
+  if (standardType === 'titan_cross') return 750;
+  if (standardType === 'titan_moons') return 560;
+  if (standardType === 'titan_gate') return isOverdriveTitanRelicType(specialType) ? 820 : 740;
+  return 730;
 }
