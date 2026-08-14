@@ -46,6 +46,7 @@ import {
 } from '../shared/gameplayAnalyticsRelay';
 import {
   getTitanRelicCarry,
+  getTitanRelicCarriedPosition,
   getTitanRelicPalette,
   getTitanRelicPrimitives,
   getTitanRelicVisualRadius,
@@ -9280,24 +9281,18 @@ export default function GameCanvas() {
         }
 
         // Titan relics are moving platforms, not lethal hazards. Carry the local
-        // player by the exact contact point's frame-to-frame movement, then let the
-        // normal wall resolver keep the result inside the arena.
+        // player through the shared circular-entity path, then let the normal wall
+        // resolver keep the result inside the arena.
         if (STATUS === 'PLAYING' && dt > 0) {
           const previousWorldPhaseTime = Math.max(0, worldPhaseTime - dt * 1000);
-          for (const spawner of state.spawners) {
-            if (!isTitanRelicType(spawner.specialType)) continue;
-            const carry = getTitanRelicCarry(
-              state.player.x,
-              state.player.y,
-              state.player.radius,
-              spawner,
-              previousWorldPhaseTime,
-              worldPhaseTime,
-            );
-            if (!carry) continue;
-            state.player.x += carry.dx;
-            state.player.y += carry.dy;
-          }
+          const carriedPlayer = getTitanRelicCarriedPosition(
+            state.player,
+            state.spawners,
+            previousWorldPhaseTime,
+            worldPhaseTime,
+          );
+          state.player.x = carriedPlayer.x;
+          state.player.y = carriedPlayer.y;
         }
 
         // Core Player Wall Collisions & Clamping (Run locally on BOTH Client and Host to prevent wall-phasing)
@@ -9782,6 +9777,21 @@ export default function GameCanvas() {
           enemy.kbvy = kbvy * Math.exp(-8 * dt);
           if (Math.abs(enemy.kbvx) < 1) enemy.kbvx = 0;
           if (Math.abs(enemy.kbvy) < 1) enemy.kbvy = 0;
+
+          // Apply the same moving-platform displacement used by the player. This
+          // stays inside the authoritative enemy simulation, so multiplayer guests
+          // only render the resulting host-owned enemy position.
+          if (dt > 0) {
+            const previousWorldPhaseTime = Math.max(0, worldPhaseTime - dt * 1000);
+            const carriedEnemy = getTitanRelicCarriedPosition(
+              enemy,
+              state.spawners,
+              previousWorldPhaseTime,
+              worldPhaseTime,
+            );
+            enemy.x = carriedEnemy.x;
+            enemy.y = carriedEnemy.y;
+          }
 
           // Enemy Wall Collisions
           let enemyResolved;
@@ -10880,6 +10890,8 @@ export default function GameCanvas() {
               durationSeconds: bulletTravelSeconds,
               radius: bullet.radius,
               surfaces,
+              // This dynamic surface is deliberately ownership-agnostic. Player,
+              // enemy, and neutral bullets all receive the same titan-relic response.
               dynamicSurface: (startX, startY, endX, endY, startFraction, endFraction): SurfaceHit | null => {
                 const relicCollision = sweptMultiplayerBulletRelicCollision(
                   startX,
@@ -11115,7 +11127,8 @@ export default function GameCanvas() {
             state.forceBroadcast = true;
           }
 
-          // Special Relic Collisions
+          // Special Relic Collisions. Do not filter by bullet allegiance: player,
+          // enemy, and neutral bullets must all interact with the same moving relics.
           if (!isAuthoritativeMultiplayerBullet) {
             for (const spawner of state.spawners) {
               if (spawner.specialType) {

@@ -50,6 +50,14 @@ export type TitanRelicCarry = {
   overlap: number;
 };
 
+export type TitanRelicCarriedPosition = {
+  x: number;
+  y: number;
+  dx: number;
+  dy: number;
+  contactCount: number;
+};
+
 export type TitanRelicPalette = {
   fill: string;
   accent: string;
@@ -432,6 +440,41 @@ export function getTitanRelicCarry(
   }
 
   return best;
+}
+
+export function getTitanRelicCarriedPosition(
+  entity: { x: number; y: number; radius: number },
+  spawners: ReadonlyArray<{ x: number; y: number; specialType?: string }>,
+  previousTime: number,
+  currentTime: number,
+): TitanRelicCarriedPosition {
+  let x = entity.x;
+  let y = entity.y;
+  let contactCount = 0;
+
+  for (const spawner of spawners) {
+    if (!isTitanRelicType(spawner.specialType)) continue;
+    const carry = getTitanRelicCarry(
+      x,
+      y,
+      entity.radius,
+      spawner,
+      previousTime,
+      currentTime,
+    );
+    if (!carry) continue;
+    x += carry.dx;
+    y += carry.dy;
+    contactCount += 1;
+  }
+
+  return {
+    x,
+    y,
+    dx: x - entity.x,
+    dy: y - entity.y,
+    contactCount,
+  };
 }
 
 export function getTitanRelicVisualRadius(specialType: string | undefined): number {

@@ -6,6 +6,7 @@ import {
   TITAN_ORBIT_RELIC_LAYOUT,
   TITAN_RELIC_TYPES,
   getTitanRelicCarry,
+  getTitanRelicCarriedPosition,
   getTitanRelicPrimitives,
   getTitanRelicVisualRadius,
 } from './relicGeometry';
@@ -137,6 +138,43 @@ test('contact with a moving titan relic produces finite carry instead of a letha
     assert.ok(carry.overlap > 0);
     assert.ok(Math.hypot(carry.dx, carry.dy) > 0);
   }
+});
+
+test('the shared titan carry path moves player-sized and enemy-sized circular entities', () => {
+  const spawner = { x: 1_500, y: 1_500, specialType: 'titan_moons' };
+  const previousTime = 5_000;
+  const currentTime = 5_016;
+  const moon = getTitanRelicPrimitives(spawner, currentTime)[0];
+  assert.equal(moon.kind, 'circle');
+  if (moon.kind !== 'circle') return;
+
+  for (const radius of [20, 24]) {
+    const entity = { x: moon.cx, y: moon.cy, radius };
+    const carried = getTitanRelicCarriedPosition(
+      entity,
+      [spawner],
+      previousTime,
+      currentTime,
+    );
+
+    assert.equal(carried.contactCount, 1);
+    assert.ok(Number.isFinite(carried.x));
+    assert.ok(Number.isFinite(carried.y));
+    assert.ok(Math.hypot(carried.dx, carried.dy) > 0);
+  }
+});
+
+test('the shared titan carry path ignores non-titan spawners', () => {
+  const entity = { x: 1_500, y: 1_500, radius: 24 };
+  assert.deepEqual(
+    getTitanRelicCarriedPosition(
+      entity,
+      [{ x: 1_500, y: 1_500, specialType: 'kinetic' }],
+      0,
+      16,
+    ),
+    { x: entity.x, y: entity.y, dx: 0, dy: 0, contactCount: 0 },
+  );
 });
 
 test('players outside a titan relic receive no carry', () => {
