@@ -377,13 +377,46 @@ export function getTitanRelicCarry(
   previousTime: number,
   currentTime: number,
 ): TitanRelicCarry | null {
+  const candidate = getTitanRelicCarryCandidate(
+    playerX,
+    playerY,
+    playerRadius,
+    spawner,
+    previousTime,
+    currentTime,
+    null,
+  );
+  if (!candidate) return null;
+  return {
+    dx: candidate.dx,
+    dy: candidate.dy,
+    nx: candidate.nx,
+    ny: candidate.ny,
+    overlap: candidate.overlap,
+  };
+}
+
+interface TitanRelicCarryCandidate extends TitanRelicCarry {
+  primitiveId: string;
+}
+
+function getTitanRelicCarryCandidate(
+  playerX: number,
+  playerY: number,
+  playerRadius: number,
+  spawner: { x: number; y: number; specialType?: string },
+  previousTime: number,
+  currentTime: number,
+  latchedPrimitiveId: string | null,
+): TitanRelicCarryCandidate | null {
   const current = getTitanRelicPrimitives(spawner, currentTime);
   const previousById = new Map(
     getTitanRelicPrimitives(spawner, previousTime).map(primitive => [primitive.id, primitive]),
   );
 
-  let best: TitanRelicCarry | null = null;
+  let best: TitanRelicCarryCandidate | null = null;
   for (const primitive of current) {
+    if (latchedPrimitiveId !== null && primitive.id !== latchedPrimitiveId) continue;
     const previous = previousById.get(primitive.id);
     let contactX: number;
     let contactY: number;
@@ -412,11 +445,20 @@ export function getTitanRelicCarry(
     const offsetY = playerY - contactY;
     const distance = Math.hypot(offsetX, offsetY);
     const minimumDistance = playerRadius + obstacleRadius;
-    if (distance >= minimumDistance) continue;
 
     const shapeDx = contactX - previousContactX;
     const shapeDy = contactY - previousContactY;
     const shapeSpeed = Math.hypot(shapeDx, shapeDy);
+    // A latched contact gets a very small release margin. Without it, the
+    // penetration correction places the entity exactly on the surface and
+    // floating-point/frame-step differences make contact alternate on/off.
+    // New contacts still require a real overlap, so nearby relics cannot pull
+    // an entity toward them.
+    const releaseMargin = latchedPrimitiveId === primitive.id
+      ? Math.max(2, Math.min(8, shapeSpeed * 1.5 + 1))
+      : 0;
+    if (distance >= minimumDistance + releaseMargin) continue;
+
     const nx = distance > 0.001
       ? offsetX / distance
       : shapeSpeed > 0.001
@@ -427,19 +469,104 @@ export function getTitanRelicCarry(
       : shapeSpeed > 0.001
         ? shapeDy / shapeSpeed
         : 0;
-    const overlap = minimumDistance - distance;
+    const overlap = Math.max(0, minimumDistance - distance);
     const carry = {
-      dx: shapeDx + nx * (overlap + 0.5),
-      dy: shapeDy + ny * (overlap + 0.5),
+      dx: shapeDx + nx * overlap,
+      dy: shapeDy + ny * overlap,
       nx,
       ny,
       overlap,
+      primitiveId: primitive.id,
     };
 
     if (!best || carry.overlap > best.overlap) best = carry;
   }
 
   return best;
+}
+
+export interface TitanRelicContact {
+  spawnerIndex: number;
+  primitiveId: string;
+}
+
+export interface TitanRelicContactResult extends TitanRelicCarriedPosition {
+  contact: TitanRelicContact | null;
+}
+
+/**
+ * Runtime-only contact-aware carry. Callers keep the returned contact outside
+ * serialized/networked gameplay state and pass it back on the next frame.
+ */
+export function getTitanRelicCarriedPositionWithContact(
+  entity: { x: number; y: number; radius: number },
+  spawners: ReadonlyArray<{ x: number; y: number; specialType?: string }>,
+  previousTime: number,
+  currentTime: number,
+  previousContact: TitanRelicContact | null,
+): TitanRelicContactResult {
+  const trySpawner = (
+    spawnerIndex: number,
+    primitiveId: string | null,
+  ): TitanRelicCarryCandidate | null => {
+    const spawner = spawners[spawnerIndex];
+    if (!spawner || !isTitanRelicType(spawner.specialType)) return null;
+    return getTitanRelicCarryCandidate(
+      entity.x,
+      entity.y,
+      entity.radius,
+      spawner,
+      previousTime,
+      currentTime,
+      primitiveId,
+    );
+  };
+
+  if (previousContact) {
+    const latched = trySpawner(previousContact.spawnerIndex, previousContact.primitiveId);
+    if (latched) {
+      return {
+        x: entity.x + latched.dx,
+        y: entity.y + latched.dy,
+        dx: latched.dx,
+        dy: latched.dy,
+        contactCount: 1,
+        contact: previousContact,
+      };
+    }
+  }
+
+  let acquired: { carry: TitanRelicCarryCandidate; spawnerIndex: number } | null = null;
+  for (let spawnerIndex = 0; spawnerIndex < spawners.length; spawnerIndex += 1) {
+    const carry = trySpawner(spawnerIndex, null);
+    if (!carry) continue;
+    if (!acquired || carry.overlap > acquired.carry.overlap) {
+      acquired = { carry, spawnerIndex };
+    }
+  }
+
+  if (!acquired) {
+    return {
+      x: entity.x,
+      y: entity.y,
+      dx: 0,
+      dy: 0,
+      contactCount: 0,
+      contact: null,
+    };
+  }
+
+  return {
+    x: entity.x + acquired.carry.dx,
+    y: entity.y + acquired.carry.dy,
+    dx: acquired.carry.dx,
+    dy: acquired.carry.dy,
+    contactCount: 1,
+    contact: {
+      spawnerIndex: acquired.spawnerIndex,
+      primitiveId: acquired.carry.primitiveId,
+    },
+  };
 }
 
 export function getTitanRelicCarriedPosition(

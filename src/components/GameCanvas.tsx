@@ -46,13 +46,20 @@ import {
 } from '../shared/gameplayAnalyticsRelay';
 import {
   getTitanRelicCarry,
-  getTitanRelicCarriedPosition,
+  getTitanRelicCarriedPositionWithContact,
   getTitanRelicPalette,
   getTitanRelicPrimitives,
   getTitanRelicVisualRadius,
   isTitanRelicType,
   TITAN_ORBIT_RELIC_LAYOUT,
+  type TitanRelicContact,
 } from '../shared/relicGeometry';
+import {
+  appendEntityMotionSample,
+  MULTIPLAYER_ENTITY_INTERPOLATION_DELAY_MS,
+  sampleEntityMotion,
+  type EntityMotionSample,
+} from '../shared/multiplayerEntityInterpolation';
 
 interface ActiveMatchSettingsRequest {
   seq: number;
@@ -3042,6 +3049,14 @@ export default function GameCanvas() {
     localTimeAtAnchor: 0,
     initialized: false,
   });
+  const multiplayerWorldPhaseAuthorityRef = useRef<{
+    roomId: string;
+    roundId: number;
+    hostId: string;
+  } | null>(null);
+  const playerTitanRelicContactRef = useRef<TitanRelicContact | null>(null);
+  const enemyTitanRelicContactsRef = useRef<Map<string, TitanRelicContact>>(new Map());
+  const guestEnemyMotionSamplesRef = useRef<Map<string, EntityMotionSample[]>>(new Map());
 
   const getMultiplayerWorldPhaseTime = useCallback((localTime: number): number => {
     const anchor = multiplayerWorldPhaseAnchorRef.current;
@@ -5811,6 +5826,10 @@ export default function GameCanvas() {
     state.enemySpawnRate = 3000;
     pauseStartRef.current = null;
     accumulatedPauseOffsetRef.current = 0;
+    playerTitanRelicContactRef.current = null;
+    enemyTitanRelicContactsRef.current.clear();
+    guestEnemyMotionSamplesRef.current.clear();
+    multiplayerWorldPhaseAuthorityRef.current = null;
     releaseAllInputs();
 
     const uiHardMode = isMultiplayer ? (selectedGameMode !== 'normal') : isHardMode;
@@ -7454,11 +7473,27 @@ export default function GameCanvas() {
       }
 
       if (typeof state.worldPhaseTime === 'number' && Number.isFinite(state.worldPhaseTime) && state.worldPhaseTime >= 0) {
-        multiplayerWorldPhaseAnchorRef.current = {
-          phaseAtAnchor: state.worldPhaseTime,
-          localTimeAtAnchor: performance.now(),
-          initialized: true,
-        };
+        const phaseAuthority = multiplayerWorldPhaseAuthorityRef.current;
+        const authorityChanged = !phaseAuthority ||
+          phaseAuthority.roomId !== normRoomId ||
+          phaseAuthority.roundId !== state.roundId ||
+          phaseAuthority.hostId !== state.hostId;
+
+        // Establish the moving-world clock once per host/round on the mapped
+        // host timeline. Re-anchoring to packet receipt time every 50 ms made
+        // orbiting geometry jump with network latency and jitter.
+        if (authorityChanged) {
+          multiplayerWorldPhaseAnchorRef.current = {
+            phaseAtAnchor: state.worldPhaseTime,
+            localTimeAtAnchor: mappedBulletSnapshotTime,
+            initialized: true,
+          };
+          multiplayerWorldPhaseAuthorityRef.current = {
+            roomId: normRoomId,
+            roundId: state.roundId,
+            hostId: state.hostId,
+          };
+        }
       }
 
       if (state.matchPhase !== undefined) {
@@ -7554,6 +7589,26 @@ export default function GameCanvas() {
       stateRef.current.spawners = state.spawners;
 
       const newEnemies = mappedEnemies;
+      const liveEnemyMotionIds = new Set<string>();
+      for (let enemyIndex = 0; enemyIndex < newEnemies.length; enemyIndex += 1) {
+        const enemy = newEnemies[enemyIndex];
+        const enemyMotionId = String(enemy.id ?? `enemy_${enemyIndex}`);
+        liveEnemyMotionIds.add(enemyMotionId);
+        const previousSamples = guestEnemyMotionSamplesRef.current.get(enemyMotionId) ?? [];
+        guestEnemyMotionSamplesRef.current.set(
+          enemyMotionId,
+          appendEntityMotionSample(previousSamples, {
+            time: mappedBulletSnapshotTime,
+            x: enemy.x,
+            y: enemy.y,
+          }),
+        );
+      }
+      for (const enemyMotionId of guestEnemyMotionSamplesRef.current.keys()) {
+        if (!liveEnemyMotionIds.has(enemyMotionId)) {
+          guestEnemyMotionSamplesRef.current.delete(enemyMotionId);
+        }
+      }
       if (prevEnemies.length > newEnemies.length) {
         for (const oldEnemy of prevEnemies) {
           const stillAlive = newEnemies.some((e: any) => Math.abs(e.x - oldEnemy.x) < 5 && Math.abs(e.y - oldEnemy.y) < 5);
@@ -7841,8 +7896,13 @@ export default function GameCanvas() {
           }
         });
 
-        // 3. Orbiting relic obstacles
+        // 3. Older orbiting relic obstacles remain lethal. Titan relics are
+        // moving platforms for remote players too, matching the local-player
+        // path; never turn their carried movement into a host-side death.
         const spawners = stateRef.current.spawners || [];
+        const lethalRelicSpawners = spawners.filter(
+          (spawner: any) => !isTitanRelicType(spawner?.specialType),
+        );
         const currentPhase = getMultiplayerWorldPhaseTime(currentTime);
         const relicHit = sweptMultiplayerBulletRelicCollision(
           startX,
@@ -7850,7 +7910,7 @@ export default function GameCanvas() {
           endX,
           endY,
           PLAYER_RADIUS,
-          spawners,
+          lethalRelicSpawners,
           currentPhase,
           currentPhase
         );
@@ -9108,31 +9168,19 @@ export default function GameCanvas() {
 
           // Client-side physics projection for smooth 60fps entity rendering between host updates
           if (mpRef.current.roomId) {
-            // 1. Move Enemies towards closest alive player
-            for (const enemy of state.enemies) {
-              let targetX = state.player.x;
-              let targetY = state.player.y;
-              let minTargetDistSq = (state.player.x - enemy.x) ** 2 + (state.player.y - enemy.y) ** 2;
-
-              for (const pid in state.multiplayerPlayers) {
-                const mpPlayer = state.multiplayerPlayers[pid];
-                if (mpPlayer && !mpPlayer.isDead) {
-                  const dSq = (mpPlayer.x - enemy.x) ** 2 + (mpPlayer.y - enemy.y) ** 2;
-                  if (dSq < minTargetDistSq) {
-                    minTargetDistSq = dSq;
-                    targetX = mpPlayer.x;
-                    targetY = mpPlayer.y;
-                  }
-                }
-              }
-
-              const dx = targetX - enemy.x;
-              const dy = targetY - enemy.y;
-              const dist = Math.sqrt(dx * dx + dy * dy);
-              if (dist > 0) {
-                enemy.x += (dx / dist) * enemy.speed * dt;
-                enemy.y += (dy / dist) * enemy.speed * dt;
-              }
+            // 1. Render host-owned enemies on a short buffered timeline. Guests
+            // never rerun enemy AI or relic carry; doing so caused a correction
+            // every time the next 20 Hz authoritative snapshot arrived.
+            const enemyRenderTime = currentTime - MULTIPLAYER_ENTITY_INTERPOLATION_DELAY_MS;
+            for (let enemyIndex = 0; enemyIndex < state.enemies.length; enemyIndex += 1) {
+              const enemy = state.enemies[enemyIndex];
+              const enemyMotionId = String(enemy.id ?? `enemy_${enemyIndex}`);
+              const samples = guestEnemyMotionSamplesRef.current.get(enemyMotionId);
+              if (!samples) continue;
+              const sampled = sampleEntityMotion(samples, enemyRenderTime);
+              if (!sampled) continue;
+              enemy.x = sampled.x;
+              enemy.y = sampled.y;
             }
 
             // 2. Move Bouncers with boundaries bouncing
@@ -9285,14 +9333,18 @@ export default function GameCanvas() {
         // resolver keep the result inside the arena.
         if (STATUS === 'PLAYING' && dt > 0) {
           const previousWorldPhaseTime = Math.max(0, worldPhaseTime - dt * 1000);
-          const carriedPlayer = getTitanRelicCarriedPosition(
+          const carriedPlayer = getTitanRelicCarriedPositionWithContact(
             state.player,
             state.spawners,
             previousWorldPhaseTime,
             worldPhaseTime,
+            playerTitanRelicContactRef.current,
           );
+          playerTitanRelicContactRef.current = carriedPlayer.contact;
           state.player.x = carriedPlayer.x;
           state.player.y = carriedPlayer.y;
+        } else if (STATUS !== 'PLAYING') {
+          playerTitanRelicContactRef.current = null;
         }
 
         // Core Player Wall Collisions & Clamping (Run locally on BOTH Client and Host to prevent wall-phasing)
@@ -9783,12 +9835,19 @@ export default function GameCanvas() {
           // only render the resulting host-owned enemy position.
           if (dt > 0) {
             const previousWorldPhaseTime = Math.max(0, worldPhaseTime - dt * 1000);
-            const carriedEnemy = getTitanRelicCarriedPosition(
+            const enemyContactId = String(enemy.id ?? `enemy_${i}`);
+            const carriedEnemy = getTitanRelicCarriedPositionWithContact(
               enemy,
               state.spawners,
               previousWorldPhaseTime,
               worldPhaseTime,
+              enemyTitanRelicContactsRef.current.get(enemyContactId) ?? null,
             );
+            if (carriedEnemy.contact) {
+              enemyTitanRelicContactsRef.current.set(enemyContactId, carriedEnemy.contact);
+            } else {
+              enemyTitanRelicContactsRef.current.delete(enemyContactId);
+            }
             enemy.x = carriedEnemy.x;
             enemy.y = carriedEnemy.y;
           }
@@ -9976,6 +10035,17 @@ export default function GameCanvas() {
               spawnTime: currentTime,
               isNeutral: false,
             });
+          }
+        }
+
+        if (!mpRef.current.roomId || mpRef.current.isHost) {
+          const liveEnemyContactIds = new Set(
+            state.enemies.map((enemy: any, index: number) => String(enemy.id ?? `enemy_${index}`)),
+          );
+          for (const enemyContactId of enemyTitanRelicContactsRef.current.keys()) {
+            if (!liveEnemyContactIds.has(enemyContactId)) {
+              enemyTitanRelicContactsRef.current.delete(enemyContactId);
+            }
           }
         }
 

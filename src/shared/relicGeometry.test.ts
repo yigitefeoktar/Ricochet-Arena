@@ -7,6 +7,7 @@ import {
   TITAN_RELIC_TYPES,
   getTitanRelicCarry,
   getTitanRelicCarriedPosition,
+  getTitanRelicCarriedPositionWithContact,
   getTitanRelicPrimitives,
   getTitanRelicVisualRadius,
 } from './relicGeometry';
@@ -180,4 +181,76 @@ test('the shared titan carry path ignores non-titan spawners', () => {
 test('players outside a titan relic receive no carry', () => {
   const spawner = { x: 1_500, y: 1_500, specialType: 'titan_sweeper' };
   assert.equal(getTitanRelicCarry(2_900, 2_900, 20, spawner, 0, 16), null);
+});
+
+function simulateLatchedMoonCarry(frameDurationMs: number) {
+  const spawner = { x: 1_500, y: 1_500, specialType: 'titan_moons' };
+  const firstTime = frameDurationMs;
+  const firstMoon = getTitanRelicPrimitives(spawner, firstTime)[0];
+  assert.equal(firstMoon.kind, 'circle');
+  if (firstMoon.kind !== 'circle') throw new Error('expected moon circle');
+
+  let entity = { x: firstMoon.cx, y: firstMoon.cy, radius: 20 };
+  let contact = null;
+  let previousTime = 0;
+  let contactFrames = 0;
+
+  for (let currentTime = firstTime; currentTime <= 2_000; currentTime += frameDurationMs) {
+    const carried = getTitanRelicCarriedPositionWithContact(
+      entity,
+      [spawner],
+      previousTime,
+      currentTime,
+      contact,
+    );
+    entity = { x: carried.x, y: carried.y, radius: entity.radius };
+    contact = carried.contact;
+    if (contact) contactFrames += 1;
+    previousTime = currentTime;
+  }
+
+  return { entity, contact, contactFrames };
+}
+
+test('latched titan contact remains continuous instead of alternating every frame', () => {
+  for (const frameDurationMs of [1000 / 30, 1000 / 60, 1000 / 120]) {
+    const result = simulateLatchedMoonCarry(frameDurationMs);
+    assert.ok(result.contact);
+    assert.ok(result.contactFrames >= Math.floor(1_900 / frameDurationMs));
+  }
+});
+
+test('latched titan carry is effectively frame-rate independent', () => {
+  const at30 = simulateLatchedMoonCarry(1000 / 30).entity;
+  const at60 = simulateLatchedMoonCarry(1000 / 60).entity;
+  const at120 = simulateLatchedMoonCarry(1000 / 120).entity;
+
+  assert.ok(Math.hypot(at30.x - at60.x, at30.y - at60.y) < 8);
+  assert.ok(Math.hypot(at60.x - at120.x, at60.y - at120.y) < 8);
+});
+
+test('latched contact releases when the entity genuinely moves away', () => {
+  const spawner = { x: 1_500, y: 1_500, specialType: 'titan_moons' };
+  const moon = getTitanRelicPrimitives(spawner, 16)[0];
+  assert.equal(moon.kind, 'circle');
+  if (moon.kind !== 'circle') return;
+
+  const acquired = getTitanRelicCarriedPositionWithContact(
+    { x: moon.cx, y: moon.cy, radius: 20 },
+    [spawner],
+    0,
+    16,
+    null,
+  );
+  assert.ok(acquired.contact);
+
+  const released = getTitanRelicCarriedPositionWithContact(
+    { x: acquired.x + 100, y: acquired.y + 100, radius: 20 },
+    [spawner],
+    16,
+    32,
+    acquired.contact,
+  );
+  assert.equal(released.contact, null);
+  assert.equal(released.contactCount, 0);
 });
