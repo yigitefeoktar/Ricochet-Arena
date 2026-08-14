@@ -3,6 +3,7 @@ import test from 'node:test';
 import {
   OVERDRIVE_TITAN_RELIC_TYPES,
   STANDARD_TITAN_RELIC_TYPES,
+  TITAN_ORBIT_RELIC_LAYOUT,
   TITAN_RELIC_TYPES,
   getTitanRelicCarry,
   getTitanRelicPrimitives,
@@ -60,6 +61,32 @@ test('Titan Tempest relic motion zones cannot overlap each other', () => {
         + getTitanRelicVisualRadius(second.specialType);
 
       assert.ok(centerDistance > combinedMotionRadius + 150);
+    }
+  }
+});
+
+test('Titan Orbit relic motion zones cannot overlap each other or the arena boundary', () => {
+  const layout = TITAN_ORBIT_RELIC_LAYOUT;
+  const boundaryThickness = 50;
+  const arenaSize = 3_000;
+
+  for (const relic of layout) {
+    const motionRadius = getTitanRelicVisualRadius(relic.specialType);
+    assert.ok(relic.x - motionRadius > boundaryThickness);
+    assert.ok(relic.y - motionRadius > boundaryThickness);
+    assert.ok(relic.x + motionRadius < arenaSize - boundaryThickness);
+    assert.ok(relic.y + motionRadius < arenaSize - boundaryThickness);
+  }
+
+  for (let firstIndex = 0; firstIndex < layout.length; firstIndex += 1) {
+    for (let secondIndex = firstIndex + 1; secondIndex < layout.length; secondIndex += 1) {
+      const first = layout[firstIndex];
+      const second = layout[secondIndex];
+      const centerDistance = Math.hypot(second.x - first.x, second.y - first.y);
+      const combinedMotionRadius = getTitanRelicVisualRadius(first.specialType)
+        + getTitanRelicVisualRadius(second.specialType);
+
+      assert.ok(centerDistance > combinedMotionRadius + 30);
     }
   }
 });

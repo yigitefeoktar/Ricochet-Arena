@@ -50,6 +50,7 @@ import {
   getTitanRelicPrimitives,
   getTitanRelicVisualRadius,
   isTitanRelicType,
+  TITAN_ORBIT_RELIC_LAYOUT,
 } from '../shared/relicGeometry';
 
 interface ActiveMatchSettingsRequest {
@@ -944,19 +945,18 @@ const MAPS: Record<string, MapDefinition> = {
   titan_orbit: {
     name: "Titan Orbit",
     difficulty: "MEDIUM",
-    description: "Five different titan relics orbit an open drift field. Their enormous moving shapes carry anything caught in their path.",
+    description: "Five different titan relics orbit an open drift field on separate paths. Their enormous moving shapes carry anything caught in their path.",
     walls: [
       // The moving titan shapes are the map's walls. Keeping the field open prevents
       // them from visually passing through static geometry and makes their motion legible.
       ...BASE_WALLS
     ],
-    spawners: [
-      { x: 700, y: 720, radius: 40, hp: 100, maxHp: 100, specialType: 'titan_sweeper' },
-      { x: 2310, y: 620, radius: 40, hp: 100, maxHp: 100, specialType: 'titan_cross' },
-      { x: 1510, y: 1470, radius: 40, hp: 100, maxHp: 100, specialType: 'titan_triangle' },
-      { x: 590, y: 2350, radius: 40, hp: 100, maxHp: 100, specialType: 'titan_moons' },
-      { x: 2360, y: 2360, radius: 40, hp: 100, maxHp: 100, specialType: 'titan_gate' }
-    ]
+    spawners: TITAN_ORBIT_RELIC_LAYOUT.map(relic => ({
+      ...relic,
+      radius: 40,
+      hp: 100,
+      maxHp: 100,
+    }))
   },
   titan_tempest: {
     name: "Titan Tempest",

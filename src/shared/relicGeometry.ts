@@ -55,6 +55,14 @@ export type TitanRelicPalette = {
   accent: string;
 };
 
+export const TITAN_ORBIT_RELIC_LAYOUT = [
+  { x: 640, y: 640, specialType: 'titan_sweeper' },
+  { x: 2_360, y: 640, specialType: 'titan_cross' },
+  { x: 1_500, y: 1_500, specialType: 'titan_triangle' },
+  { x: 640, y: 2_360, specialType: 'titan_moons' },
+  { x: 2_360, y: 2_360, specialType: 'titan_gate' },
+] as const satisfies ReadonlyArray<{ x: number; y: number; specialType: StandardTitanRelicType }>;
+
 const TITAN_PALETTES: Record<StandardTitanRelicType, TitanRelicPalette> = {
   titan_sweeper: { fill: '#45d9ff', accent: '#126b82' },
   titan_cross: { fill: '#ffd34d', accent: '#806200' },
@@ -119,8 +127,9 @@ function triangleAt(
   centerX: number,
   centerY: number,
   angle: number,
+  triangleRadius = 190,
+  segmentRadius = 27,
 ): TitanRelicSegment[] {
-  const triangleRadius = 190;
   const vertices = Array.from({ length: 3 }, (_, index) => {
     const vertexAngle = angle + index * Math.PI * 2 / 3;
     return {
@@ -137,7 +146,7 @@ function triangleAt(
       ay: vertex.y,
       bx: next.x,
       by: next.y,
-      radius: 27,
+      radius: segmentRadius,
     };
   });
 }
@@ -290,11 +299,11 @@ export function getTitanRelicPrimitives(
     const count = overdrive ? 2 : 1;
     return Array.from({ length: count }, (_, index) => {
       const orbitAngle = angle + index * Math.PI;
-      const centerX = spawner.x + Math.cos(orbitAngle) * 500;
-      const centerY = spawner.y + Math.sin(orbitAngle) * 500;
+      const centerX = spawner.x + Math.cos(orbitAngle) * 390;
+      const centerY = spawner.y + Math.sin(orbitAngle) * 390;
       return [
-        segmentAt(`cross-${index}-a`, centerX, centerY, orbitAngle, 210, 31),
-        segmentAt(`cross-${index}-b`, centerX, centerY, orbitAngle + Math.PI / 2, 210, 31),
+        segmentAt(`cross-${index}-a`, centerX, centerY, orbitAngle, 164, 24),
+        segmentAt(`cross-${index}-b`, centerX, centerY, orbitAngle + Math.PI / 2, 164, 24),
       ];
     }).flat();
   }
@@ -328,9 +337,9 @@ export function getTitanRelicPrimitives(
   const count = overdrive ? 2 : 1;
   return Array.from({ length: count }, (_, index) => {
     const orbitAngle = angle + index * Math.PI;
-    const centerX = spawner.x + Math.cos(orbitAngle) * 500;
-    const centerY = spawner.y + Math.sin(orbitAngle) * 500;
-    return triangleAt(`triangle-${index}`, centerX, centerY, orbitAngle);
+    const centerX = spawner.x + Math.cos(orbitAngle) * 390;
+    const centerY = spawner.y + Math.sin(orbitAngle) * 390;
+    return triangleAt(`triangle-${index}`, centerX, centerY, orbitAngle, 148, 21);
   }).flat();
 }
 
@@ -435,9 +444,9 @@ export function getTitanRelicVisualRadius(specialType: string | undefined): numb
     if (standardType === 'titan_gate') return 520;
     return 510;
   }
-  if (standardType === 'titan_sweeper') return 710;
-  if (standardType === 'titan_cross') return 750;
-  if (standardType === 'titan_moons') return 560;
-  if (standardType === 'titan_gate') return 740;
-  return 730;
+  if (standardType === 'titan_sweeper') return 520;
+  if (standardType === 'titan_cross') return 580;
+  if (standardType === 'titan_moons') return 530;
+  if (standardType === 'titan_gate') return 560;
+  return 560;
 }
