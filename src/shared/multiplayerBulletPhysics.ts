@@ -20,6 +20,11 @@ export interface SurfaceHit {
   x: number;
   y: number;
   normals: Array<{ nx: number; ny: number }>;
+  /** Optional render/physics-safe depenetrated start for the remaining step. */
+  separationX?: number;
+  separationY?: number;
+  /** Resolve an existing overlap even when the bullet velocity points outward. */
+  forceResolve?: boolean;
   data?: unknown;
 }
 
@@ -274,7 +279,11 @@ export function traceReflectedBulletMotion(options: {
     );
     const dynamicApproaching = dynamicHit?.normals.some(normal =>
       dx * normal.nx + dy * normal.ny < -EPSILON);
-    if (dynamicHit && dynamicApproaching && !(dynamicHit.t <= EPSILON && dynamicHit.id === ignoreSurfaceId)) {
+    if (
+      dynamicHit &&
+      (dynamicApproaching || dynamicHit.forceResolve) &&
+      !(dynamicHit.t <= EPSILON && dynamicHit.id === ignoreSurfaceId)
+    ) {
       hits.push(dynamicHit);
     }
 
@@ -330,8 +339,10 @@ export function traceReflectedBulletMotion(options: {
       break;
     }
 
-    x = hit.x + (dx / speed) * SEPARATION_EPSILON;
-    y = hit.y + (dy / speed) * SEPARATION_EPSILON;
+    const separatedX = Number.isFinite(hit.separationX) ? hit.separationX! : hit.x;
+    const separatedY = Number.isFinite(hit.separationY) ? hit.separationY! : hit.y;
+    x = separatedX + (dx / speed) * SEPARATION_EPSILON;
+    y = separatedY + (dy / speed) * SEPARATION_EPSILON;
     const separationTime = Math.min(remaining, SEPARATION_EPSILON / speed);
     remaining = Math.max(0, remaining - separationTime);
     elapsed += separationTime;

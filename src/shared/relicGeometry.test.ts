@@ -11,6 +11,7 @@ import {
   getTitanRelicPrimitives,
   getTitanRelicVisualRadius,
   projectTitanRelicContactPosition,
+  resolveTitanRelicPenetration,
 } from './relicGeometry';
 
 test('every titan spawner has a distinct deterministic simple geometry', () => {
@@ -296,4 +297,34 @@ test('render-only projection follows the same curved carry path as frame steps',
 
   assert.ok(projected);
   assert.ok(Math.hypot(projected.x - stepped.x, projected.y - stepped.y) < 0.001);
+});
+
+test('titan penetration safety moves an overtaken enemy fully outside the shape', () => {
+  const spawner = { x: 1_500, y: 1_500, specialType: 'titan_moons' };
+  const moon = getTitanRelicPrimitives(spawner, 2_000)[0];
+  assert.equal(moon.kind, 'circle');
+  if (moon.kind !== 'circle') return;
+
+  const radius = 18;
+  const resolved = resolveTitanRelicPenetration(
+    { x: moon.cx, y: moon.cy, radius },
+    [spawner],
+    2_000,
+  );
+  assert.ok(resolved.correctionCount > 0);
+  assert.ok(
+    Math.hypot(resolved.x - moon.cx, resolved.y - moon.cy) >= moon.radius + radius,
+  );
+});
+
+test('titan penetration safety is an exact no-op on ordinary maps', () => {
+  const entity = { x: 321, y: 654, radius: 18 };
+  assert.deepEqual(
+    resolveTitanRelicPenetration(
+      entity,
+      [{ x: 321, y: 654, specialType: 'shield' }],
+      2_000,
+    ),
+    { x: entity.x, y: entity.y, correctionCount: 0 },
+  );
 });

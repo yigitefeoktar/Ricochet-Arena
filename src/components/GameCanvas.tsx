@@ -52,6 +52,7 @@ import {
   getTitanRelicVisualRadius,
   isTitanRelicType,
   projectTitanRelicContactPosition,
+  resolveTitanRelicPenetration,
   TITAN_ORBIT_RELIC_LAYOUT,
   type TitanRelicContact,
 } from '../shared/relicGeometry';
@@ -2006,7 +2007,7 @@ function getBulletRelicCollision(
   bulletRadius: number,
   spawner: { x: number; y: number; specialType?: string },
   currentTime: number
-): { nx: number; ny: number; overlap: number } | null {
+): { nx: number; ny: number; overlap: number; primitiveId?: string } | null {
   if (!spawner.specialType) return null;
 
   // Helper for circle collision
@@ -2202,7 +2203,7 @@ function getBulletRelicCollision(
             primitive.by,
             primitive.radius,
           );
-      if (collision) return collision;
+      if (collision) return { ...collision, primitiveId: primitive.id };
     }
   }
 
@@ -2227,6 +2228,7 @@ function sweptMultiplayerBulletRelicCollision(
   t: number;
   spawner: any;
   specialType: string;
+  primitiveId?: string;
 } | null {
   if (
     !Number.isFinite(startX) ||
@@ -2272,7 +2274,8 @@ function sweptMultiplayerBulletRelicCollision(
           overlap: collision.overlap,
           t: t,
           spawner: spawner,
-          specialType: spawner.specialType
+          specialType: spawner.specialType,
+          primitiveId: collision.primitiveId,
         };
       }
     }
@@ -3057,6 +3060,7 @@ export default function GameCanvas() {
   } | null>(null);
   const playerTitanRelicContactRef = useRef<TitanRelicContact | null>(null);
   const enemyTitanRelicContactsRef = useRef<Map<string, TitanRelicContact>>(new Map());
+  const bouncerTitanRelicContactsRef = useRef<Map<string, TitanRelicContact>>(new Map());
   const guestEnemyMotionSamplesRef = useRef<Map<string, EntityMotionSample[]>>(new Map());
 
   const getMultiplayerWorldPhaseTime = useCallback((localTime: number): number => {
@@ -5829,6 +5833,7 @@ export default function GameCanvas() {
     accumulatedPauseOffsetRef.current = 0;
     playerTitanRelicContactRef.current = null;
     enemyTitanRelicContactsRef.current.clear();
+    bouncerTitanRelicContactsRef.current.clear();
     guestEnemyMotionSamplesRef.current.clear();
     multiplayerWorldPhaseAuthorityRef.current = null;
     releaseAllInputs();
@@ -7349,6 +7354,12 @@ export default function GameCanvas() {
           return {
             ...enemy,
             lastShoot,
+            // Only carried enemies need a phase anchor. Normal-map snapshots
+            // retain their previous shape and payload.
+            ...(enemy.titanCarryContact ? {
+              titanCarrySourceX: enemy.x,
+              titanCarrySourceY: enemy.y,
+            } : {}),
             ...(processedZoneKbs !== undefined ? { processedZoneKbs } : {})
           };
         });
@@ -7366,6 +7377,10 @@ export default function GameCanvas() {
             ...bouncer,
             lastDirChange,
             lastMultiply,
+            ...(bouncer.titanCarryContact ? {
+              titanCarrySourceX: bouncer.x,
+              titanCarrySourceY: bouncer.y,
+            } : {}),
             ...(processedZoneKbs !== undefined ? { processedZoneKbs } : {})
           };
         });
@@ -8896,6 +8911,8 @@ export default function GameCanvas() {
       const worldPhaseTime = isMultiplayer
         ? getMultiplayerWorldPhaseTime(currentTime)
         : (currentTime - accumulatedPauseOffsetRef.current);
+      const hasTitanRelics = isMultiplayer &&
+        state.spawners.some(spawner => isTitanRelicType(spawner.specialType));
 
       const dt =
         STATUS === 'PAUSED'
@@ -9175,12 +9192,17 @@ export default function GameCanvas() {
                   if (!relicCollision) return null;
                   const spawnerIndex = state.spawners.indexOf(relicCollision.spawner);
                   return {
-                    id: `relic:${spawnerIndex}:${relicCollision.specialType}`,
+                    id: `relic:${spawnerIndex}:${relicCollision.primitiveId ?? relicCollision.specialType}`,
                     kind: 'relic',
                     t: relicCollision.t,
                     x: startX + (endX - startX) * relicCollision.t,
                     y: startY + (endY - startY) * relicCollision.t,
                     normals: [{ nx: relicCollision.nx, ny: relicCollision.ny }],
+                    ...(isTitanRelicType(relicCollision.specialType) ? {
+                      separationX: relicCollision.x,
+                      separationY: relicCollision.y,
+                      forceResolve: relicCollision.overlap > 1e-6,
+                    } : {}),
                   };
                 },
               );
@@ -9225,6 +9247,33 @@ export default function GameCanvas() {
               if (!sampled) continue;
               enemy.x = sampled.x;
               enemy.y = sampled.y;
+
+              const carryContact = enemy.titanCarryContact as TitanRelicContact | null | undefined;
+              const carryPhaseTime = enemy.titanCarryPhaseTime;
+              if (
+                carryContact &&
+                typeof carryPhaseTime === 'number' &&
+                Number.isFinite(carryPhaseTime) &&
+                carryPhaseTime <= worldPhaseTime &&
+                typeof enemy.titanCarrySourceX === 'number' &&
+                typeof enemy.titanCarrySourceY === 'number'
+              ) {
+                const projected = projectTitanRelicContactPosition(
+                  {
+                    x: enemy.titanCarrySourceX,
+                    y: enemy.titanCarrySourceY,
+                    radius: enemy.radius,
+                  },
+                  state.spawners,
+                  carryPhaseTime,
+                  worldPhaseTime,
+                  carryContact,
+                );
+                if (projected) {
+                  enemy.x = projected.x;
+                  enemy.y = projected.y;
+                }
+              }
             }
 
             // 2. Move Bouncers with boundaries bouncing
@@ -9397,6 +9446,18 @@ export default function GameCanvas() {
           : resolveWallCollisions(state.player.x, state.player.y, state.player.radius, activeWalls, pBeforeX, pBeforeY);
         state.player.x = playerResolved.x;
         state.player.y = playerResolved.y;
+
+        // Only titan multiplayer maps need a final moving-platform
+        // depenetration pass. Ordinary maps retain the exact previous path.
+        if (hasTitanRelics) {
+          const titanResolved = resolveTitanRelicPenetration(
+            state.player,
+            state.spawners,
+            worldPhaseTime,
+          );
+          state.player.x = titanResolved.x;
+          state.player.y = titanResolved.y;
+        }
 
         for (const n of playerResolved.normals) {
           const dotVel = state.player.vx * n.nx + state.player.vy * n.ny;
@@ -9916,6 +9977,22 @@ export default function GameCanvas() {
           enemy.x = enemyResolved.x;
           enemy.y = enemyResolved.y;
 
+          if (
+            isAuthoritativeMultiplayerSimulation &&
+            hasTitanRelics
+          ) {
+            const titanResolved = resolveTitanRelicPenetration(
+              enemy,
+              state.spawners,
+              worldPhaseTime,
+            );
+            if (titanResolved.correctionCount > 0) {
+              enemy.x = titanResolved.x;
+              enemy.y = titanResolved.y;
+              state.forceBroadcast = true;
+            }
+          }
+
           let skipKnockbackProjection = false;
 
           // B2: Host-side enemy contact collision checks against living remote players
@@ -10323,6 +10400,64 @@ export default function GameCanvas() {
             }
           }
 
+          // Bouncers are enemy entities too. On titan multiplayer maps they use
+          // the same deterministic moving-platform carry as players and normal
+          // enemies. Ordinary maps and single-player never enter this branch.
+          if (
+            mpRef.current.roomId &&
+            dt > 0 &&
+            hasTitanRelics
+          ) {
+            const previousWorldPhaseTime = Math.max(0, worldPhaseTime - dt * 1_000);
+            const bouncerContactId = String(b.id ?? `bouncer_${i}`);
+            const networkContact = (b as any).titanCarryContact as TitanRelicContact | null | undefined;
+            const networkPhaseTime = (b as any).titanCarryPhaseTime;
+            const projectedNetworkCarry = !isAuthoritativeMultiplayerSimulation &&
+              networkContact &&
+              typeof networkPhaseTime === 'number' &&
+              Number.isFinite(networkPhaseTime) &&
+              networkPhaseTime <= worldPhaseTime &&
+              typeof (b as any).titanCarrySourceX === 'number' &&
+              typeof (b as any).titanCarrySourceY === 'number'
+                ? projectTitanRelicContactPosition(
+                    {
+                      x: (b as any).titanCarrySourceX,
+                      y: (b as any).titanCarrySourceY,
+                      radius: b.radius,
+                    },
+                    state.spawners,
+                    networkPhaseTime,
+                    worldPhaseTime,
+                    networkContact,
+                  )
+                : null;
+            const carriedBouncer = projectedNetworkCarry ?? getTitanRelicCarriedPositionWithContact(
+                b,
+                state.spawners,
+                previousWorldPhaseTime,
+                worldPhaseTime,
+                bouncerTitanRelicContactsRef.current.get(bouncerContactId) ?? null,
+              );
+            if (carriedBouncer.contact) {
+              bouncerTitanRelicContactsRef.current.set(bouncerContactId, carriedBouncer.contact);
+            } else {
+              bouncerTitanRelicContactsRef.current.delete(bouncerContactId);
+            }
+            b.x = carriedBouncer.x;
+            b.y = carriedBouncer.y;
+
+            const titanResolved = resolveTitanRelicPenetration(
+              b,
+              state.spawners,
+              worldPhaseTime,
+            );
+            if (titanResolved.correctionCount > 0) {
+              b.x = titanResolved.x;
+              b.y = titanResolved.y;
+              if (isAuthoritativeMultiplayerSimulation) state.forceBroadcast = true;
+            }
+          }
+
           // B3: Host-side bouncer contact collision checks against living remote players
           if (isAuthoritativeMultiplayerSimulation) {
             const hostId = socketRef.current?.id;
@@ -10463,7 +10598,11 @@ export default function GameCanvas() {
           }
 
           // Collision with Player
-          if (!isAuthoritativeMultiplayerSimulation && uiRef.current.status === 'PLAYING') {
+          if (
+            !isAuthoritativeMultiplayerSimulation &&
+            uiRef.current.status === 'PLAYING' &&
+            !(mpRef.current.roomId && hasTitanRelics)
+          ) {
             const pdx = state.player.x - b.x;
             const pdy = state.player.y - b.y;
             if (pdx * pdx + pdy * pdy < (state.player.radius + b.radius) ** 2) {
@@ -10504,6 +10643,17 @@ export default function GameCanvas() {
                 x: b.x, y: b.y, dx: Math.cos(angle), dy: Math.sin(angle),
                 size: 1, radius: 24, speed: ENEMY_SPEED + Math.random() * 20, lastDirChange: currentTime, lastMultiply: currentTime
               });
+            }
+          }
+        }
+
+        if (bouncerTitanRelicContactsRef.current.size > 0) {
+          const liveBouncerContactIds = new Set(
+            state.bouncers.map((bouncer, index) => String(bouncer.id ?? `bouncer_${index}`)),
+          );
+          for (const contactId of bouncerTitanRelicContactsRef.current.keys()) {
+            if (!liveBouncerContactIds.has(contactId)) {
+              bouncerTitanRelicContactsRef.current.delete(contactId);
             }
           }
         }
@@ -11020,12 +11170,17 @@ export default function GameCanvas() {
                 if (!relicCollision) return null;
                 const spawnerIndex = state.spawners.indexOf(relicCollision.spawner);
                 return {
-                  id: `relic:${spawnerIndex}:${relicCollision.specialType}`,
+                  id: `relic:${spawnerIndex}:${relicCollision.primitiveId ?? relicCollision.specialType}`,
                   kind: 'relic',
                   t: relicCollision.t,
                   x: startX + (endX - startX) * relicCollision.t,
                   y: startY + (endY - startY) * relicCollision.t,
                   normals: [{ nx: relicCollision.nx, ny: relicCollision.ny }],
+                  ...(isTitanRelicType(relicCollision.specialType) ? {
+                    separationX: relicCollision.x,
+                    separationY: relicCollision.y,
+                    forceResolve: relicCollision.overlap > 1e-6,
+                  } : {}),
                   data: {
                     spawner: relicCollision.spawner,
                     index: spawnerIndex,
@@ -11135,8 +11290,14 @@ export default function GameCanvas() {
               const collision = segment.collision;
               if (!collision) continue;
               const nextSegment = motionTrace.segments[segmentIndex + 1];
-              bullet.x = collision.x;
-              bullet.y = collision.y;
+              const eventX = Number.isFinite(collision.separationX)
+                ? collision.separationX!
+                : collision.x;
+              const eventY = Number.isFinite(collision.separationY)
+                ? collision.separationY!
+                : collision.y;
+              bullet.x = eventX;
+              bullet.y = eventY;
               bullet.dx = nextSegment?.dx ?? motionTrace.dx;
               bullet.dy = nextSegment?.dy ?? motionTrace.dy;
               bullet.bounceCount += 1;
@@ -11157,7 +11318,7 @@ export default function GameCanvas() {
                 else if (specialType === 'crystal') particleColor = '#00ffaa';
                 else if (isTitanRelicType(specialType)) particleColor = getTitanRelicPalette(specialType).fill;
               }
-              spawnParticles(collision.x, collision.y, particleColor, particleCount);
+              spawnParticles(eventX, eventY, particleColor, particleCount);
               const collisionTime = hasMultiplayerCatchUp && bullet.isPlayer
                 ? getPlayerBulletTimeAtTravelFraction(
                     bullet.spawnTime,
@@ -11741,9 +11902,29 @@ export default function GameCanvas() {
                 bulletEvents,
                 bulletEventSequence: hostBulletEventSequenceRef.current,
                 bulletSimulationTick: hostBulletSimulationTickRef.current,
-                enemies: state.enemies,
+                enemies: hasTitanRelics
+                  ? state.enemies.map((enemy: any, enemyIndex: number) => {
+                      const enemyContactId = String(enemy.id ?? `enemy_${enemyIndex}`);
+                      const titanCarryContact = enemyTitanRelicContactsRef.current.get(enemyContactId) ?? null;
+                      return {
+                        ...enemy,
+                        titanCarryContact,
+                        titanCarryPhaseTime: titanCarryContact ? hostWorldPhaseTime : null,
+                      };
+                    })
+                  : state.enemies,
                 spawners: state.spawners,
-                bouncers: state.bouncers,
+                bouncers: hasTitanRelics
+                  ? state.bouncers.map((bouncer: any, bouncerIndex: number) => {
+                      const bouncerContactId = String(bouncer.id ?? `bouncer_${bouncerIndex}`);
+                      const titanCarryContact = bouncerTitanRelicContactsRef.current.get(bouncerContactId) ?? null;
+                      return {
+                        ...bouncer,
+                        titanCarryContact,
+                        titanCarryPhaseTime: titanCarryContact ? hostWorldPhaseTime : null,
+                      };
+                    })
+                  : state.bouncers,
                 zones: state.zones,
                 particles: [],
                 trails: [],

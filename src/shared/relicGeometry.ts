@@ -494,6 +494,96 @@ export interface TitanRelicContactResult extends TitanRelicCarriedPosition {
   contact: TitanRelicContact | null;
 }
 
+export interface TitanRelicPenetrationResult {
+  x: number;
+  y: number;
+  correctionCount: number;
+}
+
+/**
+ * Deterministically moves a circular entity outside titan geometry at one
+ * world phase. This is a multiplayer safety net for a moving platform that
+ * overtakes an entity between authoritative ticks; non-titan relics are
+ * intentionally ignored.
+ */
+export function resolveTitanRelicPenetration(
+  entity: { x: number; y: number; radius: number },
+  spawners: ReadonlyArray<{ x: number; y: number; specialType?: string }>,
+  currentTime: number,
+  maxIterations: number = 8,
+): TitanRelicPenetrationResult {
+  let x = entity.x;
+  let y = entity.y;
+  let correctionCount = 0;
+
+  for (let iteration = 0; iteration < maxIterations; iteration += 1) {
+    let best: {
+      overlap: number;
+      nx: number;
+      ny: number;
+      key: string;
+    } | null = null;
+
+    for (let spawnerIndex = 0; spawnerIndex < spawners.length; spawnerIndex += 1) {
+      const spawner = spawners[spawnerIndex];
+      if (!spawner || !isTitanRelicType(spawner.specialType)) continue;
+      for (const primitive of getTitanRelicPrimitives(spawner, currentTime)) {
+        let contactX: number;
+        let contactY: number;
+        if (primitive.kind === 'circle') {
+          contactX = primitive.cx;
+          contactY = primitive.cy;
+        } else {
+          const closest = closestPointOnSegment(x, y, primitive);
+          contactX = closest.x;
+          contactY = closest.y;
+        }
+
+        const offsetX = x - contactX;
+        const offsetY = y - contactY;
+        const distance = Math.hypot(offsetX, offsetY);
+        const overlap = entity.radius + primitive.radius - distance;
+        if (overlap <= 1e-6) continue;
+
+        let nx: number;
+        let ny: number;
+        if (distance > 1e-6) {
+          nx = offsetX / distance;
+          ny = offsetY / distance;
+        } else if (primitive.kind === 'circle') {
+          const radialX = primitive.cx - spawner.x;
+          const radialY = primitive.cy - spawner.y;
+          const radialLength = Math.hypot(radialX, radialY);
+          nx = radialLength > 1e-6 ? radialX / radialLength : 1;
+          ny = radialLength > 1e-6 ? radialY / radialLength : 0;
+        } else {
+          const segmentX = primitive.bx - primitive.ax;
+          const segmentY = primitive.by - primitive.ay;
+          const segmentLength = Math.hypot(segmentX, segmentY);
+          nx = segmentLength > 1e-6 ? -segmentY / segmentLength : 1;
+          ny = segmentLength > 1e-6 ? segmentX / segmentLength : 0;
+        }
+
+        const key = `${spawnerIndex}:${primitive.id}`;
+        if (
+          !best ||
+          overlap > best.overlap + 1e-9 ||
+          (Math.abs(overlap - best.overlap) <= 1e-9 && key < best.key)
+        ) {
+          best = { overlap, nx, ny, key };
+        }
+      }
+    }
+
+    if (!best) break;
+    x += best.nx * (best.overlap + 1e-3);
+    y += best.ny * (best.overlap + 1e-3);
+    correctionCount += 1;
+  }
+
+  return { x, y, correctionCount };
+}
+
 /**
  * Runtime-only contact-aware carry. Callers keep the returned contact outside
  * serialized/networked gameplay state and pass it back on the next frame.

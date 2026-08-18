@@ -162,6 +162,58 @@ test('all relic variants can participate as deterministic swept dynamic surfaces
   }
 });
 
+test('a titan surface overtaking a bullet depenetrates it without changing speed', () => {
+  const trace = traceReflectedBulletMotion({
+    x: 10,
+    y: 50,
+    dx: -200,
+    dy: 0,
+    durationSeconds: 0.05,
+    radius: 5,
+    surfaces: [],
+    dynamicSurface: (startX, startY) => ({
+      id: 'relic:0:moon-0',
+      kind: 'relic',
+      t: 0,
+      x: startX,
+      y: startY,
+      separationX: 4,
+      separationY: 50,
+      forceResolve: true,
+      normals: [{ nx: -1, ny: 0 }],
+    }),
+  });
+
+  assert.equal(trace.collisions.length, 1);
+  assert.ok(trace.x < 4, `bullet did not escape the relic: ${trace.x}`);
+  assert.equal(Math.hypot(trace.dx, trace.dy), 200);
+  assert.equal(trace.exhaustedCollisionBudget, false);
+});
+
+test('ordinary dynamic surfaces retain their previous outward-motion behavior', () => {
+  const trace = traceReflectedBulletMotion({
+    x: 10,
+    y: 50,
+    dx: -200,
+    dy: 0,
+    durationSeconds: 0.05,
+    radius: 5,
+    surfaces: [],
+    dynamicSurface: (startX, startY) => ({
+      id: 'relic:shield',
+      kind: 'relic',
+      t: 0,
+      x: startX,
+      y: startY,
+      normals: [{ nx: -1, ny: 0 }],
+    }),
+  });
+
+  assert.equal(trace.collisions.length, 0);
+  assert.equal(trace.x, 0);
+  assert.equal(trace.dx, -200);
+});
+
 test('30, 60, 120 FPS and irregular schedules produce the same trajectory', () => {
   const surfaces = [
     wall('left', 0, 0, 20, 600),
