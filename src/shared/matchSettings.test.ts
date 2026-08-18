@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  isTitanRelicMapId,
   isValidMapId,
   sanitizeMatchSettings,
   VALID_MAP_IDS,
@@ -15,6 +16,19 @@ test('multiplayer accepts every titan relic map exposed by the selector', () => 
       gameMode: 'normal',
     });
   }
+});
+
+test('titan multiplayer behavior is restricted to the two titan map IDs', () => {
+  for (const mapId of VALID_MAP_IDS) {
+    assert.equal(
+      isTitanRelicMapId(mapId),
+      mapId === 'titan_orbit' || mapId === 'titan_tempest',
+      `unexpected Titan networking classification for ${mapId}`,
+    );
+  }
+  assert.equal(isTitanRelicMapId(''), false);
+  assert.equal(isTitanRelicMapId(null), false);
+  assert.equal(isTitanRelicMapId(undefined), false);
 });
 
 test('unknown map IDs remain rejected and sanitize to the existing default', () => {

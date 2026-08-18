@@ -223,12 +223,14 @@ export function traceReflectedBulletMotion(options: {
   radius: number;
   surfaces: AxisAlignedSurface[];
   dynamicSurface?: DynamicSurfaceResolver;
+  allowDynamicDepenetration?: boolean;
   maxCollisions?: number;
 }): BulletMotionTrace {
   const {
     radius,
     surfaces,
     dynamicSurface,
+    allowDynamicDepenetration = false,
     maxCollisions = 12,
   } = options;
 
@@ -281,7 +283,7 @@ export function traceReflectedBulletMotion(options: {
       dx * normal.nx + dy * normal.ny < -EPSILON);
     if (
       dynamicHit &&
-      (dynamicApproaching || dynamicHit.forceResolve) &&
+      (dynamicApproaching || (allowDynamicDepenetration && dynamicHit.forceResolve)) &&
       !(dynamicHit.t <= EPSILON && dynamicHit.id === ignoreSurfaceId)
     ) {
       hits.push(dynamicHit);
@@ -339,8 +341,8 @@ export function traceReflectedBulletMotion(options: {
       break;
     }
 
-    const separatedX = Number.isFinite(hit.separationX) ? hit.separationX! : hit.x;
-    const separatedY = Number.isFinite(hit.separationY) ? hit.separationY! : hit.y;
+    const separatedX = allowDynamicDepenetration && Number.isFinite(hit.separationX) ? hit.separationX! : hit.x;
+    const separatedY = allowDynamicDepenetration && Number.isFinite(hit.separationY) ? hit.separationY! : hit.y;
     x = separatedX + (dx / speed) * SEPARATION_EPSILON;
     y = separatedY + (dy / speed) * SEPARATION_EPSILON;
     const separationTime = Math.min(remaining, SEPARATION_EPSILON / speed);

@@ -4,7 +4,13 @@ import { readFileSync } from "fs";
 import { createServer } from "http";
 import { Server } from "socket.io";
 import { createHash, randomBytes } from "crypto";
-import { MatchSettings, DEFAULT_MATCH_SETTINGS, isValidGameMode, isValidMapId } from "./src/shared/matchSettings.js";
+import {
+  MatchSettings,
+  DEFAULT_MATCH_SETTINGS,
+  isTitanRelicMapId,
+  isValidGameMode,
+  isValidMapId,
+} from "./src/shared/matchSettings.js";
 import { isWorldRelayedGameplayEvent, parseRelayedGameplayEvent } from "./src/shared/gameplayAnalyticsRelay.js";
 
 async function startServer() {
@@ -805,6 +811,7 @@ async function startServer() {
       const carryContact = input.titanCarryContact;
       const carryPhaseTime = input.titanCarryPhaseTime;
       if (
+        isTitanRelicMapId(room.matchSettings.mapId) &&
         carryContact &&
         typeof carryContact === "object" &&
         Number.isInteger(carryContact.spawnerIndex) &&

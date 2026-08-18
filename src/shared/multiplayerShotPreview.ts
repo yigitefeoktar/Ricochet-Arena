@@ -76,6 +76,7 @@ export function advanceGuestShotVisual(
   nowMs: number,
   surfaces: AxisAlignedSurface[],
   dynamicSurface?: DynamicSurfaceResolver,
+  allowDynamicDepenetration = false,
 ): GuestShotVisualState {
   if (!Number.isFinite(nowMs) || nowMs <= visual.lastUpdateTime || visual.endingAt !== undefined) {
     return visual;
@@ -94,6 +95,7 @@ export function advanceGuestShotVisual(
     radius: visual.radius,
     surfaces,
     dynamicSurface,
+    allowDynamicDepenetration,
   });
   const neutralized = trace.collisions.some(collision =>
     collision.kind === 'wall' || collision.kind === 'build');

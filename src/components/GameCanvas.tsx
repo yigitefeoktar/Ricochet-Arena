@@ -6,6 +6,7 @@ import {
   GameMode,
   MatchSettings,
   DEFAULT_MATCH_SETTINGS,
+  isTitanRelicMapId,
   isValidGameMode,
   isValidMapId,
 } from '../shared/matchSettings';
@@ -1719,6 +1720,7 @@ function lineIntersectsRect(x1: number, y1: number, x2: number, y2: number, rx: 
 
 function isValidPlayerSpawnPos(px: number, py: number, targetSpawner: {x: number, y: number} | null, mapDef: MapDefinition): boolean {
   const MIN_DIST = 60; // 20 radius + 40 padding
+  const isTitanMap = mapDef === MAPS.titan_orbit || mapDef === MAPS.titan_tempest;
 
   if (px < MIN_DIST || px > MAP_WIDTH - MIN_DIST || py < MIN_DIST || py > MAP_HEIGHT - MIN_DIST) {
     return false;
@@ -1739,6 +1741,7 @@ function isValidPlayerSpawnPos(px: number, py: number, targetSpawner: {x: number
       return false;
     }
     if (
+      isTitanMap &&
       isTitanRelicType(spawner.specialType) &&
       getTitanRelicCarry(px, py, PLAYER_RADIUS, spawner, 0, 0)
     ) {
@@ -1796,6 +1799,7 @@ function generateMultiplayerSpawnAssignments(
   const N = shuffledIds.length;
   const activeWallsList = walls || mapDef.walls || [];
   const spawnersList = mapDef.spawners || [];
+  const isTitanMap = mapDef === MAPS.titan_orbit || mapDef === MAPS.titan_tempest;
 
   const testCandidateFormation = (
     cx: number,
@@ -1839,6 +1843,7 @@ function generateMultiplayerSpawnAssignments(
           return null;
         }
         if (
+          isTitanMap &&
           isTitanRelicType(spawner.specialType) &&
           getTitanRelicCarry(sx, sy, PLAYER_RADIUS, spawner, 0, 0)
         ) {
@@ -1947,6 +1952,7 @@ function generateMultiplayerSpawnAssignments(
 }
 
 function getPlayerSpawn(mapDef: MapDefinition): { pos: { x: number; y: number }, tutorialSpawnerIndex: number | null } {
+  const isTitanMap = mapDef === MAPS.titan_orbit || mapDef === MAPS.titan_tempest;
   if (mapDef.spawnPoint) {
     let tutorialSpawnerIndex: number | null = null;
     if (mapDef.name === "Fortress") tutorialSpawnerIndex = 3;
@@ -1970,8 +1976,9 @@ function getPlayerSpawn(mapDef: MapDefinition): { pos: { x: number; y: number },
 
   for (const idx of spawnerIndices) {
     const spawner = mapDef.spawners[idx];
-    const minSpawnDistance = isTitanRelicType(spawner.specialType) ? 175 : 220;
-    const maxSpawnDistance = isTitanRelicType(spawner.specialType) ? 205 : 320;
+    const usesTitanSpawnDistance = isTitanMap && isTitanRelicType(spawner.specialType);
+    const minSpawnDistance = usesTitanSpawnDistance ? 175 : 220;
+    const maxSpawnDistance = usesTitanSpawnDistance ? 205 : 320;
 
     // try random angles/distances first
     for (let attempt = 0; attempt < 50; attempt++) {
@@ -7233,6 +7240,8 @@ export default function GameCanvas() {
       if (mpRef.current.isHost) return;
       if (!state || typeof state !== 'object') return;
 
+      const usesTitanRelicMultiplayer = isTitanRelicMapId(uiRef.current.mapId);
+
       // 1. Validation Requirements (Requirement 3):
       if (!isCurrentRoom(state.roomId)) return;
 
@@ -7285,6 +7294,12 @@ export default function GameCanvas() {
           throw new Error('Malformed player snapshot');
         }
         const cloned = { ...p };
+        if (!usesTitanRelicMultiplayer) {
+          delete cloned.titanCarryContact;
+          delete cloned.titanCarryPhaseTime;
+          delete cloned.titanCarrySourceX;
+          delete cloned.titanCarrySourceY;
+        }
         if (cloned.lastShoot !== undefined && cloned.lastShoot !== null) {
           cloned.lastShoot = mapHostTime(cloned.lastShoot);
         }
@@ -7351,12 +7366,19 @@ export default function GameCanvas() {
           const processedZoneKbs = Array.isArray(enemy.processedZoneKbs)
             ? enemy.processedZoneKbs.map((t: any) => mapHostTime(t))
             : undefined;
+          const mappedEnemy = { ...enemy };
+          if (!usesTitanRelicMultiplayer) {
+            delete mappedEnemy.titanCarryContact;
+            delete mappedEnemy.titanCarryPhaseTime;
+            delete mappedEnemy.titanCarrySourceX;
+            delete mappedEnemy.titanCarrySourceY;
+          }
           return {
-            ...enemy,
+            ...mappedEnemy,
             lastShoot,
             // Only carried enemies need a phase anchor. Normal-map snapshots
             // retain their previous shape and payload.
-            ...(enemy.titanCarryContact ? {
+            ...(usesTitanRelicMultiplayer && enemy.titanCarryContact ? {
               titanCarrySourceX: enemy.x,
               titanCarrySourceY: enemy.y,
             } : {}),
@@ -7373,11 +7395,18 @@ export default function GameCanvas() {
           const processedZoneKbs = Array.isArray(bouncer.processedZoneKbs)
             ? bouncer.processedZoneKbs.map((t: any) => mapHostTime(t))
             : undefined;
+          const mappedBouncer = { ...bouncer };
+          if (!usesTitanRelicMultiplayer) {
+            delete mappedBouncer.titanCarryContact;
+            delete mappedBouncer.titanCarryPhaseTime;
+            delete mappedBouncer.titanCarrySourceX;
+            delete mappedBouncer.titanCarrySourceY;
+          }
           return {
-            ...bouncer,
+            ...mappedBouncer,
             lastDirChange,
             lastMultiply,
-            ...(bouncer.titanCarryContact ? {
+            ...(usesTitanRelicMultiplayer && bouncer.titanCarryContact ? {
               titanCarrySourceX: bouncer.x,
               titanCarrySourceY: bouncer.y,
             } : {}),
@@ -7489,26 +7518,34 @@ export default function GameCanvas() {
       }
 
       if (typeof state.worldPhaseTime === 'number' && Number.isFinite(state.worldPhaseTime) && state.worldPhaseTime >= 0) {
-        const phaseAuthority = multiplayerWorldPhaseAuthorityRef.current;
-        const authorityChanged = !phaseAuthority ||
-          phaseAuthority.roomId !== normRoomId ||
-          phaseAuthority.roundId !== state.roundId ||
-          phaseAuthority.hostId !== state.hostId;
+        if (usesTitanRelicMultiplayer) {
+          const phaseAuthority = multiplayerWorldPhaseAuthorityRef.current;
+          const authorityChanged = !phaseAuthority ||
+            phaseAuthority.roomId !== normRoomId ||
+            phaseAuthority.roundId !== state.roundId ||
+            phaseAuthority.hostId !== state.hostId;
 
-        // Establish the moving-world clock once per host/round on the mapped
-        // host timeline. Re-anchoring to packet receipt time every 50 ms made
-        // orbiting geometry jump with network latency and jitter.
-        if (authorityChanged) {
+          // Titan maps keep one mapped host clock for their moving geometry.
+          if (authorityChanged) {
+            multiplayerWorldPhaseAnchorRef.current = {
+              phaseAtAnchor: state.worldPhaseTime,
+              localTimeAtAnchor: mappedBulletSnapshotTime,
+              initialized: true,
+            };
+            multiplayerWorldPhaseAuthorityRef.current = {
+              roomId: normRoomId,
+              roundId: state.roundId,
+              hostId: state.hostId,
+            };
+          }
+        } else {
+          // Preserve the exact pre-Titan clock behavior for every normal map.
           multiplayerWorldPhaseAnchorRef.current = {
             phaseAtAnchor: state.worldPhaseTime,
-            localTimeAtAnchor: mappedBulletSnapshotTime,
+            localTimeAtAnchor: performance.now(),
             initialized: true,
           };
-          multiplayerWorldPhaseAuthorityRef.current = {
-            roomId: normRoomId,
-            roundId: state.roundId,
-            hostId: state.hostId,
-          };
+          multiplayerWorldPhaseAuthorityRef.current = null;
         }
       }
 
@@ -7605,25 +7642,29 @@ export default function GameCanvas() {
       stateRef.current.spawners = state.spawners;
 
       const newEnemies = mappedEnemies;
-      const liveEnemyMotionIds = new Set<string>();
-      for (let enemyIndex = 0; enemyIndex < newEnemies.length; enemyIndex += 1) {
-        const enemy = newEnemies[enemyIndex];
-        const enemyMotionId = String(enemy.id ?? `enemy_${enemyIndex}`);
-        liveEnemyMotionIds.add(enemyMotionId);
-        const previousSamples = guestEnemyMotionSamplesRef.current.get(enemyMotionId) ?? [];
-        guestEnemyMotionSamplesRef.current.set(
-          enemyMotionId,
-          appendEntityMotionSample(previousSamples, {
-            time: mappedBulletSnapshotTime,
-            x: enemy.x,
-            y: enemy.y,
-          }),
-        );
-      }
-      for (const enemyMotionId of guestEnemyMotionSamplesRef.current.keys()) {
-        if (!liveEnemyMotionIds.has(enemyMotionId)) {
-          guestEnemyMotionSamplesRef.current.delete(enemyMotionId);
+      if (usesTitanRelicMultiplayer) {
+        const liveEnemyMotionIds = new Set<string>();
+        for (let enemyIndex = 0; enemyIndex < newEnemies.length; enemyIndex += 1) {
+          const enemy = newEnemies[enemyIndex];
+          const enemyMotionId = String(enemy.id ?? `enemy_${enemyIndex}`);
+          liveEnemyMotionIds.add(enemyMotionId);
+          const previousSamples = guestEnemyMotionSamplesRef.current.get(enemyMotionId) ?? [];
+          guestEnemyMotionSamplesRef.current.set(
+            enemyMotionId,
+            appendEntityMotionSample(previousSamples, {
+              time: mappedBulletSnapshotTime,
+              x: enemy.x,
+              y: enemy.y,
+            }),
+          );
         }
+        for (const enemyMotionId of guestEnemyMotionSamplesRef.current.keys()) {
+          if (!liveEnemyMotionIds.has(enemyMotionId)) {
+            guestEnemyMotionSamplesRef.current.delete(enemyMotionId);
+          }
+        }
+      } else if (guestEnemyMotionSamplesRef.current.size > 0) {
+        guestEnemyMotionSamplesRef.current.clear();
       }
       if (prevEnemies.length > newEnemies.length) {
         for (const oldEnemy of prevEnemies) {
@@ -7842,12 +7883,15 @@ export default function GameCanvas() {
       if (typeof input.x !== 'number' || !Number.isFinite(input.x)) return;
       if (typeof input.y !== 'number' || !Number.isFinite(input.y)) return;
 
+      const usesTitanRelicMultiplayer = isTitanRelicMapId(uiRef.current.mapId);
+
       // Validate optional carried-player display metadata against the active
       // map. It is stored for observer rendering only and never changes the
       // authoritative coordinate or collision result below.
       let titanCarryContact: TitanRelicContact | null = null;
       let titanCarryPhaseTime: number | null = null;
       if (
+        usesTitanRelicMultiplayer &&
         input.titanCarryContact &&
         typeof input.titanCarryContact === 'object' &&
         Number.isInteger(input.titanCarryContact.spawnerIndex) &&
@@ -7949,9 +7993,9 @@ export default function GameCanvas() {
         // moving platforms for remote players too, matching the local-player
         // path; never turn their carried movement into a host-side death.
         const spawners = stateRef.current.spawners || [];
-        const lethalRelicSpawners = spawners.filter(
-          (spawner: any) => !isTitanRelicType(spawner?.specialType),
-        );
+        const lethalRelicSpawners = usesTitanRelicMultiplayer
+          ? spawners.filter((spawner: any) => !isTitanRelicType(spawner?.specialType))
+          : spawners;
         const currentPhase = getMultiplayerWorldPhaseTime(currentTime);
         const relicHit = sweptMultiplayerBulletRelicCollision(
           startX,
@@ -8034,8 +8078,10 @@ export default function GameCanvas() {
             name: matchPlayer.name,
             colorIdx: matchPlayer.colorIdx,
             score,
-            titanCarryContact: null,
-            titanCarryPhaseTime: null,
+            ...(usesTitanRelicMultiplayer ? {
+              titanCarryContact: null,
+              titanCarryPhaseTime: null,
+            } : {}),
           };
 
           if (winner.type === 'bullet' && winner.ref) {
@@ -8067,8 +8113,10 @@ export default function GameCanvas() {
         name: matchPlayer.name,
         colorIdx: matchPlayer.colorIdx,
         score,
-        titanCarryContact,
-        titanCarryPhaseTime,
+        ...(usesTitanRelicMultiplayer ? {
+          titanCarryContact,
+          titanCarryPhaseTime,
+        } : {}),
       };
 
       setMpTick(t => t + 1);
@@ -8911,8 +8959,8 @@ export default function GameCanvas() {
       const worldPhaseTime = isMultiplayer
         ? getMultiplayerWorldPhaseTime(currentTime)
         : (currentTime - accumulatedPauseOffsetRef.current);
-      const hasTitanRelics = isMultiplayer &&
-        state.spawners.some(spawner => isTitanRelicType(spawner.specialType));
+      const isTitanRelicMap = isTitanRelicMapId(uiRef.current.mapId);
+      const usesTitanRelicMultiplayer = isMultiplayer && isTitanRelicMap;
 
       const dt =
         STATUS === 'PAUSED'
@@ -8992,17 +9040,20 @@ export default function GameCanvas() {
       // Direct high-performance input/status sync (runs even when client status is GAME_OVER)
       if (currentTime - state.lastBroadcastTime > 16 && mpRef.current.isConnected && mpRef.current.roomId && !mpRef.current.isHost && !awaitingResumeSnapshotRef.current && (STATUS === 'PLAYING' || STATUS === 'GAME_OVER')) {
         state.lastBroadcastTime = currentTime;
-        socketRef.current?.emit('client_input', mpRef.current.roomId, {
+        const clientInput = {
           roundId: activeMultiplayerRoundIdRef.current,
           x: state.player.x,
           y: state.player.y,
-          titanCarryContact: playerTitanRelicContactRef.current,
-          // Input is emitted before this frame's movement update, so its
-          // coordinate belongs to the preceding world phase.
-          titanCarryPhaseTime: playerTitanRelicContactRef.current
-            ? Math.max(0, worldPhaseTime - dt * 1_000)
-            : null,
-        });
+          ...(usesTitanRelicMultiplayer ? {
+            titanCarryContact: playerTitanRelicContactRef.current,
+            // Input is emitted before this frame's movement update, so its
+            // coordinate belongs to the preceding world phase.
+            titanCarryPhaseTime: playerTitanRelicContactRef.current
+              ? Math.max(0, worldPhaseTime - dt * 1_000)
+              : null,
+          } : {}),
+        };
+        socketRef.current?.emit('client_input', mpRef.current.roomId, clientInput);
       }
 
       if (shouldRunUpdates) {
@@ -9198,13 +9249,14 @@ export default function GameCanvas() {
                     x: startX + (endX - startX) * relicCollision.t,
                     y: startY + (endY - startY) * relicCollision.t,
                     normals: [{ nx: relicCollision.nx, ny: relicCollision.ny }],
-                    ...(isTitanRelicType(relicCollision.specialType) ? {
+                    ...(usesTitanRelicMultiplayer && isTitanRelicType(relicCollision.specialType) ? {
                       separationX: relicCollision.x,
                       separationY: relicCollision.y,
                       forceResolve: relicCollision.overlap > 1e-6,
                     } : {}),
                   };
                 },
+                usesTitanRelicMultiplayer,
               );
               advanced.lastWorldPhaseTime = worldPhaseTime;
               pending.preview = advanced;
@@ -9234,44 +9286,72 @@ export default function GameCanvas() {
 
           // Client-side physics projection for smooth 60fps entity rendering between host updates
           if (mpRef.current.roomId) {
-            // 1. Render host-owned enemies on a short buffered timeline. Guests
-            // never rerun enemy AI or relic carry; doing so caused a correction
-            // every time the next 20 Hz authoritative snapshot arrived.
-            const enemyRenderTime = currentTime - MULTIPLAYER_ENTITY_INTERPOLATION_DELAY_MS;
-            for (let enemyIndex = 0; enemyIndex < state.enemies.length; enemyIndex += 1) {
-              const enemy = state.enemies[enemyIndex];
-              const enemyMotionId = String(enemy.id ?? `enemy_${enemyIndex}`);
-              const samples = guestEnemyMotionSamplesRef.current.get(enemyMotionId);
-              if (!samples) continue;
-              const sampled = sampleEntityMotion(samples, enemyRenderTime);
-              if (!sampled) continue;
-              enemy.x = sampled.x;
-              enemy.y = sampled.y;
+            if (usesTitanRelicMultiplayer) {
+              // Titan guests render host-owned enemies on a short buffered
+              // timeline so moving-platform carry remains continuous.
+              const enemyRenderTime = currentTime - MULTIPLAYER_ENTITY_INTERPOLATION_DELAY_MS;
+              for (let enemyIndex = 0; enemyIndex < state.enemies.length; enemyIndex += 1) {
+                const enemy = state.enemies[enemyIndex];
+                const enemyMotionId = String(enemy.id ?? `enemy_${enemyIndex}`);
+                const samples = guestEnemyMotionSamplesRef.current.get(enemyMotionId);
+                if (!samples) continue;
+                const sampled = sampleEntityMotion(samples, enemyRenderTime);
+                if (!sampled) continue;
+                enemy.x = sampled.x;
+                enemy.y = sampled.y;
 
-              const carryContact = enemy.titanCarryContact as TitanRelicContact | null | undefined;
-              const carryPhaseTime = enemy.titanCarryPhaseTime;
-              if (
-                carryContact &&
-                typeof carryPhaseTime === 'number' &&
-                Number.isFinite(carryPhaseTime) &&
-                carryPhaseTime <= worldPhaseTime &&
-                typeof enemy.titanCarrySourceX === 'number' &&
-                typeof enemy.titanCarrySourceY === 'number'
-              ) {
-                const projected = projectTitanRelicContactPosition(
-                  {
-                    x: enemy.titanCarrySourceX,
-                    y: enemy.titanCarrySourceY,
-                    radius: enemy.radius,
-                  },
-                  state.spawners,
-                  carryPhaseTime,
-                  worldPhaseTime,
-                  carryContact,
-                );
-                if (projected) {
-                  enemy.x = projected.x;
-                  enemy.y = projected.y;
+                const carryContact = enemy.titanCarryContact as TitanRelicContact | null | undefined;
+                const carryPhaseTime = enemy.titanCarryPhaseTime;
+                if (
+                  carryContact &&
+                  typeof carryPhaseTime === 'number' &&
+                  Number.isFinite(carryPhaseTime) &&
+                  carryPhaseTime <= worldPhaseTime &&
+                  typeof enemy.titanCarrySourceX === 'number' &&
+                  typeof enemy.titanCarrySourceY === 'number'
+                ) {
+                  const projected = projectTitanRelicContactPosition(
+                    {
+                      x: enemy.titanCarrySourceX,
+                      y: enemy.titanCarrySourceY,
+                      radius: enemy.radius,
+                    },
+                    state.spawners,
+                    carryPhaseTime,
+                    worldPhaseTime,
+                    carryContact,
+                  );
+                  if (projected) {
+                    enemy.x = projected.x;
+                    enemy.y = projected.y;
+                  }
+                }
+              }
+            } else {
+              // Exact pre-Titan guest projection for every ordinary map.
+              for (const enemy of state.enemies) {
+                let targetX = state.player.x;
+                let targetY = state.player.y;
+                let minTargetDistSq = (state.player.x - enemy.x) ** 2 + (state.player.y - enemy.y) ** 2;
+
+                for (const pid in state.multiplayerPlayers) {
+                  const mpPlayer = state.multiplayerPlayers[pid];
+                  if (mpPlayer && !mpPlayer.isDead) {
+                    const dSq = (mpPlayer.x - enemy.x) ** 2 + (mpPlayer.y - enemy.y) ** 2;
+                    if (dSq < minTargetDistSq) {
+                      minTargetDistSq = dSq;
+                      targetX = mpPlayer.x;
+                      targetY = mpPlayer.y;
+                    }
+                  }
+                }
+
+                const dx = targetX - enemy.x;
+                const dy = targetY - enemy.y;
+                const dist = Math.sqrt(dx * dx + dy * dy);
+                if (dist > 0) {
+                  enemy.x += (dx / dist) * enemy.speed * dt;
+                  enemy.y += (dy / dist) * enemy.speed * dt;
                 }
               }
             }
@@ -9424,7 +9504,7 @@ export default function GameCanvas() {
         // Titan relics are moving platforms, not lethal hazards. Carry the local
         // player through the shared circular-entity path, then let the normal wall
         // resolver keep the result inside the arena.
-        if (STATUS === 'PLAYING' && dt > 0) {
+        if (isTitanRelicMap && STATUS === 'PLAYING' && dt > 0) {
           const previousWorldPhaseTime = Math.max(0, worldPhaseTime - dt * 1000);
           const carriedPlayer = getTitanRelicCarriedPositionWithContact(
             state.player,
@@ -9436,7 +9516,7 @@ export default function GameCanvas() {
           playerTitanRelicContactRef.current = carriedPlayer.contact;
           state.player.x = carriedPlayer.x;
           state.player.y = carriedPlayer.y;
-        } else if (STATUS !== 'PLAYING') {
+        } else if (!isTitanRelicMap || STATUS !== 'PLAYING') {
           playerTitanRelicContactRef.current = null;
         }
 
@@ -9449,7 +9529,7 @@ export default function GameCanvas() {
 
         // Only titan multiplayer maps need a final moving-platform
         // depenetration pass. Ordinary maps retain the exact previous path.
-        if (hasTitanRelics) {
+        if (usesTitanRelicMultiplayer) {
           const titanResolved = resolveTitanRelicPenetration(
             state.player,
             state.spawners,
@@ -9527,7 +9607,7 @@ export default function GameCanvas() {
           // as moving platforms and deliberately never end a run on contact.
           if (uiRef.current.status === 'PLAYING' && !state.player.dash.active && !isOpeningProtectionActiveLocal(currentTime)) {
             for (const spawner of state.spawners) {
-              if (spawner.specialType && !isTitanRelicType(spawner.specialType)) {
+              if (spawner.specialType && (!isTitanRelicMap || !isTitanRelicType(spawner.specialType))) {
                 const collision = getBulletRelicCollision(state.player.x, state.player.y, state.player.radius, spawner, worldPhaseTime);
                 if (collision) {
                   const impactX = state.player.x - collision.nx * state.player.radius;
@@ -9938,7 +10018,7 @@ export default function GameCanvas() {
           // Apply the same moving-platform displacement used by the player. This
           // stays inside the authoritative enemy simulation, so multiplayer guests
           // only render the resulting host-owned enemy position.
-          if (dt > 0) {
+          if (isTitanRelicMap && dt > 0) {
             const previousWorldPhaseTime = Math.max(0, worldPhaseTime - dt * 1000);
             const enemyContactId = String(enemy.id ?? `enemy_${i}`);
             const carriedEnemy = getTitanRelicCarriedPositionWithContact(
@@ -9979,7 +10059,7 @@ export default function GameCanvas() {
 
           if (
             isAuthoritativeMultiplayerSimulation &&
-            hasTitanRelics
+            usesTitanRelicMultiplayer
           ) {
             const titanResolved = resolveTitanRelicPenetration(
               enemy,
@@ -10159,7 +10239,7 @@ export default function GameCanvas() {
           }
         }
 
-        if (!mpRef.current.roomId || mpRef.current.isHost) {
+        if (isTitanRelicMap && (!mpRef.current.roomId || mpRef.current.isHost)) {
           const liveEnemyContactIds = new Set(
             state.enemies.map((enemy: any, index: number) => String(enemy.id ?? `enemy_${index}`)),
           );
@@ -10406,7 +10486,7 @@ export default function GameCanvas() {
           if (
             mpRef.current.roomId &&
             dt > 0 &&
-            hasTitanRelics
+            usesTitanRelicMultiplayer
           ) {
             const previousWorldPhaseTime = Math.max(0, worldPhaseTime - dt * 1_000);
             const bouncerContactId = String(b.id ?? `bouncer_${i}`);
@@ -10601,7 +10681,7 @@ export default function GameCanvas() {
           if (
             !isAuthoritativeMultiplayerSimulation &&
             uiRef.current.status === 'PLAYING' &&
-            !(mpRef.current.roomId && hasTitanRelics)
+            !usesTitanRelicMultiplayer
           ) {
             const pdx = state.player.x - b.x;
             const pdy = state.player.y - b.y;
@@ -10647,7 +10727,7 @@ export default function GameCanvas() {
           }
         }
 
-        if (bouncerTitanRelicContactsRef.current.size > 0) {
+        if (usesTitanRelicMultiplayer && bouncerTitanRelicContactsRef.current.size > 0) {
           const liveBouncerContactIds = new Set(
             state.bouncers.map((bouncer, index) => String(bouncer.id ?? `bouncer_${index}`)),
           );
@@ -10661,7 +10741,7 @@ export default function GameCanvas() {
         // B4: Host-side Orbiting relic obstacles checks against living remote players
         if (mpRef.current.roomId && mpRef.current.isHost) {
           for (const spawner of state.spawners) {
-            if (spawner.specialType && !isTitanRelicType(spawner.specialType)) {
+            if (spawner.specialType && (!usesTitanRelicMultiplayer || !isTitanRelicType(spawner.specialType))) {
               for (const pid in state.multiplayerPlayers) {
                 const mpPlayer = state.multiplayerPlayers[pid];
                 if (mpPlayer && !mpPlayer.isDead) {
@@ -11154,6 +11234,7 @@ export default function GameCanvas() {
               durationSeconds: bulletTravelSeconds,
               radius: bullet.radius,
               surfaces,
+              allowDynamicDepenetration: usesTitanRelicMultiplayer,
               // This dynamic surface is deliberately ownership-agnostic. Player,
               // enemy, and neutral bullets all receive the same titan-relic response.
               dynamicSurface: (startX, startY, endX, endY, startFraction, endFraction): SurfaceHit | null => {
@@ -11176,7 +11257,7 @@ export default function GameCanvas() {
                   x: startX + (endX - startX) * relicCollision.t,
                   y: startY + (endY - startY) * relicCollision.t,
                   normals: [{ nx: relicCollision.nx, ny: relicCollision.ny }],
-                  ...(isTitanRelicType(relicCollision.specialType) ? {
+                  ...(usesTitanRelicMultiplayer && isTitanRelicType(relicCollision.specialType) ? {
                     separationX: relicCollision.x,
                     separationY: relicCollision.y,
                     forceResolve: relicCollision.overlap > 1e-6,
@@ -11290,10 +11371,10 @@ export default function GameCanvas() {
               const collision = segment.collision;
               if (!collision) continue;
               const nextSegment = motionTrace.segments[segmentIndex + 1];
-              const eventX = Number.isFinite(collision.separationX)
+              const eventX = usesTitanRelicMultiplayer && Number.isFinite(collision.separationX)
                 ? collision.separationX!
                 : collision.x;
-              const eventY = Number.isFinite(collision.separationY)
+              const eventY = usesTitanRelicMultiplayer && Number.isFinite(collision.separationY)
                 ? collision.separationY!
                 : collision.y;
               bullet.x = eventX;
@@ -11884,8 +11965,10 @@ export default function GameCanvas() {
                   name: playerProfileRef.current.name,
                   colorIdx: playerProfileRef.current.colorIdx,
                   score: uiRef.current.score,
-                  titanCarryContact: playerTitanRelicContactRef.current,
-                  titanCarryPhaseTime: playerTitanRelicContactRef.current ? hostWorldPhaseTime : null,
+                  ...(usesTitanRelicMultiplayer ? {
+                    titanCarryContact: playerTitanRelicContactRef.current,
+                    titanCarryPhaseTime: playerTitanRelicContactRef.current ? hostWorldPhaseTime : null,
+                  } : {}),
                 },
                 multiplayerPlayers: state.multiplayerPlayers,
                 matchPhase: state.matchPhase,
@@ -11902,7 +11985,7 @@ export default function GameCanvas() {
                 bulletEvents,
                 bulletEventSequence: hostBulletEventSequenceRef.current,
                 bulletSimulationTick: hostBulletSimulationTickRef.current,
-                enemies: hasTitanRelics
+                enemies: usesTitanRelicMultiplayer
                   ? state.enemies.map((enemy: any, enemyIndex: number) => {
                       const enemyContactId = String(enemy.id ?? `enemy_${enemyIndex}`);
                       const titanCarryContact = enemyTitanRelicContactsRef.current.get(enemyContactId) ?? null;
@@ -11914,7 +11997,7 @@ export default function GameCanvas() {
                     })
                   : state.enemies,
                 spawners: state.spawners,
-                bouncers: hasTitanRelics
+                bouncers: usesTitanRelicMultiplayer
                   ? state.bouncers.map((bouncer: any, bouncerIndex: number) => {
                       const bouncerContactId = String(bouncer.id ?? `bouncer_${bouncerIndex}`);
                       const titanCarryContact = bouncerTitanRelicContactsRef.current.get(bouncerContactId) ?? null;
@@ -12700,29 +12783,31 @@ export default function GameCanvas() {
          if (pData.isDead) continue;
          let drawX = pData.x;
          let drawY = pData.y;
-         const carryContact = pData.titanCarryContact;
-         const carryPhaseTime = pData.titanCarryPhaseTime;
-         if (
-           carryContact &&
-           typeof carryPhaseTime === 'number' &&
-           Number.isFinite(carryPhaseTime) &&
-           carryPhaseTime <= worldPhaseTime
-         ) {
-           // Snapshot metadata describes targetX/targetY. Bypass ordinary
-           // network lerping only while a moving relic owns the render pose,
-           // then advance that pose along the exact shared relic curve.
-           const sourceX = typeof pData.targetX === 'number' ? pData.targetX : pData.x;
-           const sourceY = typeof pData.targetY === 'number' ? pData.targetY : pData.y;
-           const projected = projectTitanRelicContactPosition(
-             { x: sourceX, y: sourceY, radius: pData.radius },
-             state.spawners,
-             carryPhaseTime,
-             worldPhaseTime,
-             carryContact,
-           );
-           if (projected) {
-             drawX = projected.x;
-             drawY = projected.y;
+         if (usesTitanRelicMultiplayer) {
+           const carryContact = pData.titanCarryContact;
+           const carryPhaseTime = pData.titanCarryPhaseTime;
+           if (
+             carryContact &&
+             typeof carryPhaseTime === 'number' &&
+             Number.isFinite(carryPhaseTime) &&
+             carryPhaseTime <= worldPhaseTime
+           ) {
+             // Snapshot metadata describes targetX/targetY. Bypass ordinary
+             // network lerping only while a moving relic owns the render pose,
+             // then advance that pose along the exact shared relic curve.
+             const sourceX = typeof pData.targetX === 'number' ? pData.targetX : pData.x;
+             const sourceY = typeof pData.targetY === 'number' ? pData.targetY : pData.y;
+             const projected = projectTitanRelicContactPosition(
+               { x: sourceX, y: sourceY, radius: pData.radius },
+               state.spawners,
+               carryPhaseTime,
+               worldPhaseTime,
+               carryContact,
+             );
+             if (projected) {
+               drawX = projected.x;
+               drawY = projected.y;
+             }
            }
          }
          const pDef = PLAYER_COLORS[pData.colorIdx] || PLAYER_COLORS[0];

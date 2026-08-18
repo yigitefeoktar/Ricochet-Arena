@@ -39,6 +39,22 @@ export const VALID_MAP_IDS = [
   'titan_tempest',
 ] as const;
 
+export const TITAN_RELIC_MAP_IDS = [
+  'titan_orbit',
+  'titan_tempest',
+] as const;
+
+export type TitanRelicMapId = typeof TITAN_RELIC_MAP_IDS[number];
+
+export function isTitanRelicMapId(
+  mapId: unknown,
+): mapId is TitanRelicMapId {
+  // Titan networking is opt-in by exact map ID. Relic geometry alone must
+  // never switch an ordinary multiplayer room onto the Titan code paths.
+  return typeof mapId === 'string' &&
+    (TITAN_RELIC_MAP_IDS as readonly string[]).includes(mapId);
+}
+
 export function isValidMapId(mapId: unknown): mapId is string {
   return typeof mapId === 'string' && (VALID_MAP_IDS as readonly string[]).includes(mapId);
 }
