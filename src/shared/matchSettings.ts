@@ -37,6 +37,7 @@ export const VALID_MAP_IDS = [
   'checkerboard',
   'titan_orbit',
   'titan_tempest',
+  'switchyard',
 ] as const;
 
 export const TITAN_RELIC_MAP_IDS = [
@@ -53,6 +54,19 @@ export function isTitanRelicMapId(
   // never switch an ordinary multiplayer room onto the Titan code paths.
   return typeof mapId === 'string' &&
     (TITAN_RELIC_MAP_IDS as readonly string[]).includes(mapId);
+}
+
+export const TIMED_GATE_MAP_IDS = ['switchyard'] as const;
+
+export type TimedGateMapId = typeof TIMED_GATE_MAP_IDS[number];
+
+export function isTimedGateMapId(
+  mapId: unknown,
+): mapId is TimedGateMapId {
+  // Timed gates are deliberately opt-in by exact map identity. An ordinary
+  // map containing a similar wall layout must never receive gate networking.
+  return typeof mapId === 'string' &&
+    (TIMED_GATE_MAP_IDS as readonly string[]).includes(mapId);
 }
 
 export function isValidMapId(mapId: unknown): mapId is string {

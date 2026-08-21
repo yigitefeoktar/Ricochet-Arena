@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  isTimedGateMapId,
   isTitanRelicMapId,
   isValidMapId,
   sanitizeMatchSettings,
@@ -29,6 +30,18 @@ test('titan multiplayer behavior is restricted to the two titan map IDs', () => 
   assert.equal(isTitanRelicMapId(''), false);
   assert.equal(isTitanRelicMapId(null), false);
   assert.equal(isTitanRelicMapId(undefined), false);
+});
+
+test('timed gate behavior is restricted to Switchyard', () => {
+  for (const mapId of VALID_MAP_IDS) {
+    assert.equal(
+      isTimedGateMapId(mapId),
+      mapId === 'switchyard',
+      `unexpected gate networking classification for ${mapId}`,
+    );
+  }
+  assert.equal(isTimedGateMapId(''), false);
+  assert.equal(isTimedGateMapId(null), false);
 });
 
 test('unknown map IDs remain rejected and sanitize to the existing default', () => {

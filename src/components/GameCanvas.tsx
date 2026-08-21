@@ -6,6 +6,7 @@ import {
   GameMode,
   MatchSettings,
   DEFAULT_MATCH_SETTINGS,
+  isTimedGateMapId,
   isTitanRelicMapId,
   isValidGameMode,
   isValidMapId,
@@ -63,6 +64,17 @@ import {
   sampleEntityMotion,
   type EntityMotionSample,
 } from '../shared/multiplayerEntityInterpolation';
+import {
+  advanceGateState,
+  createInitialGateStates,
+  gateStatesMatchDefinitions,
+  getGateCollisionWalls,
+  getGateOpenProgress,
+  isGateDoorwayOccupied,
+  isGatePhase,
+  type GateDefinition,
+  type GateRuntimeState,
+} from '../shared/gateMechanics';
 
 interface ActiveMatchSettingsRequest {
   seq: number;
@@ -231,7 +243,13 @@ const BASE_WALLS = [
   { x: 0, y: MAP_HEIGHT - 50, w: MAP_WIDTH, h: 50 },
 ];
 
-type MapDefinition = { name: string; difficulty: 'EASY' | 'MEDIUM' | 'HARD' | 'EXPERT'; description: string; walls: {x: number, y: number, w: number, h: number}[]; spawners: {x: number, y: number, radius: number, hp: number, maxHp: number, specialType?: string}[]; spawnPoint?: { x: number; y: number } };
+type MapDefinition = { name: string; difficulty: 'EASY' | 'MEDIUM' | 'HARD' | 'EXPERT'; description: string; walls: {x: number, y: number, w: number, h: number}[]; spawners: {x: number, y: number, radius: number, hp: number, maxHp: number, specialType?: string}[]; spawnPoint?: { x: number; y: number }; gates?: GateDefinition[] };
+
+const SWITCHYARD_GATES: GateDefinition[] = [
+  { id: 'central-transfer', x: 1475, y: 1320, w: 50, h: 360, orientation: 'vertical', initialDelayMs: 0 },
+  { id: 'north-shunt', x: 850, y: 925, w: 300, h: 50, orientation: 'horizontal', initialDelayMs: 1_800 },
+  { id: 'south-shunt', x: 1850, y: 2025, w: 300, h: 50, orientation: 'horizontal', initialDelayMs: 3_600 },
+];
 
 const MAPS: Record<string, MapDefinition> = {
   medium: {
@@ -983,6 +1001,39 @@ const MAPS: Record<string, MapDefinition> = {
       { x: 600, y: 2400, radius: 40, hp: 100, maxHp: 100, specialType: 'titan_moons_overdrive' },
       { x: 2400, y: 2400, radius: 40, hp: 100, maxHp: 100, specialType: 'titan_triangle_overdrive' }
     ]
+  },
+  switchyard: {
+    name: "The Switchyard",
+    difficulty: "HARD",
+    description: "Three independently timed gates open tactical shortcuts through an asymmetric rail complex. Read the warning lights or take the long route.",
+    walls: [
+      ...BASE_WALLS,
+      // Central divider. The transfer gate is a shortcut; both outer ends stay open.
+      { x: 1475, y: 300, w: 50, h: 1020 },
+      { x: 1475, y: 1680, w: 50, h: 1020 },
+
+      // North-west shunt with routes around both ends.
+      { x: 300, y: 925, w: 550, h: 50 },
+      { x: 1150, y: 925, w: 325, h: 50 },
+
+      // South-east shunt, offset to prevent a symmetric arena.
+      { x: 1525, y: 2025, w: 325, h: 50 },
+      { x: 2150, y: 2025, w: 550, h: 50 },
+
+      // Small rail-control islands shape ricochets without blocking alternate paths.
+      { x: 520, y: 1500, w: 260, h: 90 },
+      { x: 2220, y: 1320, w: 260, h: 90 },
+      { x: 1050, y: 2380, w: 180, h: 180 },
+      { x: 1810, y: 460, w: 180, h: 180 },
+    ],
+    gates: SWITCHYARD_GATES,
+    spawners: [
+      { x: 480, y: 480, radius: 40, hp: 100, maxHp: 100 },
+      { x: 1180, y: 620, radius: 40, hp: 100, maxHp: 100 },
+      { x: 2450, y: 650, radius: 40, hp: 100, maxHp: 100 },
+      { x: 620, y: 2380, radius: 40, hp: 100, maxHp: 100 },
+      { x: 2450, y: 2420, radius: 40, hp: 100, maxHp: 100 },
+    ],
   }
 };
 
@@ -1718,15 +1769,26 @@ function lineIntersectsRect(x1: number, y1: number, x2: number, y2: number, rx: 
          lineIntersectsLine(x1,y1,x2,y2, rx+rw,ry, rx+rw,ry+rh);
 }
 
+function getMapSpawnWalls(mapDef: MapDefinition): { x: number; y: number; w: number; h: number }[] {
+  // Treat every timed gate as closed while selecting spawn locations. This
+  // prevents a player or ambient entity from beginning inside a doorway even
+  // though the gate may later open during normal play.
+  return [
+    ...mapDef.walls,
+    ...(mapDef.gates || []).map(gate => ({ x: gate.x, y: gate.y, w: gate.w, h: gate.h })),
+  ];
+}
+
 function isValidPlayerSpawnPos(px: number, py: number, targetSpawner: {x: number, y: number} | null, mapDef: MapDefinition): boolean {
   const MIN_DIST = 60; // 20 radius + 40 padding
   const isTitanMap = mapDef === MAPS.titan_orbit || mapDef === MAPS.titan_tempest;
+  const spawnWalls = getMapSpawnWalls(mapDef);
 
   if (px < MIN_DIST || px > MAP_WIDTH - MIN_DIST || py < MIN_DIST || py > MAP_HEIGHT - MIN_DIST) {
     return false;
   }
 
-  for (const wall of mapDef.walls) {
+  for (const wall of spawnWalls) {
     if (px > wall.x - MIN_DIST && px < wall.x + wall.w + MIN_DIST &&
         py > wall.y - MIN_DIST && py < wall.y + wall.h + MIN_DIST) {
       return false;
@@ -1750,7 +1812,7 @@ function isValidPlayerSpawnPos(px: number, py: number, targetSpawner: {x: number
   }
 
   if (targetSpawner) {
-    for (const wall of mapDef.walls) {
+    for (const wall of spawnWalls) {
       if (lineIntersectsRect(px, py, targetSpawner.x, targetSpawner.y, wall.x, wall.y, wall.w, wall.h)) {
         return false;
       }
@@ -1797,7 +1859,10 @@ function generateMultiplayerSpawnAssignments(
   }
 
   const N = shuffledIds.length;
-  const activeWallsList = walls || mapDef.walls || [];
+  const activeWallsList = [
+    ...(walls || mapDef.walls || []),
+    ...(mapDef.gates || []).map(gate => ({ x: gate.x, y: gate.y, w: gate.w, h: gate.h })),
+  ];
   const spawnersList = mapDef.spawners || [];
   const isTitanMap = mapDef === MAPS.titan_orbit || mapDef === MAPS.titan_tempest;
 
@@ -3527,6 +3592,7 @@ export default function GameCanvas() {
     }>,
     forceBroadcast: false,
     blocks: [] as { x: number; y: number; size: number; createdAt: number, colorIdx?: number, ownerId?: string }[],
+    gates: [] as GateRuntimeState[],
     nextBlockScore: 100,
     bullets: [] as { id?: string; clientShotId?: string; x: number; y: number; dx: number; dy: number; radius: number, isPlayer: boolean, bounceCount: number, spawnTime: number, isNeutral: boolean, ownerId?: string, colorIdx?: number, targetX?: number, targetY?: number, repelMultiplied?: boolean, allowedBlockKeys?: string[], leftBlockKeys?: string[] }[],
     enemies: [] as { id?: string; x: number; y: number; radius: number; lastShoot: number, speed: number, targetX?: number, targetY?: number, kbvx?: number, kbvy?: number, processedZoneKbs?: number[] }[],
@@ -4163,6 +4229,12 @@ export default function GameCanvas() {
       }
     }
 
+    if (state.gates) {
+      for (const gate of state.gates) {
+        gate.phaseStartedAt += pauseDuration;
+      }
+    }
+
     if (spawnerPointerAnimRef.current) {
       spawnerPointerAnimRef.current.startTime += pauseDuration;
     }
@@ -4247,6 +4319,7 @@ export default function GameCanvas() {
       lastBroadcastTime: 0,
 
       blocks: (state.blocks || []).map(b => ({ ...b })),
+      gates: (state.gates || []).map(gate => ({ ...gate })),
       nextBlockScore: state.nextBlockScore,
       bullets: (state.bullets || []).map(b => ({
         ...b,
@@ -4533,6 +4606,33 @@ export default function GameCanvas() {
       }
       return loadNow;
     };
+
+    let reconstructedGates: GateRuntimeState[] = [];
+    const gateDefinitions = mapDef.gates || [];
+    if (gateDefinitions.length > 0) {
+      if (rawState.gates === undefined) {
+        reconstructedGates = createInitialGateStates(gateDefinitions, loadNow);
+      } else {
+        if (!Array.isArray(rawState.gates) || rawState.gates.length > 16) {
+          throw new Error("INVALID SAVE FILE");
+        }
+        reconstructedGates = rawState.gates.map((gate: any) => {
+          if (!isObject(gate) || typeof gate.id !== 'string' || gate.id.length > 64 || !isGatePhase(gate.phase)) {
+            throw new Error("INVALID SAVE FILE");
+          }
+          return {
+            id: gate.id,
+            phase: gate.phase,
+            phaseStartedAt: adjustTime(gate.phaseStartedAt),
+          };
+        });
+        if (!gateStatesMatchDefinitions(gateDefinitions, reconstructedGates)) {
+          throw new Error("INVALID SAVE FILE");
+        }
+      }
+    } else if (rawState.gates !== undefined && (!Array.isArray(rawState.gates) || rawState.gates.length !== 0)) {
+      throw new Error("INVALID SAVE FILE");
+    }
 
     const cleanGameMode: GameMode = (rawUi.gameMode && isValidGameMode(rawUi.gameMode))
       ? rawUi.gameMode
@@ -5041,6 +5141,7 @@ export default function GameCanvas() {
       playerActionAuthority: {},
       forceBroadcast: false,
       blocks: reconstructedBlocks,
+      gates: reconstructedGates,
       nextBlockScore: rawState.nextBlockScore !== undefined ? rawState.nextBlockScore : 100,
       bullets: reconstructedBullets,
       enemies: reconstructedEnemies,
@@ -5806,6 +5907,7 @@ export default function GameCanvas() {
     state.player.dash = { active: false, endTime: 0, targetX: 0, targetY: 0, shieldRadius: 60, lastTime: performance.now() - DASH_COOLDOWN, wasReady: true };
     state.player.build = { active: false, endTime: 0, lastBlockX: 0, lastBlockY: 0, lastTime: performance.now() - BUILD_COOLDOWN };
     state.blocks = [];
+    state.gates = createInitialGateStates(mapDef.gates || [], performance.now());
     state.nextBlockScore = 100;
     state.bullets = [];
     state.enemies = [];
@@ -5817,7 +5919,7 @@ export default function GameCanvas() {
       : [startPos];
 
     for (let i = 0; i < 2; i++) {
-      const spawn = getSafeSpawn(mapDef.walls, 60, playerSpawnsToAvoid, 200);
+      const spawn = getSafeSpawn(getMapSpawnWalls(mapDef), 60, playerSpawnsToAvoid, 200);
       if (spawn) {
         const angle = Math.random() * Math.PI * 2;
         state.bouncers.push({ id: 'b_' + state.nextEntityId++, x: spawn.x, y: spawn.y, dx: Math.cos(angle), dy: Math.sin(angle), size: 1, radius: 24, speed: ENEMY_SPEED + Math.random() * 20, lastDirChange: performance.now(), lastMultiply: performance.now() });
@@ -6036,7 +6138,7 @@ export default function GameCanvas() {
       // Re-create bouncers starting from 0 to ensure clean run
       const startPos = { x: state.player.x, y: state.player.y };
       for (let i = 0; i < 2; i++) {
-        const spawn = getSafeSpawn(mapDef.walls, 60, [startPos], 200);
+        const spawn = getSafeSpawn(getMapSpawnWalls(mapDef), 60, [startPos], 200);
         if (spawn) {
           const angle = Math.random() * Math.PI * 2;
           state.bouncers.push({
@@ -7241,6 +7343,7 @@ export default function GameCanvas() {
       if (!state || typeof state !== 'object') return;
 
       const usesTitanRelicMultiplayer = isTitanRelicMapId(uiRef.current.mapId);
+      const usesTimedGateMultiplayer = isTimedGateMapId(uiRef.current.mapId);
 
       // 1. Validation Requirements (Requirement 3):
       if (!isCurrentRoom(state.roomId)) return;
@@ -7335,6 +7438,7 @@ export default function GameCanvas() {
       };
 
       let mappedBlocks: any[];
+      let mappedGates: GateRuntimeState[] = [];
       let mappedEnemies: any[];
       let mappedBouncers: any[];
       let mappedZones: any[];
@@ -7442,6 +7546,33 @@ export default function GameCanvas() {
             spawnTime: mapHostTime(ib.spawnTime)
           };
         });
+
+        if (usesTimedGateMultiplayer) {
+          if (!Array.isArray(state.gates) || state.gates.length > 8) {
+            throw new Error('Malformed gate state');
+          }
+          mappedGates = state.gates.map((gate: any) => {
+            if (
+              !gate ||
+              typeof gate !== 'object' ||
+              typeof gate.id !== 'string' ||
+              gate.id.length < 1 ||
+              gate.id.length > 64 ||
+              !isGatePhase(gate.phase)
+            ) {
+              throw new Error('Malformed gate');
+            }
+            return {
+              id: gate.id,
+              phase: gate.phase,
+              phaseStartedAt: mapHostTime(gate.phaseStartedAt),
+            };
+          });
+          const gateDefinitions = (MAPS[uiRef.current.mapId] || MAPS.medium).gates || [];
+          if (!gateStatesMatchDefinitions(gateDefinitions, mappedGates)) {
+            throw new Error('Gate state does not match map');
+          }
+        }
         mappedBulletSnapshotTime = mapHostTime(state.hostTime);
         mappedBulletEvents = (state.bulletEvents || []).map((rawEvent: any) => {
           if (!rawEvent || typeof rawEvent !== 'object') {
@@ -7639,6 +7770,7 @@ export default function GameCanvas() {
       const prevBlocks = stateRef.current.blocks || [];
 
       stateRef.current.blocks = mappedBlocks;
+      stateRef.current.gates = mappedGates;
       stateRef.current.spawners = state.spawners;
 
       const newEnemies = mappedEnemies;
@@ -8961,6 +9093,10 @@ export default function GameCanvas() {
         : (currentTime - accumulatedPauseOffsetRef.current);
       const isTitanRelicMap = isTitanRelicMapId(uiRef.current.mapId);
       const usesTitanRelicMultiplayer = isMultiplayer && isTitanRelicMap;
+      const currentMapDefinition = MAPS[uiRef.current.mapId] || MAPS.medium;
+      const gateDefinitions = currentMapDefinition.gates || [];
+      const isTimedGateMap = isTimedGateMapId(uiRef.current.mapId);
+      const usesTimedGateMultiplayer = isMultiplayer && isTimedGateMap;
 
       const dt =
         STATUS === 'PAUSED'
@@ -8971,6 +9107,49 @@ export default function GameCanvas() {
             );
 
       state.lastTime = currentTime;
+
+      if (isTimedGateMap) {
+        if (!gateStatesMatchDefinitions(gateDefinitions, state.gates)) {
+          state.gates = createInitialGateStates(gateDefinitions, currentTime);
+        }
+
+        const isAuthoritativeGateSimulation = !isMultiplayer || mpRef.current.isHost;
+        if (isAuthoritativeGateSimulation && STATUS === 'PLAYING') {
+          const circleOccupants = [
+            { x: state.player.x, y: state.player.y, radius: state.player.radius },
+            ...(Object.values(state.multiplayerPlayers) as Array<{ x: number; y: number; radius: number; isDead?: boolean }>)
+              .filter(player => player && !player.isDead)
+              .map(player => ({ x: player.x, y: player.y, radius: player.radius })),
+            ...state.enemies.map(enemy => ({ x: enemy.x, y: enemy.y, radius: enemy.radius })),
+            ...state.bouncers.map(bouncer => ({ x: bouncer.x, y: bouncer.y, radius: bouncer.radius })),
+          ];
+          const rectOccupants = state.blocks.map(block => ({
+            x: block.x - block.size / 2,
+            y: block.y - block.size / 2,
+            w: block.size,
+            h: block.size,
+          }));
+
+          let gatePhaseChanged = false;
+          state.gates = gateDefinitions.map(definition => {
+            const previous = state.gates.find(gate => gate.id === definition.id)!;
+            const occupied = isGateDoorwayOccupied(definition, circleOccupants, rectOccupants);
+            const next = advanceGateState(previous, currentTime, occupied);
+            if (next.phase !== previous.phase) gatePhaseChanged = true;
+            return next;
+          });
+          if (gatePhaseChanged && isMultiplayer) state.forceBroadcast = true;
+        }
+
+        activeWalls = [
+          ...currentMapDefinition.walls,
+          ...getGateCollisionWalls(gateDefinitions, state.gates),
+        ];
+      } else {
+        // Preserve the exact static-wall path for every existing map.
+        activeWalls = currentMapDefinition.walls;
+        if (state.gates.length > 0) state.gates = [];
+      }
 
       // Defensive timeout / cleanup for pending guest shots
       if (mpRef.current.roomId && !mpRef.current.isHost && pendingGuestShotsRef.current.size > 0) {
@@ -11979,8 +12158,9 @@ export default function GameCanvas() {
                 winnerId: state.winnerId,
                 finalWinner: state.winnerId,
                 matchPlayers: state.matchPlayers,
-                 playerActionAuthority: state.playerActionAuthority,
+                playerActionAuthority: state.playerActionAuthority,
                 blocks: state.blocks,
+                ...(usesTimedGateMultiplayer ? { gates: state.gates } : {}),
                 bullets: state.bullets,
                 bulletEvents,
                 bulletEventSequence: hostBulletEventSequenceRef.current,
@@ -12068,7 +12248,7 @@ export default function GameCanvas() {
       ctx.fillStyle = '#050508';
       ctx.strokeStyle = '#00f0ff';
       ctx.lineWidth = 2;
-      for (const wall of activeWalls) {
+      for (const wall of currentMapDefinition.walls) {
         if (
           wall.x + wall.w < state.camera.x ||
           wall.x > state.camera.x + state.camera.width ||
@@ -12083,6 +12263,74 @@ export default function GameCanvas() {
         ctx.shadowBlur = 8;
         ctx.strokeRect(wall.x, wall.y, wall.w, wall.h);
         ctx.restore();
+      }
+
+      // Draw timed gates separately from static walls. Their collider is added
+      // to activeWalls only while fully closed; the panels below can therefore
+      // animate without exposing a hidden collision surface.
+      if (isTimedGateMap) {
+        for (const definition of gateDefinitions) {
+          const gateState = state.gates.find(gate => gate.id === definition.id);
+          if (!gateState) continue;
+          if (
+            definition.x + definition.w < state.camera.x ||
+            definition.x > state.camera.x + state.camera.width ||
+            definition.y + definition.h < state.camera.y ||
+            definition.y > state.camera.y + state.camera.height
+          ) continue;
+
+          const openProgress = getGateOpenProgress(gateState, currentTime);
+          const warning = gateState.phase === 'warning_open' || gateState.phase === 'warning_close';
+          const warningPulse = warning ? 0.55 + 0.45 * Math.sin(currentTime * 0.018) : 1;
+          const panelRects: Array<{ x: number; y: number; w: number; h: number }> = [];
+          if (definition.orientation === 'horizontal') {
+            const panelWidth = definition.w * 0.5 * (1 - openProgress);
+            if (panelWidth > 0.5) {
+              panelRects.push(
+                { x: definition.x, y: definition.y, w: panelWidth, h: definition.h },
+                { x: definition.x + definition.w - panelWidth, y: definition.y, w: panelWidth, h: definition.h },
+              );
+            }
+          } else {
+            const panelHeight = definition.h * 0.5 * (1 - openProgress);
+            if (panelHeight > 0.5) {
+              panelRects.push(
+                { x: definition.x, y: definition.y, w: definition.w, h: panelHeight },
+                { x: definition.x, y: definition.y + definition.h - panelHeight, w: definition.w, h: panelHeight },
+              );
+            }
+          }
+
+          ctx.save();
+          ctx.strokeStyle = `rgba(255, 204, 0, ${0.28 + warningPulse * 0.32})`;
+          ctx.lineWidth = 4;
+          ctx.setLineDash([18, 12]);
+          ctx.strokeRect(definition.x, definition.y, definition.w, definition.h);
+          ctx.setLineDash([]);
+
+          for (const panel of panelRects) {
+            ctx.fillStyle = '#17130a';
+            ctx.fillRect(panel.x, panel.y, panel.w, panel.h);
+            ctx.shadowColor = warning ? '#ff5a1f' : '#ffcc00';
+            ctx.shadowBlur = warning ? 18 * warningPulse : 9;
+            ctx.strokeStyle = warning ? '#ff5a1f' : '#ffcc00';
+            ctx.lineWidth = 4;
+            ctx.strokeRect(panel.x, panel.y, panel.w, panel.h);
+          }
+
+          const lightColor = warning ? '#ff5a1f' : (openProgress > 0.98 ? '#00ffaa' : '#ffcc00');
+          ctx.fillStyle = lightColor;
+          ctx.shadowColor = lightColor;
+          ctx.shadowBlur = 12;
+          if (definition.orientation === 'horizontal') {
+            ctx.fillRect(definition.x - 12, definition.y + definition.h * 0.25, 8, definition.h * 0.5);
+            ctx.fillRect(definition.x + definition.w + 4, definition.y + definition.h * 0.25, 8, definition.h * 0.5);
+          } else {
+            ctx.fillRect(definition.x + definition.w * 0.25, definition.y - 12, definition.w * 0.5, 8);
+            ctx.fillRect(definition.x + definition.w * 0.25, definition.y + definition.h + 4, definition.w * 0.5, 8);
+          }
+          ctx.restore();
+        }
       }
 
       // Draw Spawners
@@ -13627,6 +13875,19 @@ export default function GameCanvas() {
                                      />
                                    ))}
 
+                                   {selMap.gates?.map((gate, i) => (
+                                     <rect
+                                       key={`gate-${i}`}
+                                       x={gate.x}
+                                       y={gate.y}
+                                       width={gate.w}
+                                       height={gate.h}
+                                       fill="rgba(255, 204, 0, 0.42)"
+                                       stroke="#ffcc00"
+                                       strokeWidth="20"
+                                     />
+                                   ))}
+
                                    {/* Render Spawners */}
                                    {selMap.spawners.map((s, i) => (
                                      <g key={`spawner-${i}`}>
@@ -13872,6 +14133,19 @@ export default function GameCanvas() {
                                        fill="rgba(0, 240, 255, 0.25)"
                                        stroke="#00f0ff"
                                        strokeWidth="15"
+                                     />
+                                   ))}
+
+                                   {selMap.gates?.map((gate, i) => (
+                                     <rect
+                                       key={`gate-${i}`}
+                                       x={gate.x}
+                                       y={gate.y}
+                                       width={gate.w}
+                                       height={gate.h}
+                                       fill="rgba(255, 204, 0, 0.42)"
+                                       stroke="#ffcc00"
+                                       strokeWidth="20"
                                      />
                                    ))}
 
@@ -14259,6 +14533,19 @@ export default function GameCanvas() {
                                         fill="rgba(255, 204, 0, 0.25)"
                                         stroke="#ffcc00"
                                         strokeWidth="15"
+                                      />
+                                    ))}
+
+                                    {currentMap.gates?.map((gate, i) => (
+                                      <rect
+                                        key={`gate-${i}`}
+                                        x={gate.x}
+                                        y={gate.y}
+                                        width={gate.w}
+                                        height={gate.h}
+                                        fill="rgba(255, 204, 0, 0.45)"
+                                        stroke="#ffcc00"
+                                        strokeWidth="20"
                                       />
                                     ))}
 

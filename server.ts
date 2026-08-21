@@ -7,11 +7,13 @@ import { createHash, randomBytes } from "crypto";
 import {
   MatchSettings,
   DEFAULT_MATCH_SETTINGS,
+  isTimedGateMapId,
   isTitanRelicMapId,
   isValidGameMode,
   isValidMapId,
 } from "./src/shared/matchSettings.js";
 import { isWorldRelayedGameplayEvent, parseRelayedGameplayEvent } from "./src/shared/gameplayAnalyticsRelay.js";
+import { isGatePhase } from "./src/shared/gateMechanics.js";
 
 async function startServer() {
   const app = express();
@@ -738,13 +740,34 @@ async function startServer() {
           )
         : [];
 
-      const outboundState = {
+      const sanitizedGates = isTimedGateMapId(room.matchSettings.mapId) && Array.isArray(state.gates)
+        ? state.gates.slice(0, 8).filter((gate: any) =>
+            gate && typeof gate === "object" &&
+            typeof gate.id === "string" && gate.id.length > 0 && gate.id.length <= 64 &&
+            isGatePhase(gate.phase) &&
+            typeof gate.phaseStartedAt === "number" && Number.isFinite(gate.phaseStartedAt) && gate.phaseStartedAt >= 0
+          ).map((gate: any) => ({
+            id: gate.id,
+            phase: gate.phase,
+            phaseStartedAt: gate.phaseStartedAt,
+          }))
+        : [];
+
+      const outboundState: any = {
         ...state,
         bulletEvents,
         criticalSnapshot: state.criticalSnapshot === true || bulletEvents.length > 0,
         roomId: roomIdUpper,
         roundId: room.roundId
       };
+
+      if (isTimedGateMapId(room.matchSettings.mapId)) {
+        outboundState.gates = sanitizedGates;
+      } else {
+        // Gate state is map-scoped. Never relay stale or forged gate data into
+        // an ordinary multiplayer room.
+        delete outboundState.gates;
+      }
 
       if (outboundState.criticalSnapshot) {
         socket.to(roomIdUpper).emit("game_state", outboundState);
