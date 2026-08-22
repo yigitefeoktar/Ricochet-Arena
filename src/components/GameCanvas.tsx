@@ -65,12 +65,13 @@ import {
   type EntityMotionSample,
 } from '../shared/multiplayerEntityInterpolation';
 import {
-  advanceGateState,
+  advanceGateStateWithTransitions,
   createInitialGateStates,
+  gateOverlapsCircle,
+  gateOverlapsRect,
   gateStatesMatchDefinitions,
   getGateCollisionWalls,
   getGateOpenProgress,
-  isGateDoorwayOccupied,
   isGatePhase,
   type GateDefinition,
   type GateRuntimeState,
@@ -2973,7 +2974,7 @@ export default function GameCanvas() {
     hostClockAnchorRef.current = null;
   }, []);
   const triggerEliminationRef = useRef<((x: number, y: number, colorIdx: number, label?: string) => void) | null>(null);
-  const eliminateRemotePlayerRef = useRef<((victimId: string, impactPos: { x: number, y: number }, currentTime: number) => void) | null>(null);
+  const eliminateRemotePlayerRef = useRef<((victimId: string, impactPos: { x: number, y: number }, currentTime: number, bypassProtection?: boolean) => void) | null>(null);
   const bannerShowingRef = useRef(false);
 
   const isMobileRef = useRef(typeof window !== 'undefined' && /Mobi|Android|iPhone|iPad|iPod|Windows Phone/i.test(navigator.userAgent));
@@ -8574,7 +8575,7 @@ export default function GameCanvas() {
 
     const state = stateRef.current;
 
-    const eliminateRemotePlayer = (victimId: string, impactPos: { x: number, y: number }, currentTime: number) => {
+    const eliminateRemotePlayer = (victimId: string, impactPos: { x: number, y: number }, currentTime: number, bypassProtection = false) => {
       if (!mpRef.current.isHost) return;
 
       const state = stateRef.current;
@@ -8584,7 +8585,7 @@ export default function GameCanvas() {
       if (!mpPlayer || !matchPlayer) return;
       if (mpPlayer.isDead || matchPlayer.isDead || matchPlayer.isDisconnected) return;
 
-      if (isOpeningProtectionActiveForHost(currentTime)) return;
+      if (!bypassProtection && isOpeningProtectionActiveForHost(currentTime)) return;
 
       mpPlayer.isDead = true;
       matchPlayer.isDead = true;
@@ -9076,6 +9077,25 @@ export default function GameCanvas() {
     };
     triggerEliminationRef.current = triggerEliminationAnimation;
 
+    const spawnGateCrushParticles = (x: number, y: number, count: number) => {
+      for (let particleIndex = 0; particleIndex < count; particleIndex += 1) {
+        // Keep this effect deterministic so visual feedback cannot consume
+        // the gameplay RNG used by enemy spawning and shooting.
+        const angle = (particleIndex / Math.max(1, count)) * Math.PI * 2;
+        const speed = 90 + ((particleIndex * 53) % 181);
+        state.particles.push({
+          x,
+          y,
+          vx: Math.cos(angle) * speed,
+          vy: Math.sin(angle) * speed,
+          life: 0,
+          maxLife: 0.3 + ((particleIndex * 17) % 36) / 100,
+          color: '#ff5a1f',
+          radius: 1.5 + ((particleIndex * 11) % 26) / 10,
+        });
+      }
+    };
+
     let animationFrameId: number;
     let lastStatus = uiRef.current.status;
 
@@ -9115,29 +9135,101 @@ export default function GameCanvas() {
 
         const isAuthoritativeGateSimulation = !isMultiplayer || mpRef.current.isHost;
         if (isAuthoritativeGateSimulation && STATUS === 'PLAYING') {
-          const circleOccupants = [
-            { x: state.player.x, y: state.player.y, radius: state.player.radius },
-            ...(Object.values(state.multiplayerPlayers) as Array<{ x: number; y: number; radius: number; isDead?: boolean }>)
-              .filter(player => player && !player.isDead)
-              .map(player => ({ x: player.x, y: player.y, radius: player.radius })),
-            ...state.enemies.map(enemy => ({ x: enemy.x, y: enemy.y, radius: enemy.radius })),
-            ...state.bouncers.map(bouncer => ({ x: bouncer.x, y: bouncer.y, radius: bouncer.radius })),
-          ];
-          const rectOccupants = state.blocks.map(block => ({
-            x: block.x - block.size / 2,
-            y: block.y - block.size / 2,
-            w: block.size,
-            h: block.size,
-          }));
-
           let gatePhaseChanged = false;
+          const gatesThatFinishedClosing: GateDefinition[] = [];
           state.gates = gateDefinitions.map(definition => {
             const previous = state.gates.find(gate => gate.id === definition.id)!;
-            const occupied = isGateDoorwayOccupied(definition, circleOccupants, rectOccupants);
-            const next = advanceGateState(previous, currentTime, occupied);
+            const advanceResult = advanceGateStateWithTransitions(previous, currentTime);
+            const next = advanceResult.state;
             if (next.phase !== previous.phase) gatePhaseChanged = true;
+            if (advanceResult.transitions.some(transition => transition.from === 'closing' && transition.to === 'closed')) {
+              gatesThatFinishedClosing.push(definition);
+            }
             return next;
           });
+
+          // Switchyard gates are deliberately unforgiving. At the exact
+          // authoritative closing transition, remove every dynamic object in
+          // the doorway before its solid wall collider becomes active. Guests
+          // receive the resulting deaths/removals through the existing host
+          // snapshot and bullet-event paths and never decide a crush locally.
+          for (const gate of gatesThatFinishedClosing) {
+            for (let bulletIndex = state.bullets.length - 1; bulletIndex >= 0; bulletIndex -= 1) {
+              const bullet = state.bullets[bulletIndex];
+              if (!gateOverlapsCircle(gate, bullet)) continue;
+              queueAuthoritativeBulletEvent('remove', bullet, currentTime, 'gate_crush');
+              if (bullet.id) knownHostBulletStatesRef.current.delete(String(bullet.id));
+              state.bullets.splice(bulletIndex, 1);
+            }
+
+            for (let enemyIndex = state.enemies.length - 1; enemyIndex >= 0; enemyIndex -= 1) {
+              const enemy = state.enemies[enemyIndex];
+              if (!gateOverlapsCircle(gate, enemy)) continue;
+              spawnGateCrushParticles(enemy.x, enemy.y, 24);
+              state.enemies.splice(enemyIndex, 1);
+            }
+
+            for (let bouncerIndex = state.bouncers.length - 1; bouncerIndex >= 0; bouncerIndex -= 1) {
+              const bouncer = state.bouncers[bouncerIndex];
+              if (!gateOverlapsCircle(gate, bouncer)) continue;
+              spawnGateCrushParticles(bouncer.x, bouncer.y, 24);
+              state.bouncers.splice(bouncerIndex, 1);
+            }
+
+            for (let blockIndex = state.blocks.length - 1; blockIndex >= 0; blockIndex -= 1) {
+              const block = state.blocks[blockIndex];
+              const blockRect = {
+                x: block.x - block.size / 2,
+                y: block.y - block.size / 2,
+                w: block.size,
+                h: block.size,
+              };
+              if (!gateOverlapsRect(gate, blockRect)) continue;
+              spawnGateCrushParticles(block.x, block.y, 18);
+              state.blocks.splice(blockIndex, 1);
+            }
+
+            if (
+              uiRef.current.status === 'PLAYING' &&
+              gateOverlapsCircle(gate, state.player)
+            ) {
+              triggerEndPresentation({
+                outcome: 'defeat',
+                causeCode: 'gate_crush',
+                label: 'CRUSHED BY GATE',
+                impactPos: { x: state.player.x, y: state.player.y },
+                markerColor: '#ff5a1f',
+                startTimestamp: performance.now(),
+              });
+              setUiState(prev => {
+                uiRef.current = { ...prev, status: 'GAME_OVER' };
+                return uiRef.current;
+              });
+            }
+
+            if (isMultiplayer) {
+              for (const [playerId, remotePlayer] of Object.entries(state.multiplayerPlayers) as Array<[
+                string,
+                { x: number; y: number; radius: number; isDead?: boolean }
+              ]>) {
+                if (!remotePlayer || remotePlayer.isDead || !gateOverlapsCircle(gate, remotePlayer)) continue;
+                eliminateRemotePlayerRef.current?.(
+                  playerId,
+                  { x: remotePlayer.x, y: remotePlayer.y },
+                  currentTime,
+                  true,
+                );
+              }
+            }
+
+            spawnGateCrushParticles(
+              gate.x + gate.w / 2,
+              gate.y + gate.h / 2,
+              16,
+            );
+            state.forceBroadcast = true;
+          }
+
           if (gatePhaseChanged && isMultiplayer) state.forceBroadcast = true;
         }
 

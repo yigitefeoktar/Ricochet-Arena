@@ -24,6 +24,17 @@ export interface GateRuntimeState {
   phaseStartedAt: number;
 }
 
+export interface GatePhaseTransition {
+  from: GatePhase;
+  to: GatePhase;
+  at: number;
+}
+
+export interface GateAdvanceResult {
+  state: GateRuntimeState;
+  transitions: GatePhaseTransition[];
+}
+
 export interface GateCircleOccupant {
   x: number;
   y: number;
@@ -87,36 +98,69 @@ export function getGateOpenProgress(
   return state.phase === 'opening' ? progress : 1 - progress;
 }
 
+export function gateOverlapsCircle(
+  gate: GateDefinition,
+  circle: GateCircleOccupant,
+  padding = 0,
+): boolean {
+  if (
+    !circle ||
+    !Number.isFinite(circle.x) ||
+    !Number.isFinite(circle.y) ||
+    !Number.isFinite(circle.radius) ||
+    circle.radius < 0
+  ) return false;
+
+  const left = gate.x - padding;
+  const top = gate.y - padding;
+  const right = gate.x + gate.w + padding;
+  const bottom = gate.y + gate.h + padding;
+  const closestX = Math.max(left, Math.min(circle.x, right));
+  const closestY = Math.max(top, Math.min(circle.y, bottom));
+  const dx = circle.x - closestX;
+  const dy = circle.y - closestY;
+  return dx * dx + dy * dy <= circle.radius * circle.radius;
+}
+
+export function gateOverlapsRect(
+  gate: GateDefinition,
+  rect: GateRectOccupant,
+  padding = 0,
+): boolean {
+  if (
+    !rect ||
+    !Number.isFinite(rect.x) ||
+    !Number.isFinite(rect.y) ||
+    !Number.isFinite(rect.w) ||
+    !Number.isFinite(rect.h) ||
+    rect.w < 0 ||
+    rect.h < 0
+  ) return false;
+
+  const left = gate.x - padding;
+  const top = gate.y - padding;
+  const right = gate.x + gate.w + padding;
+  const bottom = gate.y + gate.h + padding;
+  return (
+    rect.x < right &&
+    rect.x + rect.w > left &&
+    rect.y < bottom &&
+    rect.y + rect.h > top
+  );
+}
+
 export function isGateDoorwayOccupied(
   gate: GateDefinition,
   circles: readonly GateCircleOccupant[],
   rects: readonly GateRectOccupant[],
   padding = 8,
 ): boolean {
-  const left = gate.x - padding;
-  const top = gate.y - padding;
-  const right = gate.x + gate.w + padding;
-  const bottom = gate.y + gate.h + padding;
-
   for (const circle of circles) {
-    if (!circle || !Number.isFinite(circle.x) || !Number.isFinite(circle.y) || !Number.isFinite(circle.radius)) continue;
-    const closestX = Math.max(left, Math.min(circle.x, right));
-    const closestY = Math.max(top, Math.min(circle.y, bottom));
-    const dx = circle.x - closestX;
-    const dy = circle.y - closestY;
-    if (dx * dx + dy * dy <= circle.radius * circle.radius) return true;
+    if (gateOverlapsCircle(gate, circle, padding)) return true;
   }
 
   for (const rect of rects) {
-    if (!rect || !Number.isFinite(rect.x) || !Number.isFinite(rect.y) || !Number.isFinite(rect.w) || !Number.isFinite(rect.h)) continue;
-    if (
-      rect.x < right &&
-      rect.x + rect.w > left &&
-      rect.y < bottom &&
-      rect.y + rect.h > top
-    ) {
-      return true;
-    }
+    if (gateOverlapsRect(gate, rect, padding)) return true;
   }
 
   return false;
@@ -133,46 +177,42 @@ function nextPhase(phase: GatePhase): GatePhase {
   }
 }
 
-export function advanceGateState(
+export function advanceGateStateWithTransitions(
   state: GateRuntimeState,
   now: number,
-  doorwayOccupied: boolean,
-): GateRuntimeState {
-  if (!Number.isFinite(now) || now < state.phaseStartedAt) return state;
+): GateAdvanceResult {
+  if (!Number.isFinite(now) || now < state.phaseStartedAt) {
+    return { state, transitions: [] };
+  }
 
   let current = state;
+  const transitions: GatePhaseTransition[] = [];
   for (let transitionCount = 0; transitionCount < 8; transitionCount += 1) {
     const duration = GATE_TIMINGS_MS[current.phase];
-    if (now - current.phaseStartedAt < duration) return current;
-
-    if (current.phase === 'warning_close' && doorwayOccupied) {
-      // Keep the doorway visibly open and retry from the end of the warning
-      // period. This makes clearing the doorway safe without changing the
-      // cadence of any other gate.
-      return {
-        ...current,
-        phaseStartedAt: now - duration,
-      };
+    if (now - current.phaseStartedAt < duration) {
+      return { state: current, transitions };
     }
 
-    if (current.phase === 'closing' && doorwayOccupied) {
-      // Something entered during the visual closing movement. Abort before a
-      // collider is enabled and give it a complete warning period to leave.
-      return {
-        id: current.id,
-        phase: 'warning_close',
-        phaseStartedAt: now,
-      };
-    }
+    const from = current.phase;
+    const to = nextPhase(from);
+    const transitionAt = current.phaseStartedAt + duration;
+    transitions.push({ from, to, at: transitionAt });
 
     current = {
       id: current.id,
-      phase: nextPhase(current.phase),
-      phaseStartedAt: current.phaseStartedAt + duration,
+      phase: to,
+      phaseStartedAt: transitionAt,
     };
   }
 
-  return current;
+  return { state: current, transitions };
+}
+
+export function advanceGateState(
+  state: GateRuntimeState,
+  now: number,
+): GateRuntimeState {
+  return advanceGateStateWithTransitions(state, now).state;
 }
 
 export function getGateCollisionWalls(

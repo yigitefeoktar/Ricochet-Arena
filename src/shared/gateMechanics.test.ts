@@ -2,12 +2,14 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
   advanceGateState,
+  advanceGateStateWithTransitions,
   createInitialGateStates,
   gateHasCollision,
+  gateOverlapsCircle,
+  gateOverlapsRect,
   gateStatesMatchDefinitions,
   getGateCollisionWalls,
   getGateOpenProgress,
-  isGateDoorwayOccupied,
   type GateDefinition,
 } from './gateMechanics';
 import { traceReflectedBulletMotion } from './multiplayerBulletPhysics';
@@ -32,33 +34,43 @@ test('gate collider exists only while fully closed or warning to open', () => {
 
 test('gate follows the intended closed-warning-open cycle', () => {
   const [initial] = createInitialGateStates([gate], 1_000);
-  const warning = advanceGateState(initial, 5_000, false);
+  const warning = advanceGateState(initial, 5_000);
   assert.equal(warning.phase, 'warning_open');
-  const opening = advanceGateState(warning, 5_750, false);
+  const opening = advanceGateState(warning, 5_750);
   assert.equal(opening.phase, 'opening');
   assert.equal(getGateOpenProgress(opening, 5_900), 0.5);
-  const open = advanceGateState(opening, 6_050, false);
+  const open = advanceGateState(opening, 6_050);
   assert.equal(open.phase, 'open');
 });
 
-test('occupied doorway postpones closing without activating a collider', () => {
+test('gate closes on schedule even when the doorway would be occupied', () => {
   const warningClose = { id: gate.id, phase: 'warning_close' as const, phaseStartedAt: 1_000 };
-  const held = advanceGateState(warningClose, 1_750, true);
-  assert.equal(held.phase, 'warning_close');
-  assert.equal(getGateCollisionWalls([gate], [held]).length, 0);
-
-  const closing = advanceGateState(held, 1_750, false);
+  const closing = advanceGateState(warningClose, 1_750);
   assert.equal(closing.phase, 'closing');
-  const aborted = advanceGateState(closing, 2_050, true);
-  assert.equal(aborted.phase, 'warning_close');
-  assert.equal(getGateCollisionWalls([gate], [aborted]).length, 0);
+  assert.equal(getGateCollisionWalls([gate], [closing]).length, 0);
+
+  const closed = advanceGateState(closing, 2_050);
+  assert.equal(closed.phase, 'closed');
+  assert.equal(getGateCollisionWalls([gate], [closed]).length, 1);
 });
 
-test('players, enemies and Build rectangles can hold a doorway open', () => {
-  assert.equal(isGateDoorwayOccupied(gate, [{ x: 250, y: 90, radius: 16 }], []), true);
-  assert.equal(isGateDoorwayOccupied(gate, [{ x: 20, y: 20, radius: 16 }], []), false);
-  assert.equal(isGateDoorwayOccupied(gate, [], [{ x: 200, y: 90, w: 50, h: 50 }]), true);
-  assert.equal(isGateDoorwayOccupied(gate, [], [{ x: 20, y: 20, w: 50, h: 50 }]), false);
+test('a completed close is reported even when a stalled frame advances past closed', () => {
+  const warningClose = { id: gate.id, phase: 'warning_close' as const, phaseStartedAt: 1_000 };
+  const result = advanceGateStateWithTransitions(warningClose, 6_100);
+  assert.equal(result.state.phase, 'warning_open');
+  assert.equal(
+    result.transitions.some(transition => transition.from === 'closing' && transition.to === 'closed'),
+    true,
+  );
+});
+
+test('gate crush geometry identifies circles and rectangles in the doorway', () => {
+  assert.equal(gateOverlapsCircle(gate, { x: 250, y: 90, radius: 16 }), true);
+  assert.equal(gateOverlapsCircle(gate, { x: 20, y: 20, radius: 16 }), false);
+  assert.equal(gateOverlapsRect(gate, { x: 200, y: 90, w: 50, h: 50 }), true);
+  assert.equal(gateOverlapsRect(gate, { x: 20, y: 20, w: 50, h: 50 }), false);
+  assert.equal(gateOverlapsCircle(gate, { x: Number.NaN, y: 100, radius: 16 }), false);
+  assert.equal(gateOverlapsRect(gate, { x: 200, y: 100, w: -1, h: 50 }), false);
 });
 
 test('network gate states must exactly match the map definitions', () => {
