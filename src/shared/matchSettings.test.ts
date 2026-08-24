@@ -32,11 +32,21 @@ test('titan multiplayer behavior is restricted to the two titan map IDs', () => 
   assert.equal(isTitanRelicMapId(undefined), false);
 });
 
-test('timed gate behavior is restricted to Switchyard', () => {
+test('timed gate behavior is restricted to the explicit gate-map allowlist', () => {
+  const expectedGateMaps = new Set([
+    'switchyard',
+    'overflow',
+    'containment_breach',
+    'crossflow',
+    'conveyor',
+    'crush_circuit',
+    'the_press',
+    'kill_chambers',
+  ]);
   for (const mapId of VALID_MAP_IDS) {
     assert.equal(
       isTimedGateMapId(mapId),
-      mapId === 'switchyard',
+      expectedGateMaps.has(mapId),
       `unexpected gate networking classification for ${mapId}`,
     );
   }

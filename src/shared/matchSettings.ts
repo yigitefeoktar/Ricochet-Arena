@@ -38,6 +38,13 @@ export const VALID_MAP_IDS = [
   'titan_orbit',
   'titan_tempest',
   'switchyard',
+  'overflow',
+  'containment_breach',
+  'crossflow',
+  'conveyor',
+  'crush_circuit',
+  'the_press',
+  'kill_chambers',
 ] as const;
 
 export const TITAN_RELIC_MAP_IDS = [
@@ -56,7 +63,16 @@ export function isTitanRelicMapId(
     (TITAN_RELIC_MAP_IDS as readonly string[]).includes(mapId);
 }
 
-export const TIMED_GATE_MAP_IDS = ['switchyard'] as const;
+export const TIMED_GATE_MAP_IDS = [
+  'switchyard',
+  'overflow',
+  'containment_breach',
+  'crossflow',
+  'conveyor',
+  'crush_circuit',
+  'the_press',
+  'kill_chambers',
+] as const;
 
 export type TimedGateMapId = typeof TIMED_GATE_MAP_IDS[number];
 

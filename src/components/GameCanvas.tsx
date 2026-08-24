@@ -76,6 +76,7 @@ import {
   type GateDefinition,
   type GateRuntimeState,
 } from '../shared/gateMechanics';
+import { NEW_GATE_MAP_LAYOUTS } from '../shared/gateMapLayouts';
 
 interface ActiveMatchSettingsRequest {
   seq: number;
@@ -1035,7 +1036,8 @@ const MAPS: Record<string, MapDefinition> = {
       { x: 620, y: 2380, radius: 40, hp: 100, maxHp: 100 },
       { x: 2450, y: 2420, radius: 40, hp: 100, maxHp: 100 },
     ],
-  }
+  },
+  ...NEW_GATE_MAP_LAYOUTS,
 };
 
 let activeWalls = MAPS.medium.walls;
