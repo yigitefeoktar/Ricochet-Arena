@@ -79,46 +79,41 @@ export const NEW_GATE_MAP_LAYOUTS: Record<NewGateMapId, GateMapLayout> = {
   containment_breach: {
     name: 'Containment Breach',
     difficulty: 'HARD',
-    description: 'Five asymmetric containment rooms periodically expose wide attack lanes. Narrow permanent breaches keep every objective reachable.',
+    description: 'Five asymmetric containment rooms each have one timed exit. Wait for a gate to open, strike the exposed objective, then escape before it seals.',
     walls: [
       ...BASE_WALLS,
-      // North-west room: timed floor gate, permanent east breach.
+      // North-west room: the timed floor gate is its only exit.
       { x: 250, y: 250, w: 650, h: 50 },
       { x: 250, y: 250, w: 50, h: 650 },
-      { x: 850, y: 250, w: 50, h: 250 },
-      { x: 850, y: 650, w: 50, h: 250 },
+      { x: 850, y: 250, w: 50, h: 650 },
       { x: 250, y: 850, w: 200, h: 50 },
       { x: 700, y: 850, w: 200, h: 50 },
 
-      // North-east room: timed west gate, permanent floor breach.
+      // North-east room: the timed west gate is its only exit.
       { x: 2_050, y: 300, w: 700, h: 50 },
       { x: 2_700, y: 300, w: 50, h: 650 },
-      { x: 2_050, y: 900, w: 400, h: 50 },
-      { x: 2_600, y: 900, w: 150, h: 50 },
+      { x: 2_050, y: 900, w: 700, h: 50 },
       { x: 2_050, y: 300, w: 50, h: 200 },
       { x: 2_050, y: 750, w: 50, h: 200 },
 
-      // Central room: timed roof gate, permanent east breach.
+      // Central room: the timed roof gate is its only exit.
       { x: 1_150, y: 1_150, w: 200, h: 50 },
       { x: 1_600, y: 1_150, w: 250, h: 50 },
       { x: 1_150, y: 1_150, w: 50, h: 700 },
       { x: 1_150, y: 1_800, w: 700, h: 50 },
-      { x: 1_800, y: 1_150, w: 50, h: 200 },
-      { x: 1_800, y: 1_500, w: 50, h: 350 },
+      { x: 1_800, y: 1_150, w: 50, h: 700 },
 
-      // South-west room: timed east gate, permanent roof breach.
-      { x: 300, y: 2_050, w: 300, h: 50 },
-      { x: 750, y: 2_050, w: 250, h: 50 },
+      // South-west room: the timed east gate is its only exit.
+      { x: 300, y: 2_050, w: 700, h: 50 },
       { x: 300, y: 2_050, w: 50, h: 700 },
       { x: 300, y: 2_700, w: 700, h: 50 },
       { x: 950, y: 2_050, w: 50, h: 200 },
       { x: 950, y: 2_500, w: 50, h: 250 },
 
-      // South-east room: timed roof gate, permanent west breach.
+      // South-east room: the timed roof gate is its only exit.
       { x: 2_000, y: 2_000, w: 250, h: 50 },
       { x: 2_500, y: 2_000, w: 250, h: 50 },
-      { x: 2_000, y: 2_000, w: 50, h: 250 },
-      { x: 2_000, y: 2_400, w: 50, h: 300 },
+      { x: 2_000, y: 2_000, w: 50, h: 700 },
       { x: 2_700, y: 2_000, w: 50, h: 700 },
       { x: 2_000, y: 2_650, w: 750, h: 50 },
     ],

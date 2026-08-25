@@ -23,11 +23,15 @@ function circleOverlapsRect(x: number, y: number, radius: number, rect: Rect): b
   return dx * dx + dy * dy < radius * radius;
 }
 
-function reachableClosedGateCells(map: GateMapLayout): Set<string> {
+function reachableCells(
+  map: GateMapLayout,
+  closedGates = map.gates,
+  startTarget: { x: number; y: number } = map.spawners[0],
+): Set<string> {
   const step = 50;
   const min = 75;
   const max = WORLD_SIZE - 75;
-  const obstacles: Rect[] = [...map.walls, ...map.gates];
+  const obstacles: Rect[] = [...map.walls, ...closedGates];
   const key = (x: number, y: number) => `${x},${y}`;
   const isOpen = (x: number, y: number) =>
     obstacles.every(rect => !circleOverlapsRect(x, y, PLAYER_RADIUS, rect));
@@ -39,14 +43,13 @@ function reachableClosedGateCells(map: GateMapLayout): Set<string> {
     }
   }
 
-  const firstSpawner = map.spawners[0];
   const start = cells
-    .filter(cell => Math.hypot(cell.x - firstSpawner.x, cell.y - firstSpawner.y) <= 300)
+    .filter(cell => Math.hypot(cell.x - startTarget.x, cell.y - startTarget.y) <= 300)
     .sort((a, b) =>
-      Math.hypot(a.x - firstSpawner.x, a.y - firstSpawner.y) -
-      Math.hypot(b.x - firstSpawner.x, b.y - firstSpawner.y)
+      Math.hypot(a.x - startTarget.x, a.y - startTarget.y) -
+      Math.hypot(b.x - startTarget.x, b.y - startTarget.y)
     )[0];
-  assert.ok(start, `${map.name} needs an open navigation cell near its first spawner`);
+  assert.ok(start, `${map.name} needs an open navigation cell near the requested start`);
 
   const openKeys = new Set(cells.map(cell => key(cell.x, cell.y)));
   const visited = new Set<string>([key(start.x, start.y)]);
@@ -131,13 +134,42 @@ test('new gates fit the multiplayer cap and never overlap walls, spawners or eac
 
 test('all objectives remain connected by a player-sized route with every gate closed', () => {
   for (const [mapId, map] of Object.entries(NEW_GATE_MAP_LAYOUTS)) {
-    const visited = reachableClosedGateCells(map);
+    if (mapId === 'containment_breach') continue;
+    const visited = reachableCells(map);
     for (const objective of map.spawners) {
       const hasReachableCell = [...visited].some(cellKey => {
         const [x, y] = cellKey.split(',').map(Number);
         return Math.hypot(x - objective.x, y - objective.y) <= 300;
       });
       assert.equal(hasReachableCell, true, `${mapId} strands an objective when every gate is closed`);
+    }
+  }
+});
+
+test('each Containment Breach room has exactly one exit through its matching gate', () => {
+  const map = NEW_GATE_MAP_LAYOUTS.containment_breach;
+  const exteriorStart = { x: 1_500, y: 2_700 };
+  const isSpawnerReachable = (visited: Set<string>, spawnerIndex: number) =>
+    [...visited].some(cellKey => {
+      const [x, y] = cellKey.split(',').map(Number);
+      const spawner = map.spawners[spawnerIndex];
+      return Math.hypot(x - spawner.x, y - spawner.y) <= 300;
+    });
+
+  const allClosed = reachableCells(map, map.gates, exteriorStart);
+  for (let spawnerIndex = 0; spawnerIndex < map.spawners.length; spawnerIndex += 1) {
+    assert.equal(isSpawnerReachable(allClosed, spawnerIndex), false, `room ${spawnerIndex} leaks while its gate is closed`);
+  }
+
+  for (let openGateIndex = 0; openGateIndex < map.gates.length; openGateIndex += 1) {
+    const closedGates = map.gates.filter((_, gateIndex) => gateIndex !== openGateIndex);
+    const visited = reachableCells(map, closedGates, exteriorStart);
+    for (let spawnerIndex = 0; spawnerIndex < map.spawners.length; spawnerIndex += 1) {
+      assert.equal(
+        isSpawnerReachable(visited, spawnerIndex),
+        spawnerIndex === openGateIndex,
+        `opening gate ${map.gates[openGateIndex].id} must expose only its own room`,
+      );
     }
   }
 });
