@@ -176,6 +176,14 @@ test('Pulse Corridor uses normal-sized gates with a left-to-right phase wave', (
   const map = NEW_GATE_MAP_LAYOUTS.pulse_corridor;
   assert.equal(map.gates.length, 14);
 
+  for (const x of [150, 2_800]) {
+    assert.equal(
+      map.walls.some(wall => wall.x === x && wall.y === 1_350 && wall.w === 50 && wall.h >= 300),
+      false,
+      `Pulse Corridor end at x=${x} must keep its central passage open`,
+    );
+  }
+
   for (let column = 0; column < 14; column += 1) {
     const gate = map.gates.find(candidate => candidate.id === `pulse-${column}`);
     const x = 250 + column * 190;
