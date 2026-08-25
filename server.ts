@@ -7,6 +7,7 @@ import { createHash, randomBytes } from "crypto";
 import {
   MatchSettings,
   DEFAULT_MATCH_SETTINGS,
+  getTimedGateStateLimit,
   isTimedGateMapId,
   isTitanRelicMapId,
   isValidGameMode,
@@ -740,8 +741,9 @@ async function startServer() {
           )
         : [];
 
+      const gateStateLimit = getTimedGateStateLimit(room.matchSettings.mapId);
       const sanitizedGates = isTimedGateMapId(room.matchSettings.mapId) && Array.isArray(state.gates)
-        ? state.gates.slice(0, 8).filter((gate: any) =>
+        ? state.gates.slice(0, gateStateLimit).filter((gate: any) =>
             gate && typeof gate === "object" &&
             typeof gate.id === "string" && gate.id.length > 0 && gate.id.length <= 64 &&
             isGatePhase(gate.phase) &&

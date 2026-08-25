@@ -6,6 +6,7 @@ import {
   GameMode,
   MatchSettings,
   DEFAULT_MATCH_SETTINGS,
+  getTimedGateStateLimit,
   isTimedGateMapId,
   isTitanRelicMapId,
   isValidGameMode,
@@ -4616,7 +4617,7 @@ export default function GameCanvas() {
       if (rawState.gates === undefined) {
         reconstructedGates = createInitialGateStates(gateDefinitions, loadNow);
       } else {
-        if (!Array.isArray(rawState.gates) || rawState.gates.length > 16) {
+        if (!Array.isArray(rawState.gates) || rawState.gates.length > Math.max(16, gateDefinitions.length)) {
           throw new Error("INVALID SAVE FILE");
         }
         reconstructedGates = rawState.gates.map((gate: any) => {
@@ -7551,7 +7552,7 @@ export default function GameCanvas() {
         });
 
         if (usesTimedGateMultiplayer) {
-          if (!Array.isArray(state.gates) || state.gates.length > 8) {
+          if (!Array.isArray(state.gates) || state.gates.length > getTimedGateStateLimit(uiRef.current.mapId)) {
             throw new Error('Malformed gate state');
           }
           mappedGates = state.gates.map((gate: any) => {

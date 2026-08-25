@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  getTimedGateStateLimit,
   isTimedGateMapId,
   isTitanRelicMapId,
   isValidMapId,
@@ -42,6 +43,7 @@ test('timed gate behavior is restricted to the explicit gate-map allowlist', () 
     'crush_circuit',
     'the_press',
     'kill_chambers',
+    'pulse_corridor',
   ]);
   for (const mapId of VALID_MAP_IDS) {
     assert.equal(
@@ -52,6 +54,16 @@ test('timed gate behavior is restricted to the explicit gate-map allowlist', () 
   }
   assert.equal(isTimedGateMapId(''), false);
   assert.equal(isTimedGateMapId(null), false);
+});
+
+test('only Pulse Corridor receives the expanded multiplayer gate-state budget', () => {
+  for (const mapId of VALID_MAP_IDS) {
+    assert.equal(
+      getTimedGateStateLimit(mapId),
+      mapId === 'pulse_corridor' ? 40 : 8,
+      `unexpected gate-state limit for ${mapId}`,
+    );
+  }
 });
 
 test('unknown map IDs remain rejected and sanitize to the existing default', () => {

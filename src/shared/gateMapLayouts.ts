@@ -26,6 +26,7 @@ export const NEW_GATE_MAP_IDS = [
   'crush_circuit',
   'the_press',
   'kill_chambers',
+  'pulse_corridor',
 ] as const;
 
 export type NewGateMapId = typeof NEW_GATE_MAP_IDS[number];
@@ -45,6 +46,54 @@ const spawner = (x: number, y: number) => ({
   hp: 100,
   maxHp: 100,
 });
+
+const PULSE_CORRIDOR_COLUMN_COUNT = 20;
+const PULSE_CORRIDOR_X_START = 250;
+const PULSE_CORRIDOR_X_PITCH = 130;
+const PULSE_CORRIDOR_GATE_WIDTH = 24;
+const PULSE_CORRIDOR_TOP = 850;
+const PULSE_CORRIDOR_BOTTOM = 2_200;
+const PULSE_CORRIDOR_GAP_HALF_HEIGHT = 170;
+const pulseCorridorCenterY = (column: number) =>
+  Math.round(1_500 + Math.sin(column * 0.72) * 240);
+
+const PULSE_CORRIDOR_GATES: GateDefinition[] = Array.from(
+  { length: PULSE_CORRIDOR_COLUMN_COUNT },
+  (_, column) => {
+    const x = PULSE_CORRIDOR_X_START + column * PULSE_CORRIDOR_X_PITCH;
+    const centerY = pulseCorridorCenterY(column);
+    const topHeight = centerY - PULSE_CORRIDOR_GAP_HALF_HEIGHT - PULSE_CORRIDOR_TOP;
+    const bottomY = centerY + PULSE_CORRIDOR_GAP_HALF_HEIGHT;
+    const initialDelayMs = column * 160;
+    return [
+      {
+        id: `pulse-${column}-top`,
+        x,
+        y: PULSE_CORRIDOR_TOP,
+        w: PULSE_CORRIDOR_GATE_WIDTH,
+        h: topHeight,
+        orientation: 'vertical' as const,
+        initialDelayMs,
+      },
+      {
+        id: `pulse-${column}-bottom`,
+        x,
+        y: bottomY,
+        w: PULSE_CORRIDOR_GATE_WIDTH,
+        h: PULSE_CORRIDOR_BOTTOM - bottomY,
+        orientation: 'vertical' as const,
+        initialDelayMs,
+      },
+    ];
+  },
+).flat();
+
+const PULSE_CORRIDOR_SPAWNERS = [2, 6, 10, 14, 18].map(column =>
+  spawner(
+    PULSE_CORRIDOR_X_START + column * PULSE_CORRIDOR_X_PITCH + PULSE_CORRIDOR_GATE_WIDTH / 2,
+    pulseCorridorCenterY(column),
+  )
+);
 
 export const NEW_GATE_MAP_LAYOUTS: Record<NewGateMapId, GateMapLayout> = {
   overflow: {
@@ -319,5 +368,20 @@ export const NEW_GATE_MAP_LAYOUTS: Record<NewGateMapId, GateMapLayout> = {
       spawner(1_720, 1_950),
       spawner(1_100, 1_200),
     ],
+  },
+
+  pulse_corridor: {
+    name: 'Pulse Corridor',
+    difficulty: 'EXPERT',
+    description: 'Forty synchronized gates form a travelling pressure wave along one long hall. Follow the permanent sinusoidal channel or exploit each opening before the next crest closes.',
+    walls: [
+      ...BASE_WALLS,
+      { x: 150, y: 800, w: 2_700, h: 50 },
+      { x: 150, y: 2_200, w: 2_700, h: 50 },
+      { x: 150, y: 800, w: 50, h: 1_450 },
+      { x: 2_800, y: 800, w: 50, h: 1_450 },
+    ],
+    gates: PULSE_CORRIDOR_GATES,
+    spawners: PULSE_CORRIDOR_SPAWNERS,
   },
 };

@@ -5,6 +5,7 @@ import {
   NEW_GATE_MAP_LAYOUTS,
   type GateMapLayout,
 } from './gateMapLayouts';
+import { getTimedGateStateLimit } from './matchSettings';
 
 const WORLD_SIZE = 3_000;
 const PLAYER_RADIUS = 22;
@@ -69,12 +70,12 @@ function reachableCells(
 }
 
 test('new gate maps have distinct IDs, intended difficulty progression and no relics', () => {
-  assert.equal(new Set(NEW_GATE_MAP_IDS).size, 7);
+  assert.equal(new Set(NEW_GATE_MAP_IDS).size, 8);
   assert.equal(NEW_GATE_MAP_LAYOUTS.overflow.difficulty, 'MEDIUM');
   for (const mapId of ['containment_breach', 'crossflow', 'conveyor'] as const) {
     assert.equal(NEW_GATE_MAP_LAYOUTS[mapId].difficulty, 'HARD');
   }
-  for (const mapId of ['crush_circuit', 'the_press', 'kill_chambers'] as const) {
+  for (const mapId of ['crush_circuit', 'the_press', 'kill_chambers', 'pulse_corridor'] as const) {
     assert.equal(NEW_GATE_MAP_LAYOUTS[mapId].difficulty, 'EXPERT');
   }
   for (const map of Object.values(NEW_GATE_MAP_LAYOUTS)) {
@@ -85,7 +86,10 @@ test('new gate maps have distinct IDs, intended difficulty progression and no re
 
 test('new gates fit the multiplayer cap and never overlap walls, spawners or each other', () => {
   for (const [mapId, map] of Object.entries(NEW_GATE_MAP_LAYOUTS)) {
-    assert.ok(map.gates.length >= 3 && map.gates.length <= 8, `${mapId} gate count must fit network validation`);
+    assert.ok(
+      map.gates.length >= 3 && map.gates.length <= getTimedGateStateLimit(mapId),
+      `${mapId} gate count must fit its network validation budget`,
+    );
     assert.equal(new Set(map.gates.map(gate => gate.id)).size, map.gates.length, `${mapId} gate IDs must be unique`);
 
     for (const gate of map.gates) {
@@ -166,6 +170,28 @@ test('The Conveyor vertical gates span their lanes without bypass gaps', () => {
   const lowerGate = map.gates.find(gate => gate.id === 'conveyor-lower-cut');
   assert.deepEqual(upperGate && { x: upperGate.x, top: upperGate.y, bottom: upperGate.y + upperGate.h }, { x: 2_150, top: 800, bottom: 1_050 });
   assert.deepEqual(lowerGate && { x: lowerGate.x, top: lowerGate.y, bottom: lowerGate.y + lowerGate.h }, { x: 650, top: 2_000, bottom: 2_250 });
+});
+
+test('Pulse Corridor contains twenty phased gate pairs and a permanent wave-shaped route', () => {
+  const map = NEW_GATE_MAP_LAYOUTS.pulse_corridor;
+  assert.equal(map.gates.length, 40);
+
+  const centers: number[] = [];
+  for (let column = 0; column < 20; column += 1) {
+    const top = map.gates.find(gate => gate.id === `pulse-${column}-top`);
+    const bottom = map.gates.find(gate => gate.id === `pulse-${column}-bottom`);
+    assert.ok(top && bottom, `pulse column ${column} needs a top and bottom gate`);
+    assert.equal(top.x, bottom.x);
+    assert.equal(top.initialDelayMs, column * 160);
+    assert.equal(bottom.initialDelayMs, column * 160);
+    assert.ok(bottom.y - (top.y + top.h) >= 340, `pulse column ${column} needs a player-safe permanent gap`);
+    centers.push((top.y + top.h + bottom.y) / 2);
+  }
+
+  assert.ok(Math.max(...centers) - Math.min(...centers) >= 400, 'the corridor opening should visibly undulate');
+  for (const objective of map.spawners) {
+    assert.ok(objective.y > 1_100 && objective.y < 1_900, 'Pulse Corridor objectives must remain inside its safe wave channel');
+  }
 });
 
 test('each Containment Breach room has exactly one exit through its matching gate', () => {

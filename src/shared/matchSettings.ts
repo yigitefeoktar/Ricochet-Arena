@@ -45,6 +45,7 @@ export const VALID_MAP_IDS = [
   'crush_circuit',
   'the_press',
   'kill_chambers',
+  'pulse_corridor',
 ] as const;
 
 export const TITAN_RELIC_MAP_IDS = [
@@ -72,6 +73,7 @@ export const TIMED_GATE_MAP_IDS = [
   'crush_circuit',
   'the_press',
   'kill_chambers',
+  'pulse_corridor',
 ] as const;
 
 export type TimedGateMapId = typeof TIMED_GATE_MAP_IDS[number];
@@ -83,6 +85,15 @@ export function isTimedGateMapId(
   // map containing a similar wall layout must never receive gate networking.
   return typeof mapId === 'string' &&
     (TIMED_GATE_MAP_IDS as readonly string[]).includes(mapId);
+}
+
+export const DEFAULT_TIMED_GATE_STATE_LIMIT = 8;
+export const PULSE_CORRIDOR_GATE_STATE_LIMIT = 40;
+
+export function getTimedGateStateLimit(mapId: unknown): number {
+  return mapId === 'pulse_corridor'
+    ? PULSE_CORRIDOR_GATE_STATE_LIMIT
+    : DEFAULT_TIMED_GATE_STATE_LIMIT;
 }
 
 export function isValidMapId(mapId: unknown): mapId is string {
