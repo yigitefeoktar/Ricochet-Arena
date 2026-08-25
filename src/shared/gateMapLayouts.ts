@@ -172,7 +172,7 @@ export const NEW_GATE_MAP_LAYOUTS: Record<NewGateMapId, GateMapLayout> = {
   conveyor: {
     name: 'The Conveyor',
     difficulty: 'HARD',
-    description: 'Staggered doors encourage a serpentine flow through five broad lanes. Alternating end gaps always provide a slower dependable route.',
+    description: 'Staggered doors force a serpentine flow through five broad lanes. Two cross-lane crushers turn the upper and lower passages into timed chokepoints.',
     walls: [
       ...BASE_WALLS,
       { x: 50, y: 600, w: 1_000, h: 50 },
@@ -183,6 +183,12 @@ export const NEW_GATE_MAP_LAYOUTS: Record<NewGateMapId, GateMapLayout> = {
       { x: 1_200, y: 1_800, w: 1_350, h: 50 },
       { x: 400, y: 2_400, w: 1_100, h: 50 },
       { x: 1_800, y: 2_400, w: 1_150, h: 50 },
+      // These supports connect the vertical gates to the neighboring lane walls,
+      // so the timed opening is the only way through each cross-lane divider.
+      { x: 2_150, y: 650, w: 50, h: 150 },
+      { x: 2_150, y: 1_050, w: 50, h: 150 },
+      { x: 650, y: 1_850, w: 50, h: 150 },
+      { x: 650, y: 2_250, w: 50, h: 150 },
     ],
     gates: [
       { id: 'conveyor-one', x: 1_050, y: 600, w: 300, h: 50, orientation: 'horizontal', initialDelayMs: 0 },

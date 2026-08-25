@@ -134,7 +134,7 @@ test('new gates fit the multiplayer cap and never overlap walls, spawners or eac
 
 test('all objectives remain connected by a player-sized route with every gate closed', () => {
   for (const [mapId, map] of Object.entries(NEW_GATE_MAP_LAYOUTS)) {
-    if (mapId === 'containment_breach') continue;
+    if (mapId === 'containment_breach' || mapId === 'conveyor') continue;
     const visited = reachableCells(map);
     for (const objective of map.spawners) {
       const hasReachableCell = [...visited].some(cellKey => {
@@ -144,6 +144,28 @@ test('all objectives remain connected by a player-sized route with every gate cl
       assert.equal(hasReachableCell, true, `${mapId} strands an objective when every gate is closed`);
     }
   }
+});
+
+test('The Conveyor vertical gates span their lanes without bypass gaps', () => {
+  const map = NEW_GATE_MAP_LAYOUTS.conveyor;
+  const expectedSupports: Rect[] = [
+    { x: 2_150, y: 650, w: 50, h: 150 },
+    { x: 2_150, y: 1_050, w: 50, h: 150 },
+    { x: 650, y: 1_850, w: 50, h: 150 },
+    { x: 650, y: 2_250, w: 50, h: 150 },
+  ];
+  for (const support of expectedSupports) {
+    assert.equal(
+      map.walls.some(wall => wall.x === support.x && wall.y === support.y && wall.w === support.w && wall.h === support.h),
+      true,
+      `missing Conveyor gate support at ${support.x},${support.y}`,
+    );
+  }
+
+  const upperGate = map.gates.find(gate => gate.id === 'conveyor-upper-cut');
+  const lowerGate = map.gates.find(gate => gate.id === 'conveyor-lower-cut');
+  assert.deepEqual(upperGate && { x: upperGate.x, top: upperGate.y, bottom: upperGate.y + upperGate.h }, { x: 2_150, top: 800, bottom: 1_050 });
+  assert.deepEqual(lowerGate && { x: lowerGate.x, top: lowerGate.y, bottom: lowerGate.y + lowerGate.h }, { x: 650, top: 2_000, bottom: 2_250 });
 });
 
 test('each Containment Breach room has exactly one exit through its matching gate', () => {
