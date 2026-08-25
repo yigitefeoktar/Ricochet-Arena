@@ -264,7 +264,7 @@ export const NEW_GATE_MAP_LAYOUTS: Record<NewGateMapId, GateMapLayout> = {
   crush_circuit: {
     name: 'Crush Circuit',
     difficulty: 'EXPERT',
-    description: 'Seven independently phased shortcuts cut through an asymmetric loop. The outer circuit is safe, but every fast line crosses a crusher.',
+    description: 'Six independently phased shortcuts cut through an asymmetric loop. Two objectives sit inside the circuit while the outer route remains available.',
     walls: [
       ...BASE_WALLS,
       { x: 750, y: 300, w: 50, h: 500 },
@@ -287,15 +287,14 @@ export const NEW_GATE_MAP_LAYOUTS: Record<NewGateMapId, GateMapLayout> = {
       { id: 'circuit-east', x: 2_200, y: 1_000, w: 50, h: 300, orientation: 'vertical', initialDelayMs: 1_300 },
       { id: 'circuit-north', x: 1_350, y: 700, w: 300, h: 50, orientation: 'horizontal', initialDelayMs: 5_200 },
       { id: 'circuit-south-west', x: 1_200, y: 2_250, w: 300, h: 50, orientation: 'horizontal', initialDelayMs: 2_600 },
-      { id: 'circuit-south-east', x: 2_000, y: 2_250, w: 200, h: 50, orientation: 'horizontal', initialDelayMs: 6_500 },
       { id: 'circuit-core', x: 1_300, y: 1_450, w: 300, h: 50, orientation: 'horizontal', initialDelayMs: 4_000 },
     ],
     spawners: [
       spawner(420, 430),
-      spawner(1_480, 380),
+      spawner(1_600, 1_050),
       spawner(2_600, 720),
       spawner(500, 2_500),
-      spawner(2_500, 2_580),
+      spawner(1_400, 1_850),
     ],
   },
 

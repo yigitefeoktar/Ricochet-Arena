@@ -172,6 +172,14 @@ test('The Conveyor vertical gates span their lanes without bypass gaps', () => {
   assert.deepEqual(lowerGate && { x: lowerGate.x, top: lowerGate.y, bottom: lowerGate.y + lowerGate.h }, { x: 650, top: 2_000, bottom: 2_250 });
 });
 
+test('Crush Circuit keeps two objectives in its center and omits the short south-east gate', () => {
+  const map = NEW_GATE_MAP_LAYOUTS.crush_circuit;
+  assert.equal(map.gates.length, 6);
+  assert.equal(map.gates.some(gate => gate.id === 'circuit-south-east'), false);
+  assert.equal(map.spawners.some(objective => objective.x === 1_600 && objective.y === 1_050), true);
+  assert.equal(map.spawners.some(objective => objective.x === 1_400 && objective.y === 1_850), true);
+});
+
 test('Pulse Corridor uses normal-sized gates with a left-to-right phase wave', () => {
   const map = NEW_GATE_MAP_LAYOUTS.pulse_corridor;
   assert.equal(map.gates.length, 14);
