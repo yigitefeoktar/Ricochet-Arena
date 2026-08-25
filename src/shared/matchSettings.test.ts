@@ -60,7 +60,7 @@ test('only Pulse Corridor receives the expanded multiplayer gate-state budget', 
   for (const mapId of VALID_MAP_IDS) {
     assert.equal(
       getTimedGateStateLimit(mapId),
-      mapId === 'pulse_corridor' ? 40 : 8,
+      mapId === 'pulse_corridor' ? 16 : 8,
       `unexpected gate-state limit for ${mapId}`,
     );
   }

@@ -47,51 +47,56 @@ const spawner = (x: number, y: number) => ({
   maxHp: 100,
 });
 
-const PULSE_CORRIDOR_COLUMN_COUNT = 20;
+const PULSE_CORRIDOR_GATE_COUNT = 14;
 const PULSE_CORRIDOR_X_START = 250;
-const PULSE_CORRIDOR_X_PITCH = 130;
-const PULSE_CORRIDOR_GATE_WIDTH = 24;
-const PULSE_CORRIDOR_TOP = 850;
-const PULSE_CORRIDOR_BOTTOM = 2_200;
-const PULSE_CORRIDOR_GAP_HALF_HEIGHT = 170;
-const pulseCorridorCenterY = (column: number) =>
-  Math.round(1_500 + Math.sin(column * 0.72) * 240);
+const PULSE_CORRIDOR_X_PITCH = 190;
+const PULSE_CORRIDOR_GATE_WIDTH = 50;
+const PULSE_CORRIDOR_GATE_Y = 1_350;
+const PULSE_CORRIDOR_GATE_HEIGHT = 300;
+const PULSE_CORRIDOR_HALL_TOP = 1_150;
+const PULSE_CORRIDOR_HALL_BOTTOM = 1_850;
 
 const PULSE_CORRIDOR_GATES: GateDefinition[] = Array.from(
-  { length: PULSE_CORRIDOR_COLUMN_COUNT },
+  { length: PULSE_CORRIDOR_GATE_COUNT },
   (_, column) => {
     const x = PULSE_CORRIDOR_X_START + column * PULSE_CORRIDOR_X_PITCH;
-    const centerY = pulseCorridorCenterY(column);
-    const topHeight = centerY - PULSE_CORRIDOR_GAP_HALF_HEIGHT - PULSE_CORRIDOR_TOP;
-    const bottomY = centerY + PULSE_CORRIDOR_GAP_HALF_HEIGHT;
-    const initialDelayMs = column * 160;
+    return {
+      id: `pulse-${column}`,
+      x,
+      y: PULSE_CORRIDOR_GATE_Y,
+      w: PULSE_CORRIDOR_GATE_WIDTH,
+      h: PULSE_CORRIDOR_GATE_HEIGHT,
+      orientation: 'vertical' as const,
+      initialDelayMs: column * 220,
+    };
+  },
+);
+
+const PULSE_CORRIDOR_SUPPORTS = Array.from(
+  { length: PULSE_CORRIDOR_GATE_COUNT },
+  (_, column) => {
+    const x = PULSE_CORRIDOR_X_START + column * PULSE_CORRIDOR_X_PITCH;
     return [
       {
-        id: `pulse-${column}-top`,
         x,
-        y: PULSE_CORRIDOR_TOP,
+        y: PULSE_CORRIDOR_HALL_TOP,
         w: PULSE_CORRIDOR_GATE_WIDTH,
-        h: topHeight,
-        orientation: 'vertical' as const,
-        initialDelayMs,
+        h: PULSE_CORRIDOR_GATE_Y - PULSE_CORRIDOR_HALL_TOP,
       },
       {
-        id: `pulse-${column}-bottom`,
         x,
-        y: bottomY,
+        y: PULSE_CORRIDOR_GATE_Y + PULSE_CORRIDOR_GATE_HEIGHT,
         w: PULSE_CORRIDOR_GATE_WIDTH,
-        h: PULSE_CORRIDOR_BOTTOM - bottomY,
-        orientation: 'vertical' as const,
-        initialDelayMs,
+        h: PULSE_CORRIDOR_HALL_BOTTOM - (PULSE_CORRIDOR_GATE_Y + PULSE_CORRIDOR_GATE_HEIGHT),
       },
     ];
   },
 ).flat();
 
-const PULSE_CORRIDOR_SPAWNERS = [2, 6, 10, 14, 18].map(column =>
+const PULSE_CORRIDOR_SPAWNERS = [0, 3, 6, 9, 12].map((column, index) =>
   spawner(
-    PULSE_CORRIDOR_X_START + column * PULSE_CORRIDOR_X_PITCH + PULSE_CORRIDOR_GATE_WIDTH / 2,
-    pulseCorridorCenterY(column),
+    PULSE_CORRIDOR_X_START + column * PULSE_CORRIDOR_X_PITCH + PULSE_CORRIDOR_GATE_WIDTH + 70,
+    index % 2 === 0 ? 1_450 : 1_550,
   )
 );
 
@@ -373,13 +378,14 @@ export const NEW_GATE_MAP_LAYOUTS: Record<NewGateMapId, GateMapLayout> = {
   pulse_corridor: {
     name: 'Pulse Corridor',
     difficulty: 'EXPERT',
-    description: 'Forty synchronized gates form a travelling pressure wave along one long hall. Follow the permanent sinusoidal channel or exploit each opening before the next crest closes.',
+    description: 'Fourteen normal-sized gates open in a tight left-to-right sequence along one straight hall. Move with the travelling opening before the doors close behind you.',
     walls: [
       ...BASE_WALLS,
-      { x: 150, y: 800, w: 2_700, h: 50 },
-      { x: 150, y: 2_200, w: 2_700, h: 50 },
-      { x: 150, y: 800, w: 50, h: 1_450 },
-      { x: 2_800, y: 800, w: 50, h: 1_450 },
+      { x: 150, y: 1_100, w: 2_700, h: 50 },
+      { x: 150, y: 1_850, w: 2_700, h: 50 },
+      { x: 150, y: 1_100, w: 50, h: 800 },
+      { x: 2_800, y: 1_100, w: 50, h: 800 },
+      ...PULSE_CORRIDOR_SUPPORTS,
     ],
     gates: PULSE_CORRIDOR_GATES,
     spawners: PULSE_CORRIDOR_SPAWNERS,

@@ -138,7 +138,7 @@ test('new gates fit the multiplayer cap and never overlap walls, spawners or eac
 
 test('all objectives remain connected by a player-sized route with every gate closed', () => {
   for (const [mapId, map] of Object.entries(NEW_GATE_MAP_LAYOUTS)) {
-    if (mapId === 'containment_breach' || mapId === 'conveyor') continue;
+    if (mapId === 'containment_breach' || mapId === 'conveyor' || mapId === 'pulse_corridor') continue;
     const visited = reachableCells(map);
     for (const objective of map.spawners) {
       const hasReachableCell = [...visited].some(cellKey => {
@@ -172,25 +172,41 @@ test('The Conveyor vertical gates span their lanes without bypass gaps', () => {
   assert.deepEqual(lowerGate && { x: lowerGate.x, top: lowerGate.y, bottom: lowerGate.y + lowerGate.h }, { x: 650, top: 2_000, bottom: 2_250 });
 });
 
-test('Pulse Corridor contains twenty phased gate pairs and a permanent wave-shaped route', () => {
+test('Pulse Corridor uses normal-sized gates with a left-to-right phase wave', () => {
   const map = NEW_GATE_MAP_LAYOUTS.pulse_corridor;
-  assert.equal(map.gates.length, 40);
+  assert.equal(map.gates.length, 14);
 
-  const centers: number[] = [];
-  for (let column = 0; column < 20; column += 1) {
-    const top = map.gates.find(gate => gate.id === `pulse-${column}-top`);
-    const bottom = map.gates.find(gate => gate.id === `pulse-${column}-bottom`);
-    assert.ok(top && bottom, `pulse column ${column} needs a top and bottom gate`);
-    assert.equal(top.x, bottom.x);
-    assert.equal(top.initialDelayMs, column * 160);
-    assert.equal(bottom.initialDelayMs, column * 160);
-    assert.ok(bottom.y - (top.y + top.h) >= 340, `pulse column ${column} needs a player-safe permanent gap`);
-    centers.push((top.y + top.h + bottom.y) / 2);
+  for (let column = 0; column < 14; column += 1) {
+    const gate = map.gates.find(candidate => candidate.id === `pulse-${column}`);
+    const x = 250 + column * 190;
+    assert.deepEqual(
+      gate && {
+        x: gate.x,
+        y: gate.y,
+        w: gate.w,
+        h: gate.h,
+        orientation: gate.orientation,
+        initialDelayMs: gate.initialDelayMs,
+      },
+      { x, y: 1_350, w: 50, h: 300, orientation: 'vertical', initialDelayMs: column * 220 },
+      `pulse gate ${column} should be a standard gate with the correct phase`,
+    );
+
+    assert.equal(
+      map.walls.some(wall => wall.x === x && wall.y === 1_150 && wall.w === 50 && wall.h === 200),
+      true,
+      `pulse gate ${column} needs an upper wall support`,
+    );
+    assert.equal(
+      map.walls.some(wall => wall.x === x && wall.y === 1_650 && wall.w === 50 && wall.h === 200),
+      true,
+      `pulse gate ${column} needs a lower wall support`,
+    );
   }
 
-  assert.ok(Math.max(...centers) - Math.min(...centers) >= 400, 'the corridor opening should visibly undulate');
   for (const objective of map.spawners) {
-    assert.ok(objective.y > 1_100 && objective.y < 1_900, 'Pulse Corridor objectives must remain inside its safe wave channel');
+    assert.ok(objective.x > 250 && objective.x < 2_800, 'Pulse Corridor objectives must remain inside the hall');
+    assert.ok(objective.y >= 1_450 && objective.y <= 1_550, 'Pulse Corridor objectives must remain inside the gate channel');
   }
 });
 

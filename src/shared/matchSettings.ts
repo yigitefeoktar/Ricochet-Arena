@@ -88,7 +88,7 @@ export function isTimedGateMapId(
 }
 
 export const DEFAULT_TIMED_GATE_STATE_LIMIT = 8;
-export const PULSE_CORRIDOR_GATE_STATE_LIMIT = 40;
+export const PULSE_CORRIDOR_GATE_STATE_LIMIT = 16;
 
 export function getTimedGateStateLimit(mapId: unknown): number {
   return mapId === 'pulse_corridor'
