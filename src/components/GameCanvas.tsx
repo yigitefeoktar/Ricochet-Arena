@@ -78,6 +78,7 @@ import {
   type GateRuntimeState,
 } from '../shared/gateMechanics';
 import { NEW_GATE_MAP_LAYOUTS } from '../shared/gateMapLayouts';
+import { MapPreviewSvg } from './MapPreviewSvg';
 
 interface ActiveMatchSettingsRequest {
   seq: number;
@@ -13940,114 +13941,12 @@ export default function GameCanvas() {
 
                                {/* Responsive map container */}
                                <div className="flex-1 w-full min-h-[120px] flex items-center justify-center p-1 md:p-2 relative overflow-hidden shrink mt-1 mb-1">
-                                 <svg
-                                   viewBox="0 0 3000 3000"
+                                 <MapPreviewSvg
+                                   map={selMap}
+                                   theme="cyan"
+                                   detailedSpawnPoint
                                    className="w-full h-full aspect-square max-w-[130px] max-h-[130px] sm:max-w-[145px] sm:max-h-[145px] md:max-w-[220px] md:max-h-[220px]"
-                                   preserveAspectRatio="xMidYMid meet"
-                                 >
-                                   {/* Base Map Square Background & Outer Border inside the coordinate system */}
-                                    <rect width="3000" height="3000" fill="#050508" stroke="rgba(0, 240, 255, 0.4)" strokeWidth="15" />
-
-                                    {/* Grid lines inside preview */}
-                                   <defs>
-                                     <pattern id="preview-grid" width="150" height="150" patternUnits="userSpaceOnUse">
-                                       <path d="M 150 0 L 0 0 0 150" fill="none" stroke="rgba(0, 240, 255, 0.05)" strokeWidth="4" />
-                                     </pattern>
-                                   </defs>
-                                   <rect width="3000" height="3000" fill="url(#preview-grid)" />
-
-                                   {/* Render Walls */}
-                                   {selMap.walls.map((w, i) => (
-                                     <rect
-                                       key={`wall-${i}`}
-                                       x={w.x}
-                                       y={w.y}
-                                       width={w.w}
-                                       height={w.h}
-                                       fill="rgba(0, 240, 255, 0.25)"
-                                       stroke="#00f0ff"
-                                       strokeWidth="15"
-                                     />
-                                   ))}
-
-                                   {selMap.gates?.map((gate, i) => (
-                                     <rect
-                                       key={`gate-${i}`}
-                                       x={gate.x}
-                                       y={gate.y}
-                                       width={gate.w}
-                                       height={gate.h}
-                                       fill="rgba(255, 204, 0, 0.42)"
-                                       stroke="#ffcc00"
-                                       strokeWidth="20"
-                                     />
-                                   ))}
-
-                                   {/* Render Spawners */}
-                                   {selMap.spawners.map((s, i) => (
-                                     <g key={`spawner-${i}`}>
-                                       {isTitanRelicType(s.specialType) && getTitanRelicPrimitives(s, 0).map(primitive =>
-                                         primitive.kind === 'circle' ? (
-                                           <circle
-                                             key={`titan-${primitive.id}`}
-                                             cx={primitive.cx}
-                                             cy={primitive.cy}
-                                             r={primitive.radius}
-                                             fill={getTitanRelicPalette(s.specialType).fill}
-                                             stroke={getTitanRelicPalette(s.specialType).accent}
-                                             strokeWidth={12}
-                                           />
-                                         ) : (
-                                           <line
-                                             key={`titan-${primitive.id}`}
-                                             x1={primitive.ax}
-                                             y1={primitive.ay}
-                                             x2={primitive.bx}
-                                             y2={primitive.by}
-                                             stroke={getTitanRelicPalette(s.specialType).fill}
-                                             strokeWidth={primitive.radius * 2}
-                                             strokeLinecap="round"
-                                           />
-                                         )
-                                       )}
-                                       <circle
-                                         cx={s.x}
-                                         cy={s.y}
-                                         r={s.radius}
-                                         fill="#ff00ff"
-                                         stroke="rgba(255, 255, 255, 0.5)"
-                                         strokeWidth="8"
-                                       />
-                                     </g>
-                                   ))}
-
-                                   {/* Render Spawn Point */}
-                                   {selMap.spawnPoint && (
-                                     <g transform={`translate(${selMap.spawnPoint.x}, ${selMap.spawnPoint.y})`} pointerEvents="none" aria-hidden="true">
-                                       <circle r={70} fill="rgba(255, 204, 0, 0.10)" stroke="#FFCC00" strokeWidth={18} />
-                                       <circle r={18} fill="#FFCC00" />
-                                       <line x1={0} y1={-110} x2={0} y2={-80} stroke="#FFCC00" strokeWidth={18} />
-                                       <line x1={0} y1={80} x2={0} y2={110} stroke="#FFCC00" strokeWidth={18} />
-                                       <line x1={-110} y1={0} x2={-80} y2={0} stroke="#FFCC00" strokeWidth={18} />
-                                       <line x1={80} y1={0} x2={110} y2={0} stroke="#FFCC00" strokeWidth={18} />
-                                       <text
-                                         x={100}
-                                         y={-80}
-                                         fill="#FFCC00"
-                                         fontSize={120}
-                                         fontFamily="monospace"
-                                         fontWeight="bold"
-                                         stroke="#080A12"
-                                         strokeWidth={30}
-                                         paintOrder="stroke"
-                                         strokeLinejoin="round"
-                                         style={{ letterSpacing: '0.1em', filter: 'drop-shadow(0px 2px 2px rgba(255, 204, 0, 0.35))' }}
-                                       >
-                                         START
-                                       </text>
-                                     </g>
-                                   )}
-                                 </svg>
+                                 />
                                </div>
                             </div>
                           )
@@ -14201,114 +14100,13 @@ export default function GameCanvas() {
 
                                {/* Responsive map container */}
                                <div className="flex-1 w-full min-h-[120px] flex items-center justify-center p-1 md:p-2 relative overflow-hidden shrink mt-1 mb-1">
-                                 <svg
-                                   viewBox="0 0 3000 3000"
+                                 <MapPreviewSvg
+                                   map={selMap}
+                                   theme="gold"
+                                   wallTheme="cyan"
+                                   detailedSpawnPoint
                                    className="w-full h-full aspect-square max-w-[130px] max-h-[130px] sm:max-w-[145px] sm:max-h-[145px] md:max-w-[220px] md:max-h-[220px]"
-                                   preserveAspectRatio="xMidYMid meet"
-                                 >
-                                   {/* Base Map Square Background & Outer Border */}
-                                    <rect width="3000" height="3000" fill="#050508" stroke="rgba(255, 204, 0, 0.4)" strokeWidth="15" />
-
-                                    {/* Grid lines inside preview */}
-                                   <defs>
-                                     <pattern id="mp-preview-grid" width="150" height="150" patternUnits="userSpaceOnUse">
-                                       <path d="M 150 0 L 0 0 0 150" fill="none" stroke="rgba(255, 204, 0, 0.08)" strokeWidth="4" />
-                                     </pattern>
-                                   </defs>
-                                   <rect width="3000" height="3000" fill="url(#mp-preview-grid)" />
-
-                                   {/* Render Walls */}
-                                   {selMap.walls.map((w, i) => (
-                                     <rect
-                                       key={`wall-${i}`}
-                                       x={w.x}
-                                       y={w.y}
-                                       width={w.w}
-                                       height={w.h}
-                                       fill="rgba(0, 240, 255, 0.25)"
-                                       stroke="#00f0ff"
-                                       strokeWidth="15"
-                                     />
-                                   ))}
-
-                                   {selMap.gates?.map((gate, i) => (
-                                     <rect
-                                       key={`gate-${i}`}
-                                       x={gate.x}
-                                       y={gate.y}
-                                       width={gate.w}
-                                       height={gate.h}
-                                       fill="rgba(255, 204, 0, 0.42)"
-                                       stroke="#ffcc00"
-                                       strokeWidth="20"
-                                     />
-                                   ))}
-
-                                   {/* Render Spawners */}
-                                   {selMap.spawners.map((s, i) => (
-                                     <g key={`spawner-${i}`}>
-                                       {isTitanRelicType(s.specialType) && getTitanRelicPrimitives(s, 0).map(primitive =>
-                                         primitive.kind === 'circle' ? (
-                                           <circle
-                                             key={`titan-${primitive.id}`}
-                                             cx={primitive.cx}
-                                             cy={primitive.cy}
-                                             r={primitive.radius}
-                                             fill={getTitanRelicPalette(s.specialType).fill}
-                                             stroke={getTitanRelicPalette(s.specialType).accent}
-                                             strokeWidth={12}
-                                           />
-                                         ) : (
-                                           <line
-                                             key={`titan-${primitive.id}`}
-                                             x1={primitive.ax}
-                                             y1={primitive.ay}
-                                             x2={primitive.bx}
-                                             y2={primitive.by}
-                                             stroke={getTitanRelicPalette(s.specialType).fill}
-                                             strokeWidth={primitive.radius * 2}
-                                             strokeLinecap="round"
-                                           />
-                                         )
-                                       )}
-                                       <circle
-                                         cx={s.x}
-                                         cy={s.y}
-                                         r={s.radius}
-                                         fill="#ff00ff"
-                                         stroke="rgba(255, 255, 255, 0.5)"
-                                         strokeWidth="8"
-                                       />
-                                     </g>
-                                   ))}
-
-                                   {/* Render Spawn Point */}
-                                   {selMap.spawnPoint && (
-                                     <g transform={`translate(${selMap.spawnPoint.x}, ${selMap.spawnPoint.y})`} pointerEvents="none" aria-hidden="true">
-                                       <circle r={70} fill="rgba(255, 204, 0, 0.10)" stroke="#FFCC00" strokeWidth={18} />
-                                       <circle r={18} fill="#FFCC00" />
-                                       <line x1={0} y1={-110} x2={0} y2={-80} stroke="#FFCC00" strokeWidth={18} />
-                                       <line x1={0} y1={80} x2={0} y2={110} stroke="#FFCC00" strokeWidth={18} />
-                                       <line x1={-110} y1={0} x2={-80} y2={0} stroke="#FFCC00" strokeWidth={18} />
-                                       <line x1={80} y1={0} x2={110} y2={0} stroke="#FFCC00" strokeWidth={18} />
-                                       <text
-                                         x={100}
-                                         y={-80}
-                                         fill="#FFCC00"
-                                         fontSize={120}
-                                         fontFamily="monospace"
-                                         fontWeight="bold"
-                                         stroke="#080A12"
-                                         strokeWidth={30}
-                                         paintOrder="stroke"
-                                         strokeLinejoin="round"
-                                         style={{ letterSpacing: '0.1em', filter: 'drop-shadow(0px 2px 2px rgba(255, 204, 0, 0.35))' }}
-                                       >
-                                         START
-                                       </text>
-                                     </g>
-                                   )}
-                                 </svg>
+                                 />
                                </div>
                             </div>
                           )
@@ -14604,92 +14402,12 @@ export default function GameCanvas() {
                               <div className="contents">
                                 {/* Miniature SVG Preview */}
                                 <div className="w-full aspect-square self-center border border-[#ffcc00]/30 bg-[#050508] relative overflow-hidden flex items-center justify-center shadow-[inset_0_0_8px_rgba(255,204,0,0.1)]">
-                                  <svg
-                                    viewBox="0 0 3000 3000"
+                                  <MapPreviewSvg
+                                    map={currentMap}
+                                    theme="gold"
+                                    gridSize={300}
                                     className="w-full h-full aspect-square"
-                                    preserveAspectRatio="xMidYMid meet"
-                                  >
-                                    <rect width="3000" height="3000" fill="#050508" stroke="rgba(255, 204, 0, 0.4)" strokeWidth="15" />
-                                    <defs>
-                                      <pattern id="match-tab-preview-grid" width="300" height="300" patternUnits="userSpaceOnUse">
-                                        <path d="M 300 0 L 0 0 0 300" fill="none" stroke="rgba(255, 204, 0, 0.08)" strokeWidth="8" />
-                                      </pattern>
-                                    </defs>
-                                    <rect width="3000" height="3000" fill="url(#match-tab-preview-grid)" />
-
-                                    {/* Walls */}
-                                    {currentMap.walls.map((w, i) => (
-                                      <rect
-                                        key={`wall-${i}`}
-                                        x={w.x}
-                                        y={w.y}
-                                        width={w.w}
-                                        height={w.h}
-                                        fill="rgba(255, 204, 0, 0.25)"
-                                        stroke="#ffcc00"
-                                        strokeWidth="15"
-                                      />
-                                    ))}
-
-                                    {currentMap.gates?.map((gate, i) => (
-                                      <rect
-                                        key={`gate-${i}`}
-                                        x={gate.x}
-                                        y={gate.y}
-                                        width={gate.w}
-                                        height={gate.h}
-                                        fill="rgba(255, 204, 0, 0.45)"
-                                        stroke="#ffcc00"
-                                        strokeWidth="20"
-                                      />
-                                    ))}
-
-                                    {/* Spawners and their colored titan geometry */}
-                                    {currentMap.spawners.map((s, i) => (
-                                      <g key={`spawner-${i}`}>
-                                        {isTitanRelicType(s.specialType) && getTitanRelicPrimitives(s, 0).map(primitive =>
-                                          primitive.kind === 'circle' ? (
-                                            <circle
-                                              key={`match-titan-${i}-${primitive.id}`}
-                                              cx={primitive.cx}
-                                              cy={primitive.cy}
-                                              r={primitive.radius}
-                                              fill={getTitanRelicPalette(s.specialType).fill}
-                                              stroke={getTitanRelicPalette(s.specialType).accent}
-                                              strokeWidth={12}
-                                            />
-                                          ) : (
-                                            <line
-                                              key={`match-titan-${i}-${primitive.id}`}
-                                              x1={primitive.ax}
-                                              y1={primitive.ay}
-                                              x2={primitive.bx}
-                                              y2={primitive.by}
-                                              stroke={getTitanRelicPalette(s.specialType).fill}
-                                              strokeWidth={primitive.radius * 2}
-                                              strokeLinecap="round"
-                                            />
-                                          )
-                                        )}
-                                        <circle
-                                          cx={s.x}
-                                          cy={s.y}
-                                          r={s.radius}
-                                          fill="#ff00ff"
-                                          stroke="rgba(255, 255, 255, 0.5)"
-                                          strokeWidth="8"
-                                        />
-                                      </g>
-                                    ))}
-
-                                    {/* Spawn Point */}
-                                    {currentMap.spawnPoint && (
-                                      <g transform={`translate(${currentMap.spawnPoint.x}, ${currentMap.spawnPoint.y})`} pointerEvents="none" aria-hidden="true">
-                                        <circle r={70} fill="rgba(255, 204, 0, 0.15)" stroke="#FFCC00" strokeWidth={18} />
-                                        <circle r={18} fill="#FFCC00" />
-                                      </g>
-                                    )}
-                                  </svg>
+                                  />
                                 </div>
 
                                 {/* Map info */}
