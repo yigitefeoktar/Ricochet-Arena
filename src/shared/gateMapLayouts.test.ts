@@ -176,6 +176,8 @@ test('Crush Circuit keeps two objectives in its center and omits the short south
   const map = NEW_GATE_MAP_LAYOUTS.crush_circuit;
   assert.equal(map.gates.length, 6);
   assert.equal(map.gates.some(gate => gate.id === 'circuit-south-east'), false);
+  assert.equal(map.walls.some(wall => wall.x === 2_000 && wall.y === 2_250 && wall.w === 200 && wall.h === 50), true);
+  assert.equal(map.gates.every(gate => gate.initialDelayMs === 0), true);
   assert.equal(map.spawners.some(objective => objective.x === 1_600 && objective.y === 1_050), true);
   assert.equal(map.spawners.some(objective => objective.x === 1_400 && objective.y === 1_850), true);
 });

@@ -264,7 +264,7 @@ export const NEW_GATE_MAP_LAYOUTS: Record<NewGateMapId, GateMapLayout> = {
   crush_circuit: {
     name: 'Crush Circuit',
     difficulty: 'EXPERT',
-    description: 'Six independently phased shortcuts cut through an asymmetric loop. Two objectives sit inside the circuit while the outer route remains available.',
+    description: 'Six synchronized shortcuts open and close together across an asymmetric loop. Two objectives sit inside the circuit while the outer route remains available.',
     walls: [
       ...BASE_WALLS,
       { x: 750, y: 300, w: 50, h: 500 },
@@ -276,6 +276,7 @@ export const NEW_GATE_MAP_LAYOUTS: Record<NewGateMapId, GateMapLayout> = {
       { x: 1_650, y: 700, w: 550, h: 50 },
       { x: 800, y: 2_250, w: 400, h: 50 },
       { x: 1_500, y: 2_250, w: 500, h: 50 },
+      { x: 2_000, y: 2_250, w: 200, h: 50 },
       { x: 900, y: 1_450, w: 400, h: 50 },
       { x: 1_600, y: 1_450, w: 450, h: 50 },
       { x: 1_180, y: 1_060, w: 180, h: 180 },
@@ -283,11 +284,11 @@ export const NEW_GATE_MAP_LAYOUTS: Record<NewGateMapId, GateMapLayout> = {
     ],
     gates: [
       { id: 'circuit-west-north', x: 750, y: 800, w: 50, h: 300, orientation: 'vertical', initialDelayMs: 0 },
-      { id: 'circuit-west-south', x: 750, y: 1_900, w: 50, h: 300, orientation: 'vertical', initialDelayMs: 3_900 },
-      { id: 'circuit-east', x: 2_200, y: 1_000, w: 50, h: 300, orientation: 'vertical', initialDelayMs: 1_300 },
-      { id: 'circuit-north', x: 1_350, y: 700, w: 300, h: 50, orientation: 'horizontal', initialDelayMs: 5_200 },
-      { id: 'circuit-south-west', x: 1_200, y: 2_250, w: 300, h: 50, orientation: 'horizontal', initialDelayMs: 2_600 },
-      { id: 'circuit-core', x: 1_300, y: 1_450, w: 300, h: 50, orientation: 'horizontal', initialDelayMs: 4_000 },
+      { id: 'circuit-west-south', x: 750, y: 1_900, w: 50, h: 300, orientation: 'vertical', initialDelayMs: 0 },
+      { id: 'circuit-east', x: 2_200, y: 1_000, w: 50, h: 300, orientation: 'vertical', initialDelayMs: 0 },
+      { id: 'circuit-north', x: 1_350, y: 700, w: 300, h: 50, orientation: 'horizontal', initialDelayMs: 0 },
+      { id: 'circuit-south-west', x: 1_200, y: 2_250, w: 300, h: 50, orientation: 'horizontal', initialDelayMs: 0 },
+      { id: 'circuit-core', x: 1_300, y: 1_450, w: 300, h: 50, orientation: 'horizontal', initialDelayMs: 0 },
     ],
     spawners: [
       spawner(420, 430),
