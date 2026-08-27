@@ -174,10 +174,6 @@ export function MapPreviewSvg({
         const openProgress = state.openProgress;
         const isHorizontal = gate.orientation === 'horizontal';
         const panelExtent = (isHorizontal ? gate.w : gate.h) * 0.5 * (1 - openProgress);
-        const isWarning = state.phase === 'warning_open' || state.phase === 'warning_close';
-        const warningPulse = isWarning ? 0.55 + 0.45 * Math.sin(previewTimeMs * 0.018) : 1;
-        const panelStroke = isWarning ? '#ff5a1f' : '#ffcc00';
-        const statusColor = isWarning ? '#ff5a1f' : (openProgress > 0.98 ? '#00ffaa' : '#ffcc00');
         const panelRects = panelExtent > 0.5
           ? isHorizontal
             ? [
@@ -204,7 +200,7 @@ export function MapPreviewSvg({
               width={gate.w}
               height={gate.h}
               fill="none"
-              stroke={`rgba(255, 204, 0, ${0.28 + warningPulse * 0.32})`}
+              stroke="rgba(255, 204, 0, 0.48)"
               strokeWidth="14"
               strokeDasharray="38 26"
             />
@@ -216,20 +212,20 @@ export function MapPreviewSvg({
                 width={panel.w}
                 height={panel.h}
                 fill="#17130a"
-                stroke={panelStroke}
+                stroke="#ffcc00"
                 strokeWidth="18"
-                style={{ filter: `drop-shadow(0 0 ${isWarning ? 12 * warningPulse : 6}px ${panelStroke})` }}
+                style={{ filter: 'drop-shadow(0 0 6px #ffcc00)' }}
               />
             ))}
             {isHorizontal ? (
               <>
-                <rect x={gate.x - 28} y={gate.y + gate.h * 0.25} width={18} height={gate.h * 0.5} fill={statusColor} />
-                <rect x={gate.x + gate.w + 10} y={gate.y + gate.h * 0.25} width={18} height={gate.h * 0.5} fill={statusColor} />
+                <rect x={gate.x - 28} y={gate.y + gate.h * 0.25} width={18} height={gate.h * 0.5} fill="#ffcc00" />
+                <rect x={gate.x + gate.w + 10} y={gate.y + gate.h * 0.25} width={18} height={gate.h * 0.5} fill="#ffcc00" />
               </>
             ) : (
               <>
-                <rect x={gate.x + gate.w * 0.25} y={gate.y - 28} width={gate.w * 0.5} height={18} fill={statusColor} />
-                <rect x={gate.x + gate.w * 0.25} y={gate.y + gate.h + 10} width={gate.w * 0.5} height={18} fill={statusColor} />
+                <rect x={gate.x + gate.w * 0.25} y={gate.y - 28} width={gate.w * 0.5} height={18} fill="#ffcc00" />
+                <rect x={gate.x + gate.w * 0.25} y={gate.y + gate.h + 10} width={gate.w * 0.5} height={18} fill="#ffcc00" />
               </>
             )}
           </g>
