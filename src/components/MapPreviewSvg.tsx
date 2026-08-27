@@ -1,11 +1,8 @@
 import React, { useEffect, useId, useState } from 'react';
 import { useReducedMotion } from 'motion/react';
 import {
-  advanceGateStateWithTransitions,
-  createInitialGateStates,
-  GATE_TIMINGS_MS,
-  getGateOpenProgress,
   type GateDefinition,
+  type GatePhase,
 } from '../shared/gateMechanics';
 import {
   getTitanRelicPalette,
@@ -38,10 +35,57 @@ type MapPreviewSvgProps = {
 };
 
 const PREVIEW_FRAME_INTERVAL_MS = 1000 / 60;
-const GATE_CYCLE_DURATION_MS = Object.values(GATE_TIMINGS_MS).reduce(
+const PREVIEW_GATE_DELAY_SCALE = 0.18;
+const PREVIEW_GATE_TIMINGS_MS: Record<GatePhase, number> = {
+  closed: 420,
+  warning_open: 220,
+  opening: 260,
+  open: 650,
+  warning_close: 220,
+  closing: 260,
+};
+const PREVIEW_GATE_PHASES: readonly GatePhase[] = [
+  'closed',
+  'warning_open',
+  'opening',
+  'open',
+  'warning_close',
+  'closing',
+];
+const PREVIEW_GATE_CYCLE_DURATION_MS = Object.values(PREVIEW_GATE_TIMINGS_MS).reduce(
   (total, duration) => total + duration,
   0,
 );
+
+type PreviewGateState = {
+  phase: GatePhase;
+  openProgress: number;
+};
+
+function getPreviewGateState(gate: GateDefinition, elapsedMs: number): PreviewGateState {
+  const delayMs = Math.max(0, gate.initialDelayMs ?? 0) * PREVIEW_GATE_DELAY_SCALE;
+  if (elapsedMs < delayMs) return { phase: 'closed', openProgress: 0 };
+
+  let cycleTimeMs = (elapsedMs - delayMs) % PREVIEW_GATE_CYCLE_DURATION_MS;
+  for (const phase of PREVIEW_GATE_PHASES) {
+    const durationMs = PREVIEW_GATE_TIMINGS_MS[phase];
+    if (cycleTimeMs < durationMs) {
+      if (phase === 'opening') {
+        return { phase, openProgress: cycleTimeMs / durationMs };
+      }
+      if (phase === 'closing') {
+        return { phase, openProgress: 1 - cycleTimeMs / durationMs };
+      }
+      return {
+        phase,
+        openProgress: phase === 'open' || phase === 'warning_close' ? 1 : 0,
+      };
+    }
+    cycleTimeMs -= durationMs;
+  }
+
+  return { phase: 'closed', openProgress: 0 };
+}
 
 function usePreviewClock(shouldAnimate: boolean): number {
   const prefersReducedMotion = useReducedMotion();
@@ -85,12 +129,12 @@ export function MapPreviewSvg({
   gridSize = 150,
   detailedSpawnPoint = false,
 }: MapPreviewSvgProps) {
-  const patternId = `map-preview-grid-${useId().replace(/:/g, '')}`;
+  const previewId = useId().replace(/:/g, '');
+  const patternId = `map-preview-grid-${previewId}`;
   const hasAnimatedFeatures = Boolean(map.gates?.length) || map.spawners.some(spawner =>
     isTitanRelicType(spawner.specialType),
   );
   const previewTimeMs = usePreviewClock(hasAnimatedFeatures);
-  const gateInitialStates = map.gates ? createInitialGateStates(map.gates, 0) : [];
 
   const frameColor = theme === 'gold' ? '#ffcc00' : '#00f0ff';
   const wallColor = wallTheme === 'gold' ? '#ffcc00' : '#00f0ff';
@@ -126,35 +170,69 @@ export function MapPreviewSvg({
       ))}
 
       {map.gates?.map((gate, index) => {
-        const initialState = gateInitialStates[index];
-        const initialDelayMs = Math.max(0, gate.initialDelayMs ?? 0);
-        const boundedGateTimeMs = previewTimeMs < initialDelayMs
-          ? previewTimeMs
-          : initialDelayMs + (previewTimeMs - initialDelayMs) % GATE_CYCLE_DURATION_MS;
-        const state = initialState
-          ? advanceGateStateWithTransitions(initialState, boundedGateTimeMs).state
-          : null;
-        const openProgress = state ? getGateOpenProgress(state, boundedGateTimeMs) : 0;
+        const state = getPreviewGateState(gate, previewTimeMs);
+        const openProgress = state.openProgress;
         const isHorizontal = gate.orientation === 'horizontal';
-        const width = isHorizontal ? gate.w * (1 - openProgress) : gate.w;
-        const height = isHorizontal ? gate.h : gate.h * (1 - openProgress);
-        const x = gate.x + (gate.w - width) / 2;
-        const y = gate.y + (gate.h - height) / 2;
-        const isWarning = state?.phase === 'warning_open' || state?.phase === 'warning_close';
+        const panelExtent = (isHorizontal ? gate.w : gate.h) * 0.5 * (1 - openProgress);
+        const isWarning = state.phase === 'warning_open' || state.phase === 'warning_close';
+        const warningPulse = isWarning ? 0.55 + 0.45 * Math.sin(previewTimeMs * 0.018) : 1;
+        const panelStroke = isWarning ? '#ff5a1f' : '#ffcc00';
+        const statusColor = isWarning ? '#ff5a1f' : (openProgress > 0.98 ? '#00ffaa' : '#ffcc00');
+        const panelRects = panelExtent > 0.5
+          ? isHorizontal
+            ? [
+                { x: gate.x, y: gate.y, w: panelExtent, h: gate.h },
+                { x: gate.x + gate.w - panelExtent, y: gate.y, w: panelExtent, h: gate.h },
+              ]
+            : [
+                { x: gate.x, y: gate.y, w: gate.w, h: panelExtent },
+                { x: gate.x, y: gate.y + gate.h - panelExtent, w: gate.w, h: panelExtent },
+              ]
+          : [];
 
         return (
-          <rect
+          <g
             key={`gate-${gate.id || index}`}
             data-map-preview-feature="gate"
-            data-gate-phase={state?.phase ?? 'closed'}
-            x={x}
-            y={y}
-            width={Math.max(0, width)}
-            height={Math.max(0, height)}
-            fill={isWarning ? 'rgba(255, 92, 0, 0.58)' : 'rgba(255, 204, 0, 0.42)'}
-            stroke={isWarning ? '#ff5c00' : '#ffcc00'}
-            strokeWidth="20"
-          />
+            data-gate-id={gate.id}
+            data-gate-phase={state.phase}
+            data-gate-open-progress={openProgress.toFixed(3)}
+          >
+            <rect
+              x={gate.x}
+              y={gate.y}
+              width={gate.w}
+              height={gate.h}
+              fill="none"
+              stroke={`rgba(255, 204, 0, ${0.28 + warningPulse * 0.32})`}
+              strokeWidth="14"
+              strokeDasharray="38 26"
+            />
+            {panelRects.map((panel, panelIndex) => (
+              <rect
+                key={`panel-${panelIndex}`}
+                x={panel.x}
+                y={panel.y}
+                width={panel.w}
+                height={panel.h}
+                fill="#17130a"
+                stroke={panelStroke}
+                strokeWidth="18"
+                style={{ filter: `drop-shadow(0 0 ${isWarning ? 12 * warningPulse : 6}px ${panelStroke})` }}
+              />
+            ))}
+            {isHorizontal ? (
+              <>
+                <rect x={gate.x - 28} y={gate.y + gate.h * 0.25} width={18} height={gate.h * 0.5} fill={statusColor} />
+                <rect x={gate.x + gate.w + 10} y={gate.y + gate.h * 0.25} width={18} height={gate.h * 0.5} fill={statusColor} />
+              </>
+            ) : (
+              <>
+                <rect x={gate.x + gate.w * 0.25} y={gate.y - 28} width={gate.w * 0.5} height={18} fill={statusColor} />
+                <rect x={gate.x + gate.w * 0.25} y={gate.y + gate.h + 10} width={gate.w * 0.5} height={18} fill={statusColor} />
+              </>
+            )}
+          </g>
         );
       })}
 
