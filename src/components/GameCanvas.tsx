@@ -445,7 +445,7 @@ const MAPS: Record<string, MapDefinition> = {
       { x: 1600, y: 1000, w: 400, h: 100 },
     ],
     spawners: [
-      { x: 1500, y: 1500, radius: 40, hp: 100, maxHp: 100, specialType: 'shield' },
+      { x: 1500, y: 1500, radius: 40, hp: 100, maxHp: 100 },
       { x: 1200, y: 1500, radius: 40, hp: 100, maxHp: 100 },
       { x: 1800, y: 1500, radius: 40, hp: 100, maxHp: 100 },
       { x: 1500, y: 1200, radius: 40, hp: 100, maxHp: 100 },
