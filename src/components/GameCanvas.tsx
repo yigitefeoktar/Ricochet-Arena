@@ -794,7 +794,7 @@ const MAPS: Record<string, MapDefinition> = {
       { x: 700, y: 2200, w: 100, h: 50 }
     ],
     spawners: [
-      { x: 500, y: 2500, radius: 40, hp: 100, maxHp: 100 },
+      { x: 500, y: 2500, radius: 40, hp: 100, maxHp: 100, specialType: 'magma_gates' },
       { x: 500, y: 500, radius: 40, hp: 100, maxHp: 100, specialType: 'shield' },
       { x: 2500, y: 500, radius: 40, hp: 100, maxHp: 100, specialType: 'kinetic' },
       { x: 1500, y: 1500, radius: 40, hp: 100, maxHp: 100, specialType: 'singularity' },
