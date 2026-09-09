@@ -78,6 +78,7 @@ import {
   type GateRuntimeState,
 } from '../shared/gateMechanics';
 import { NEW_GATE_MAP_LAYOUTS } from '../shared/gateMapLayouts';
+import { DENSE_PINBALL_SPAWNERS, DENSE_PINBALL_WALLS } from '../shared/densePinballLayout';
 import { MapPreviewSvg } from './MapPreviewSvg';
 
 interface ActiveMatchSettingsRequest {
@@ -565,6 +566,13 @@ const MAPS: Record<string, MapDefinition> = {
       { x: 400, y: 2600, radius: 40, hp: 100, maxHp: 100 },
       { x: 2600, y: 2600, radius: 40, hp: 100, maxHp: 100 }
     ]
+  },
+  shrapnel_grid: {
+    name: "Shrapnel Grid",
+    difficulty: "EXPERT",
+    description: "A packed field of staggered bumpers funnels ricochets toward two cramped objective tunnels. No relics, no gates—only relentless geometry.",
+    walls: DENSE_PINBALL_WALLS,
+    spawners: DENSE_PINBALL_SPAWNERS,
   },
   safe_haven: {
     name: "Safe Haven",

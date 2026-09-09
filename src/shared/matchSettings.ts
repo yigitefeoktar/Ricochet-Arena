@@ -27,6 +27,7 @@ export const VALID_MAP_IDS = [
   'choke_points',
   'the_gauntlet',
   'pinball',
+  'shrapnel_grid',
   'safe_haven',
   'gladiator_pit',
   'sector_control',

@@ -20,6 +20,12 @@ test('multiplayer accepts every titan relic map exposed by the selector', () => 
   }
 });
 
+test('Shrapnel Grid is accepted without enabling special map networking', () => {
+  assert.equal(isValidMapId('shrapnel_grid'), true);
+  assert.equal(isTitanRelicMapId('shrapnel_grid'), false);
+  assert.equal(isTimedGateMapId('shrapnel_grid'), false);
+});
+
 test('titan multiplayer behavior is restricted to the two titan map IDs', () => {
   for (const mapId of VALID_MAP_IDS) {
     assert.equal(
