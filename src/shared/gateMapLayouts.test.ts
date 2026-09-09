@@ -149,13 +149,13 @@ test('all objectives remain connected by a player-sized route with every gate cl
   }
 });
 
-test('The Conveyor vertical gates span their lanes without bypass gaps', () => {
+test('The Conveyor is rotated clockwise and its horizontal cross-column gates have no bypass gaps', () => {
   const map = NEW_GATE_MAP_LAYOUTS.conveyor;
   const expectedSupports: Rect[] = [
-    { x: 2_150, y: 650, w: 50, h: 150 },
-    { x: 2_150, y: 1_050, w: 50, h: 150 },
-    { x: 650, y: 1_850, w: 50, h: 150 },
-    { x: 650, y: 2_250, w: 50, h: 150 },
+    { x: 2_200, y: 2_150, w: 150, h: 50 },
+    { x: 1_800, y: 2_150, w: 150, h: 50 },
+    { x: 1_000, y: 650, w: 150, h: 50 },
+    { x: 600, y: 650, w: 150, h: 50 },
   ];
   for (const support of expectedSupports) {
     assert.equal(
@@ -167,8 +167,20 @@ test('The Conveyor vertical gates span their lanes without bypass gaps', () => {
 
   const upperGate = map.gates.find(gate => gate.id === 'conveyor-upper-cut');
   const lowerGate = map.gates.find(gate => gate.id === 'conveyor-lower-cut');
-  assert.deepEqual(upperGate && { x: upperGate.x, top: upperGate.y, bottom: upperGate.y + upperGate.h }, { x: 2_150, top: 800, bottom: 1_050 });
-  assert.deepEqual(lowerGate && { x: lowerGate.x, top: lowerGate.y, bottom: lowerGate.y + lowerGate.h }, { x: 650, top: 2_000, bottom: 2_250 });
+  assert.deepEqual(upperGate && { y: upperGate.y, left: upperGate.x, right: upperGate.x + upperGate.w }, { y: 2_150, left: 1_950, right: 2_200 });
+  assert.deepEqual(lowerGate && { y: lowerGate.y, left: lowerGate.x, right: lowerGate.x + lowerGate.w }, { y: 650, left: 750, right: 1_000 });
+  assert.equal(map.gates.slice(0, 4).every(gate => gate.orientation === 'vertical'), true);
+  assert.equal(map.gates.slice(4).every(gate => gate.orientation === 'horizontal'), true);
+  assert.deepEqual(
+    map.spawners.map(({ x, y }) => ({ x, y })),
+    [
+      { x: 2_700, y: 300 },
+      { x: 2_100, y: 2_700 },
+      { x: 1_500, y: 300 },
+      { x: 900, y: 2_650 },
+      { x: 300, y: 500 },
+    ],
+  );
 });
 
 test('Crush Circuit keeps two objectives in its center and omits the short south-east gate', () => {
