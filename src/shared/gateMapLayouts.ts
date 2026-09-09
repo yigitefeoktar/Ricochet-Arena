@@ -19,7 +19,6 @@ export interface GateMapLayout {
 }
 
 export const NEW_GATE_MAP_IDS = [
-  'overflow',
   'containment_breach',
   'crossflow',
   'conveyor',
@@ -101,35 +100,6 @@ const PULSE_CORRIDOR_SPAWNERS = [0, 3, 6, 9, 12].map((column, index) =>
 );
 
 export const NEW_GATE_MAP_LAYOUTS: Record<NewGateMapId, GateMapLayout> = {
-  overflow: {
-    name: 'Overflow',
-    difficulty: 'MEDIUM',
-    description: 'Three broad timed gates redirect movement and ricochets across an open arena. Every barrier has a calm route around its outer end.',
-    walls: [
-      ...BASE_WALLS,
-      { x: 1_050, y: 250, w: 50, h: 900 },
-      { x: 1_050, y: 1_500, w: 50, h: 1_050 },
-      { x: 1_350, y: 1_850, w: 650, h: 50 },
-      { x: 2_350, y: 1_850, w: 400, h: 50 },
-      { x: 1_700, y: 700, w: 300, h: 50 },
-      { x: 2_250, y: 700, w: 500, h: 50 },
-      { x: 430, y: 1_250, w: 240, h: 100 },
-      { x: 1_520, y: 2_350, w: 220, h: 120 },
-    ],
-    gates: [
-      { id: 'overflow-west', x: 1_050, y: 1_150, w: 50, h: 350, orientation: 'vertical', initialDelayMs: 0 },
-      { id: 'overflow-south', x: 2_000, y: 1_850, w: 350, h: 50, orientation: 'horizontal', initialDelayMs: 2_400 },
-      { id: 'overflow-north', x: 2_000, y: 700, w: 250, h: 50, orientation: 'horizontal', initialDelayMs: 4_800 },
-    ],
-    spawners: [
-      spawner(420, 520),
-      spawner(650, 2_350),
-      spawner(1_500, 450),
-      spawner(2_550, 1_250),
-      spawner(2_100, 2_550),
-    ],
-  },
-
   containment_breach: {
     name: 'Containment Breach',
     difficulty: 'HARD',

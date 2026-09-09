@@ -35,8 +35,6 @@ test('titan multiplayer behavior is restricted to the two titan map IDs', () => 
 
 test('timed gate behavior is restricted to the explicit gate-map allowlist', () => {
   const expectedGateMaps = new Set([
-    'switchyard',
-    'overflow',
     'containment_breach',
     'crossflow',
     'conveyor',
@@ -54,6 +52,16 @@ test('timed gate behavior is restricted to the explicit gate-map allowlist', () 
   }
   assert.equal(isTimedGateMapId(''), false);
   assert.equal(isTimedGateMapId(null), false);
+});
+
+test('retired map IDs are rejected and sanitize to the default map', () => {
+  for (const mapId of ['scattered_ruins', 'checkerboard', 'switchyard', 'overflow']) {
+    assert.equal(isValidMapId(mapId), false);
+    assert.deepEqual(sanitizeMatchSettings({ mapId, gameMode: 'normal' }), {
+      mapId: 'medium',
+      gameMode: 'normal',
+    });
+  }
 });
 
 test('only Pulse Corridor receives the expanded multiplayer gate-state budget', () => {

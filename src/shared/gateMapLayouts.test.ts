@@ -70,8 +70,7 @@ function reachableCells(
 }
 
 test('new gate maps have distinct IDs, intended difficulty progression and no relics', () => {
-  assert.equal(new Set(NEW_GATE_MAP_IDS).size, 8);
-  assert.equal(NEW_GATE_MAP_LAYOUTS.overflow.difficulty, 'MEDIUM');
+  assert.equal(new Set(NEW_GATE_MAP_IDS).size, 7);
   for (const mapId of ['containment_breach', 'crossflow', 'conveyor'] as const) {
     assert.equal(NEW_GATE_MAP_LAYOUTS[mapId].difficulty, 'HARD');
   }

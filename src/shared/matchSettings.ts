@@ -33,12 +33,8 @@ export const VALID_MAP_IDS = [
   'hellfire_ring',
   'gridlock',
   'labyrinth',
-  'scattered_ruins',
-  'checkerboard',
   'titan_orbit',
   'titan_tempest',
-  'switchyard',
-  'overflow',
   'containment_breach',
   'crossflow',
   'conveyor',
@@ -65,8 +61,6 @@ export function isTitanRelicMapId(
 }
 
 export const TIMED_GATE_MAP_IDS = [
-  'switchyard',
-  'overflow',
   'containment_breach',
   'crossflow',
   'conveyor',

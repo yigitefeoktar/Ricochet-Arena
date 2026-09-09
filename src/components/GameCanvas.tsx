@@ -249,12 +249,6 @@ const BASE_WALLS = [
 
 type MapDefinition = { name: string; difficulty: 'EASY' | 'MEDIUM' | 'HARD' | 'EXPERT'; description: string; walls: {x: number, y: number, w: number, h: number}[]; spawners: {x: number, y: number, radius: number, hp: number, maxHp: number, specialType?: string}[]; spawnPoint?: { x: number; y: number }; gates?: GateDefinition[] };
 
-const SWITCHYARD_GATES: GateDefinition[] = [
-  { id: 'central-transfer', x: 1475, y: 1320, w: 50, h: 360, orientation: 'vertical', initialDelayMs: 0 },
-  { id: 'north-shunt', x: 850, y: 925, w: 300, h: 50, orientation: 'horizontal', initialDelayMs: 1_800 },
-  { id: 'south-shunt', x: 1850, y: 2025, w: 300, h: 50, orientation: 'horizontal', initialDelayMs: 3_600 },
-];
-
 const MAPS: Record<string, MapDefinition> = {
   medium: {
     name: "The Original",
@@ -912,69 +906,6 @@ const MAPS: Record<string, MapDefinition> = {
     ],
     spawnPoint: { x: 180, y: 600 }
   },
-  scattered_ruins: {
-    name: "Scattered Ruins",
-    difficulty: "EASY",
-    description: "An ancient tactical arena littered with randomized-looking features and organic covers, perfect for multiplayer strategy.",
-    walls: [
-      ...BASE_WALLS,
-      { x: 400, y: 1000, w: 200, h: 100 },
-      { x: 1000, y: 400, w: 100, h: 300 },
-      { x: 1600, y: 300, w: 150, h: 150 },
-      { x: 2200, y: 800, w: 200, h: 100 },
-
-      { x: 800, y: 1200, w: 100, h: 250 },
-      { x: 1300, y: 1000, w: 300, h: 100 },
-      { x: 1900, y: 1300, w: 150, h: 150 },
-
-      { x: 600, y: 1700, w: 250, h: 100 },
-      { x: 1200, y: 1900, w: 100, h: 300 },
-      { x: 1700, y: 2100, w: 300, h: 100 },
-
-      { x: 2300, y: 1800, w: 150, h: 250 },
-      { x: 1100, y: 2500, w: 200, h: 100 },
-      { x: 2100, y: 2500, w: 100, h: 200 }
-    ],
-    spawners: [
-      { x: 500, y: 500, radius: 40, hp: 100, maxHp: 100 },
-      { x: 2500, y: 500, radius: 40, hp: 100, maxHp: 100 },
-      { x: 1500, y: 1500, radius: 40, hp: 100, maxHp: 100 },
-      { x: 500, y: 2500, radius: 40, hp: 100, maxHp: 100 },
-      { x: 2500, y: 2500, radius: 40, hp: 100, maxHp: 100 }
-    ]
-  },
-  checkerboard: {
-    name: "Checkerboard",
-    difficulty: "EXPERT",
-    description: "An elegant matrix of small square pillars arranged in a grid-like checkerboard pattern. High-frequency ricochets are guaranteed!",
-    walls: [
-      ...BASE_WALLS,
-      // Row 0
-      { x: 900, y: 300, w: 200, h: 200 },
-      { x: 1900, y: 300, w: 200, h: 200 },
-      // Row 1
-      { x: 300, y: 900, w: 200, h: 200 },
-      { x: 1400, y: 900, w: 200, h: 200 },
-      { x: 2500, y: 900, w: 200, h: 200 },
-      // Row 2
-      { x: 900, y: 1500, w: 200, h: 200 },
-      { x: 1900, y: 1500, w: 200, h: 200 },
-      // Row 3
-      { x: 300, y: 2100, w: 200, h: 200 },
-      { x: 1400, y: 2100, w: 200, h: 200 },
-      { x: 2500, y: 2100, w: 200, h: 200 },
-      // Row 4
-      { x: 900, y: 2700, w: 200, h: 200 },
-      { x: 1900, y: 2700, w: 200, h: 200 }
-    ],
-    spawners: [
-      { x: 300, y: 300, radius: 40, hp: 100, maxHp: 100 },
-      { x: 2700, y: 300, radius: 40, hp: 100, maxHp: 100, specialType: 'crystal' },
-      { x: 1500, y: 1500, radius: 40, hp: 100, maxHp: 100, specialType: 'kinetic' },
-      { x: 300, y: 2700, radius: 40, hp: 100, maxHp: 100 },
-      { x: 2700, y: 2700, radius: 40, hp: 100, maxHp: 100 }
-    ]
-  },
   titan_orbit: {
     name: "Titan Orbit",
     difficulty: "MEDIUM",
@@ -1005,39 +936,6 @@ const MAPS: Record<string, MapDefinition> = {
       { x: 600, y: 2400, radius: 40, hp: 100, maxHp: 100, specialType: 'titan_moons_overdrive' },
       { x: 2400, y: 2400, radius: 40, hp: 100, maxHp: 100, specialType: 'titan_triangle_overdrive' }
     ]
-  },
-  switchyard: {
-    name: "The Switchyard",
-    difficulty: "HARD",
-    description: "Three independently timed gates open tactical shortcuts through an asymmetric rail complex. Read the warning lights or take the long route.",
-    walls: [
-      ...BASE_WALLS,
-      // Central divider. The transfer gate is a shortcut; both outer ends stay open.
-      { x: 1475, y: 300, w: 50, h: 1020 },
-      { x: 1475, y: 1680, w: 50, h: 1020 },
-
-      // North-west shunt with routes around both ends.
-      { x: 300, y: 925, w: 550, h: 50 },
-      { x: 1150, y: 925, w: 325, h: 50 },
-
-      // South-east shunt, offset to prevent a symmetric arena.
-      { x: 1525, y: 2025, w: 325, h: 50 },
-      { x: 2150, y: 2025, w: 550, h: 50 },
-
-      // Small rail-control islands shape ricochets without blocking alternate paths.
-      { x: 520, y: 1500, w: 260, h: 90 },
-      { x: 2220, y: 1320, w: 260, h: 90 },
-      { x: 1050, y: 2380, w: 180, h: 180 },
-      { x: 1810, y: 460, w: 180, h: 180 },
-    ],
-    gates: SWITCHYARD_GATES,
-    spawners: [
-      { x: 480, y: 480, radius: 40, hp: 100, maxHp: 100 },
-      { x: 1180, y: 620, radius: 40, hp: 100, maxHp: 100 },
-      { x: 2450, y: 650, radius: 40, hp: 100, maxHp: 100 },
-      { x: 620, y: 2380, radius: 40, hp: 100, maxHp: 100 },
-      { x: 2450, y: 2420, radius: 40, hp: 100, maxHp: 100 },
-    ],
   },
   ...NEW_GATE_MAP_LAYOUTS,
 };
