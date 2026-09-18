@@ -14579,7 +14579,7 @@ export default function GameCanvas() {
                   }}
                 >
                   {/* Left: Score & Spawners / Target Counters */}
-                  <div ref={hudTopLeftRef} className="flex items-stretch gap-2 sm:gap-6 ml-28 sm:ml-32 lg:ml-36">
+                  <div ref={hudTopLeftRef} className="flex items-stretch gap-2 sm:gap-6">
                     <motion.div
                       animate={flashScore ? {
                         filter: [
@@ -14637,7 +14637,7 @@ export default function GameCanvas() {
                   </div>
 
                   {/* Right: Pause & Quit buttons */}
-                  <div ref={hudTopRightRef} className="flex flex-col sm:flex-row items-end sm:items-center justify-center gap-2 sm:gap-4 pointer-events-auto h-full pr-0 sm:pr-2">
+                  <div ref={hudTopRightRef} className="flex flex-col sm:flex-row items-end sm:items-center justify-center gap-2 sm:gap-4 pointer-events-auto h-full">
                     <button
                       onPointerDown={(e) => {
                         e.stopPropagation();
