@@ -1,0 +1,4 @@
+interface:
+  display_name: "Game deployment"
+  short_description: "GitHub main to Vercel, with an optional PC backend"
+  default_prompt: "Use $game-deployment to deploy this game's GitHub main frontend on Vercel and update its PC backend only if explicitly enabled. Preserve the frozen Google Cloud fallback."

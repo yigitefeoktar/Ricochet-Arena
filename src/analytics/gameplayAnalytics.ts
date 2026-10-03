@@ -1,3 +1,5 @@
+import { backendPath } from '../backend';
+
 export const ANALYTICS_TEST_TAG = 'not_deployed';
 export const ANALYTICS_TIMELINE_VERSION = 2;
 
@@ -196,7 +198,8 @@ function createBrowserId(): string {
 }
 
 async function loadByteBrewConfig(): Promise<ByteBrewConfig> {
-  const response = await fetch('/api/analytics-config', {
+  if (import.meta.env?.VITE_ANALYTICS_ENABLED === 'false') return { enabled: false };
+  const response = await fetch(backendPath('/api/analytics-config'), {
     cache: 'no-store',
     credentials: 'same-origin',
   });

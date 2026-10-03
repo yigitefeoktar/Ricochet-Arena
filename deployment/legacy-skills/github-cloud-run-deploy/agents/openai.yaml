@@ -1,0 +1,4 @@
+interface:
+  display_name: "GitHub to Cloud Run"
+  short_description: "Set up and repair GitHub-to-Cloud Run CI/CD"
+  default_prompt: "Use $github-cloud-run-deploy to connect this GitHub repository to Cloud Run and verify automatic deployments."

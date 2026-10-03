@@ -1,0 +1,8 @@
+.git
+.env*
+dist
+server.ts
+Dockerfile
+cloudbuild.yaml
+**/*.test.ts
+*.log

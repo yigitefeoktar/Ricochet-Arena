@@ -22,10 +22,18 @@ async function startServer() {
   const PORT = Number.isInteger(configuredPort) && configuredPort > 0
     ? configuredPort
     : 3000;
+  const HOST = process.env.HOST?.trim() || "0.0.0.0";
+  const serveFrontend = process.env.SERVE_FRONTEND !== "false";
   
   const httpServer = createServer(app);
   const io = new Server(httpServer, {
     cors: { origin: "*" }
+  });
+
+  // This endpoint contains browser analytics configuration, never authorization secrets.
+  app.use('/api/analytics-config', (_req, res, next) => {
+    if (!serveFrontend) res.setHeader('Access-Control-Allow-Origin', '*');
+    next();
   });
 
   // Basic API route
@@ -1178,14 +1186,14 @@ async function startServer() {
   });
 
   // Vite middleware for development
-  if (process.env.NODE_ENV !== "production") {
+  if (serveFrontend && process.env.NODE_ENV !== "production") {
     const { createServer: createViteServer } = await import("vite");
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",
     });
     app.use(vite.middlewares);
-  } else {
+  } else if (serveFrontend) {
     // Production
     const distPath = path.join(process.cwd(), 'dist');
     const indexPath = path.join(distPath, 'index.html');
@@ -1211,8 +1219,8 @@ async function startServer() {
     });
   }
 
-  httpServer.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
+  httpServer.listen(PORT, HOST, () => {
+    console.log(`Server running on http://${HOST}:${PORT}`);
   });
 }
 

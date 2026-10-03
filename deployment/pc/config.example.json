@@ -1,0 +1,15 @@
+{
+  "repository": "https://github.com/yigitefeoktar/Ricochet-Arena.git",
+  "root": "C:/GAME-RUNTIME/ricochet",
+  "npmCli": "C:/Program Files/nodejs/node_modules/npm/bin/npm-cli.js",
+  "probePort": 4105,
+  "currentFile": "C:/GAME-RUNTIME/ricochet/current.json",
+  "pauseFile": "C:/GAME-RUNTIME/ricochet/paused",
+  "processFile": "C:/GAME-RUNTIME/ricochet/backend-process.json",
+  "watchProcessFile": "C:/GAME-RUNTIME/ricochet/watch-process.json",
+  "watcherTask": "Codex-Ricochet-Backend",
+  "activateScript": "C:/GAME-RUNTIME/ricochet/bootstrap/Activate-Ricochet.ps1",
+  "pruneScript": "C:/GAME-RUNTIME/ricochet/bootstrap/Prune-Releases.ps1",
+  "startScript": "C:/GAME-RUNTIME/ricochet/bootstrap/Start-Backend.ps1",
+  "stopScript": "C:/GAME-RUNTIME/ricochet/bootstrap/Stop-Backend.ps1"
+}

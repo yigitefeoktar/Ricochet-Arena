@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { motion, AnimatePresence, useReducedMotion } from 'motion/react';
 import { io, Socket } from 'socket.io-client';
+import { backendOrigin } from '../backend';
 import { Copy, Check, Shuffle } from 'lucide-react';
 import {
   GameMode,
@@ -6760,7 +6761,7 @@ export default function GameCanvas() {
   handleHostRoleTransitionRef.current = handleHostRoleTransition;
 
   useEffect(() => {
-    const socket = io();
+    const socket = io(backendOrigin || undefined);
     socketRef.current = socket;
 
     const isCurrentRoom = (roomId: unknown): boolean => {
@@ -14444,6 +14445,11 @@ export default function GameCanvas() {
               ) : (
                 <>
                   <p className="text-[#ffcc00]/80 font-bold tracking-widest text-xs uppercase mb-2 w-full text-left">JOIN A ROOM</p>
+                  {!mpState.isConnected && (
+                    <p role="status" className="text-white/60 text-xs mb-4">
+                      Multiplayer is unavailable. You can still play single-player.
+                    </p>
+                  )}
                   <input
                     type="text"
                     value={mpState.joinCode}

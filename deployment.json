@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "branch": "main",
+  "frontend": {
+    "provider": "vercel",
+    "buildScript": "build:frontend",
+    "outputDirectory": "dist/frontend"
+  },
+  "backend": {
+    "provider": "pc",
+    "buildScript": "build:backend",
+    "entry": "dist/backend/server.cjs",
+    "healthPath": "/api/health",
+    "publicUrl": "https://ltestpc.tail3c0a5e.ts.net"
+  }
+}

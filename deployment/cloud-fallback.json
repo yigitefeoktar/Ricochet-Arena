@@ -1,0 +1,11 @@
+{
+  "frozenAt": "2026-10-03",
+  "automaticUpdates": "disabled",
+  "servicesRetained": true,
+  "games": [
+    { "repository": "yigitefeoktar/Ricochet-Arena", "project": "gen-lang-client-0375824487", "service": "the-ricochet-arena", "region": "us-west1", "trigger": "8486727b-150d-411e-ab44-ab0303ee6dec", "url": "https://the-ricochet-arena.ai.studio", "preservedRevision": "the-ricochet-arena-00076-5nt" },
+    { "repository": "yigitefeoktar/Memory-Arena", "project": "gen-lang-client-0375824487", "service": "memory-arena", "region": "us-west1", "trigger": "244dfc1a-0a64-4f50-a4b0-6f3f172422ca", "url": "https://memory-arena-823233237078.us-west1.run.app", "pcBackend": "deferred" },
+    { "repository": "yigitefeoktar/Memory-Arena-Survival", "project": "gen-lang-client-0375824487", "service": "memory-arena-survival", "region": "us-west1", "trigger": "88a7d0a8-87cc-4d92-ba8a-efa88a989b0b", "url": "https://memory-arena-survival-823233237078.us-west1.run.app", "pcBackend": "deferred" },
+    { "repository": "yigitefeoktar/arena-growth-io", "project": "arena-growth-io", "service": "arena-growth-io", "region": "europe-west8", "trigger": "d3d941fd-9629-4cd4-ba69-f4537cf63d86", "url": "https://arena-growth-io-1085708131906.europe-west8.run.app", "pcBackend": "deferred" }
+  ]
+}
