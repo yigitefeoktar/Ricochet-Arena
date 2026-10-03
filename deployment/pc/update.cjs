@@ -178,4 +178,6 @@ if (require.main === module) (async () => {
     if (result) console.log(JSON.stringify(result));
     if (result?.status === 'failed') process.exitCode = 1;
   } finally { await fs.unlink(lockPath).catch(() => {}); }
+  // Windows descendants may retain inherited pipe handles after activation.
+  if (process.argv.includes('--once')) process.exit(process.exitCode || 0);
 })().catch(error => { console.error(error.message); process.exitCode = 1; });

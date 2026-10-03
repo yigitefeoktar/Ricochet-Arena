@@ -13,6 +13,19 @@ const publicAgent = publicIp ? new (require('node:https').Agent)({
 }) : undefined;
 const sockets = [];
 const checks = [];
+async function request(url) {
+  if (!publicAgent) return fetch(url, { signal: AbortSignal.timeout(10000) });
+  return new Promise((resolve, reject) => {
+    const req = require('node:https').get(url, { agent: publicAgent }, response => {
+      let body = '';
+      response.on('data', chunk => { body += chunk; });
+      response.on('end', () => resolve({ status: response.statusCode, json: async () => JSON.parse(body), text: async () => body }));
+      response.on('error', reject);
+    });
+    req.setTimeout(10000, () => req.destroy(new Error('Public HTTP smoke request timed out')));
+    req.on('error', reject);
+  });
+}
 function event(socket, name, timeout = 5000) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => { socket.off(name, handler); reject(new Error(`Timed out waiting for ${name}`)); }, timeout);
@@ -31,18 +44,18 @@ async function connect(transport) {
 }
 function ack(socket, name, ...args) { return socket.timeout(5000).emitWithAck(name, ...args); }
 async function run() {
-  let response = await fetch(`${target}/api/health`);
+  let response = await request(`${target}/api/health`);
   assert.equal(response.status, 200);
   assert.equal((await response.json()).status, 'ok');
   checks.push('health HTTP 200');
-  response = await fetch(target);
+  response = await request(target);
   assert.equal(response.status, 404);
   checks.push('backend does not serve frontend HTML');
-  response = await fetch(`${target}/api/analytics-config`);
+  response = await request(`${target}/api/analytics-config`);
   assert.equal(response.status, 200);
   assert.equal((await response.json()).enabled, false);
   checks.push('pilot analytics disabled');
-  response = await fetch(`${target}/socket.io/?EIO=4&transport=polling`);
+  response = await request(`${target}/socket.io/?EIO=4&transport=polling`);
   assert.equal(response.status, 200);
   assert.match(await response.text(), /^0\{"sid":/);
   checks.push('Socket.IO polling handshake');
