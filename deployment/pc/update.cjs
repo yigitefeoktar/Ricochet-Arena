@@ -82,6 +82,10 @@ async function probe(release, config) {
 async function run(configFile, once = false) {
   const config = JSON.parse(await fs.readFile(configFile, 'utf8'));
   if (!/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\.git$/.test(config.repository)) throw new Error('Expected an explicit GitHub HTTPS repository');
+  for (const key of ['gitExe', 'tarExe', 'powershellExe', 'npmCli']) {
+    if (typeof config[key] !== 'string' || !path.isAbsolute(config[key])) throw new Error(`Configure the absolute ${key} path for Windows startup`);
+    await fs.access(config[key]);
+  }
   if (!Number.isInteger(config.probePort) || config.probePort === 4103) throw new Error('Use a separate candidate test port');
   await fs.mkdir(config.root, { recursive: true });
   const cache = path.join(config.root, 'cache');
@@ -102,17 +106,17 @@ async function run(configFile, once = false) {
         await delay(2000); continue;
       }
       if (!await fs.stat(path.join(cache, '.git')).then(() => true, () => false)) {
-        await command('git.exe', ['clone', '--no-checkout', '--single-branch', '--branch', 'main', config.repository, cache]);
+        await command(config.gitExe, ['clone', '--no-checkout', '--single-branch', '--branch', 'main', config.repository, cache]);
       }
-      if (await command('git.exe', ['remote', 'get-url', 'origin'], { cwd: cache }) !== config.repository) throw new Error('Cache repository identity mismatch');
-      await command('git.exe', ['fetch', 'origin', 'main'], { cwd: cache });
-      sha = await command('git.exe', ['rev-parse', 'FETCH_HEAD'], { cwd: cache });
+      if (await command(config.gitExe, ['remote', 'get-url', 'origin'], { cwd: cache }) !== config.repository) throw new Error('Cache repository identity mismatch');
+      await command(config.gitExe, ['fetch', 'origin', 'main'], { cwd: cache });
+      sha = await command(config.gitExe, ['rev-parse', 'FETCH_HEAD'], { cwd: cache });
       if (!/^[a-f0-9]{40}$/.test(sha)) throw new Error('Invalid GitHub commit identity');
       const current = JSON.parse((await fs.readFile(config.currentFile, 'utf8')).replace(/^\uFEFF/, ''));
       if (current.commit === sha && state.status === 'success') {
         if (once) return state;
       } else if (sha !== state.sha || state.status === 'building' || once) {
-        const raw = await command('git.exe', ['show', `${sha}:deployment.json`], { cwd: cache }).catch(() => '{}');
+        const raw = await command(config.gitExe, ['show', `${sha}:deployment.json`], { cwd: cache }).catch(() => '{}');
         const manifest = JSON.parse(raw);
         // Decide whether a backend exists before install, build, probe or any process changes.
         if (!backendPlan(manifest)) {
@@ -126,15 +130,15 @@ async function run(configFile, once = false) {
           await log(`Building GitHub main ${sha}`);
           const result = await deployCandidate(manifest, {
             build: async () => {
-              await command('git.exe', ['archive', '--format=tar', `--output=${archive}`, sha], { cwd: cache });
-              await command('tar.exe', ['-xf', archive, '-C', release]);
+              await command(config.gitExe, ['archive', '--format=tar', `--output=${archive}`, sha], { cwd: cache });
+              await command(config.tarExe, ['-xf', archive, '-C', release]);
               // npm-cli.js avoids command-shell quoting and Windows .cmd spawning.
               await command(process.execPath, [config.npmCli, 'ci', '--no-audit', '--no-fund'], { cwd: release });
               await command(process.execPath, [config.npmCli, 'run', 'lint'], { cwd: release });
               await command(process.execPath, [config.npmCli, 'run', 'build:backend'], { cwd: release });
             },
             probe: () => probe(release, config),
-            activate: () => command('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', config.activateScript], {
+            activate: () => command(config.powershellExe, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', config.activateScript], {
               env: { ...process.env, RICOCHET_RELEASE: release, RICOCHET_COMMIT: sha, RICOCHET_DEPLOY_CONFIG: path.resolve(configFile) },
             }),
           });
@@ -143,7 +147,7 @@ async function run(configFile, once = false) {
         await atomicJson(stateFile, state);
         await log(`${sha} ${state.status}`);
         // Pruning is restricted to validated release children; keep active + last good + latest attempt.
-        await command('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', config.pruneScript], {
+        await command(config.powershellExe, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', config.pruneScript], {
           env: { ...process.env, RICOCHET_DEPLOY_CONFIG: path.resolve(configFile) },
         }).catch(error => log(`Prune deferred: ${error.message}`));
       }

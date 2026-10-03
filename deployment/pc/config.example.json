@@ -1,6 +1,9 @@
 {
   "repository": "https://github.com/yigitefeoktar/Ricochet-Arena.git",
   "root": "C:/GAME-RUNTIME/ricochet",
+  "gitExe": "C:/Program Files/Git/cmd/git.exe",
+  "tarExe": "C:/Windows/System32/tar.exe",
+  "powershellExe": "C:/Windows/System32/WindowsPowerShell/v1.0/powershell.exe",
   "npmCli": "C:/Program Files/nodejs/node_modules/npm/bin/npm-cli.js",
   "probePort": 4105,
   "currentFile": "C:/GAME-RUNTIME/ricochet/current.json",
