@@ -79,7 +79,15 @@ async function probe(release, config) {
   }
 }
 
-async function run(configFile, once = false) {
+async function checkActiveHealth() {
+  const response = await fetch('http://127.0.0.1:4103/api/health', { signal: AbortSignal.timeout(3000) });
+  if (!response.ok || (await response.json()).status !== 'ok') throw new Error('Active backend health check failed');
+}
+
+async function run(configFile, once = false, dependencies = {}) {
+  const runCommand = dependencies.command || command;
+  const healthCheck = dependencies.checkActiveHealth || checkActiveHealth;
+  const wait = dependencies.delay || delay;
   const config = JSON.parse(await fs.readFile(configFile, 'utf8'));
   if (!/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\.git$/.test(config.repository)) throw new Error('Expected an explicit GitHub HTTPS repository');
   for (const key of ['gitExe', 'tarExe', 'powershellExe', 'npmCli']) {
@@ -100,28 +108,44 @@ async function run(configFile, once = false) {
   let state = JSON.parse(await fs.readFile(stateFile, 'utf8').catch(() => '{}'));
   do {
     let sha;
+    let phase = 'sync';
     try {
       if (await fs.stat(config.pauseFile).then(() => true, () => false)) {
         if (once) return { status: 'paused' };
-        await delay(2000); continue;
+        await wait(2000); continue;
       }
       if (!await fs.stat(path.join(cache, '.git')).then(() => true, () => false)) {
-        await command(config.gitExe, ['clone', '--no-checkout', '--single-branch', '--branch', 'main', config.repository, cache]);
+        await runCommand(config.gitExe, ['clone', '--no-checkout', '--single-branch', '--branch', 'main', config.repository, cache]);
       }
-      if (await command(config.gitExe, ['remote', 'get-url', 'origin'], { cwd: cache }) !== config.repository) throw new Error('Cache repository identity mismatch');
-      await command(config.gitExe, ['fetch', 'origin', 'main'], { cwd: cache });
-      sha = await command(config.gitExe, ['rev-parse', 'FETCH_HEAD'], { cwd: cache });
+      if (await runCommand(config.gitExe, ['remote', 'get-url', 'origin'], { cwd: cache }) !== config.repository) throw new Error('Cache repository identity mismatch');
+      await runCommand(config.gitExe, ['fetch', 'origin', 'main'], { cwd: cache });
+      sha = await runCommand(config.gitExe, ['rev-parse', 'FETCH_HEAD'], { cwd: cache });
       if (!/^[a-f0-9]{40}$/.test(sha)) throw new Error('Invalid GitHub commit identity');
       const current = JSON.parse((await fs.readFile(config.currentFile, 'utf8')).replace(/^\uFEFF/, ''));
       if (current.commit === sha && state.status === 'success') {
         if (once) return state;
+      } else if (current.commit === sha && state.status === 'failed' &&
+          (state.phase == null || state.phase === 'sync' || state.phase === 'health')) {
+        // A recovered fetch must not leave the active, healthy release marked failed.
+        // Inspect opt-in before health checks; never rebuild/restart an unchanged release.
+        const manifest = JSON.parse(await runCommand(config.gitExe, ['show', `${sha}:deployment.json`], { cwd: cache }));
+        if (!backendPlan(manifest)) {
+          state = { sha, status: 'skipped', reason: 'No PC backend declared', at: new Date().toISOString() };
+        } else {
+          phase = 'health';
+          await healthCheck();
+          state = { sha, status: 'success', recovered: true, at: new Date().toISOString() };
+        }
+        await atomicJson(stateFile, state);
+        await log(`${sha} ${state.status}; synchronization recovered without activation`);
       } else if (sha !== state.sha || state.status === 'building' || once) {
-        const raw = await command(config.gitExe, ['show', `${sha}:deployment.json`], { cwd: cache }).catch(() => '{}');
+        const raw = await runCommand(config.gitExe, ['show', `${sha}:deployment.json`], { cwd: cache });
         const manifest = JSON.parse(raw);
         // Decide whether a backend exists before install, build, probe or any process changes.
         if (!backendPlan(manifest)) {
           state = { sha, status: 'skipped', reason: 'No PC backend declared', at: new Date().toISOString() };
         } else {
+          phase = 'deploy';
           const release = path.join(releases, sha);
           await fs.mkdir(release, { recursive: true });
           const archive = path.join(config.root, 'candidate.tar');
@@ -130,15 +154,15 @@ async function run(configFile, once = false) {
           await log(`Building GitHub main ${sha}`);
           const result = await deployCandidate(manifest, {
             build: async () => {
-              await command(config.gitExe, ['archive', '--format=tar', `--output=${archive}`, sha], { cwd: cache });
-              await command(config.tarExe, ['-xf', archive, '-C', release]);
+              await runCommand(config.gitExe, ['archive', '--format=tar', `--output=${archive}`, sha], { cwd: cache });
+              await runCommand(config.tarExe, ['-xf', archive, '-C', release]);
               // npm-cli.js avoids command-shell quoting and Windows .cmd spawning.
-              await command(process.execPath, [config.npmCli, 'ci', '--no-audit', '--no-fund'], { cwd: release });
-              await command(process.execPath, [config.npmCli, 'run', 'lint'], { cwd: release });
-              await command(process.execPath, [config.npmCli, 'run', 'build:backend'], { cwd: release });
+              await runCommand(process.execPath, [config.npmCli, 'ci', '--no-audit', '--no-fund'], { cwd: release });
+              await runCommand(process.execPath, [config.npmCli, 'run', 'lint'], { cwd: release });
+              await runCommand(process.execPath, [config.npmCli, 'run', 'build:backend'], { cwd: release });
             },
             probe: () => probe(release, config),
-            activate: () => command(config.powershellExe, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', config.activateScript], {
+            activate: () => runCommand(config.powershellExe, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', config.activateScript], {
               env: { ...process.env, RICOCHET_RELEASE: release, RICOCHET_COMMIT: sha, RICOCHET_DEPLOY_CONFIG: path.resolve(configFile) },
             }),
           });
@@ -147,17 +171,17 @@ async function run(configFile, once = false) {
         await atomicJson(stateFile, state);
         await log(`${sha} ${state.status}`);
         // Pruning is restricted to validated release children; keep active + last good + latest attempt.
-        await command(config.powershellExe, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', config.pruneScript], {
+        await runCommand(config.powershellExe, ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', config.pruneScript], {
           env: { ...process.env, RICOCHET_DEPLOY_CONFIG: path.resolve(configFile) },
         }).catch(error => log(`Prune deferred: ${error.message}`));
       }
     } catch (error) {
-      state = { sha: sha || state.sha, status: 'failed', error: error.message, at: new Date().toISOString() };
+      state = { sha: sha || state.sha, status: 'failed', phase, error: error.message, at: new Date().toISOString() };
       await atomicJson(stateFile, state);
       await log(`Update failed; previous release retained: ${error.message}`);
     }
     if (once) return state;
-    await delay(60000);
+    await wait(60000);
   } while (true);
 }
 

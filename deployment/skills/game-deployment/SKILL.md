@@ -1,6 +1,6 @@
 ---
 name: game-deployment
-description: Deploy or migrate Yigit's games from GitHub main to Vercel, with a Windows PC backend only when explicitly declared. Use for game releases, deployment setup or repair, or updating deployment instructions in AGENTS.md. Google Cloud is a frozen fallback.
+description: Deploy or migrate Yigit's games from GitHub main to Vercel, with a Windows PC backend only when explicitly declared. Use for game releases, deployment setup or repair, or updating deployment instructions in AGENTS.md. Google Cloud billing is disabled.
 ---
 
 # Game deployment
@@ -20,7 +20,7 @@ The user's current preferences: free services only, no domain purchase, personal
 3. **Backend is opt-in.** Missing `deployment.json`, missing `backend`, or `"backend": null` means skip every backend install/build/start, Windows task, port and tunnel operation. Dependencies, Express/server files, or a build script alone are not authorization to deploy a backend. A broken or deferred multiplayer implementation also stays disabled until explicitly enabled and tested.
 4. An enabled backend must have `backend.provider: "pc"`, its own build/entry/health contract, a configured PC installation, localhost-only port, and a verified public HTTPS address. Existing Ricochet uses Tailscale Funnel. Do not buy a domain, create paid services, expose other ports, or copy another game's endpoint. Read [PC workflow](references/pc-workflow.md) before changing backend setup.
 5. Keep frontend and backend configuration separate. A frontend-only game must not inherit Ricochet's `VITE_BACKEND_URL`. For split games, point frontend HTTP and Socket.IO calls at the explicitly configured backend. Keep single-player usable when the PC is unavailable. Secrets remain outside GitHub and frontend bundles.
-6. Preserve the running Google Cloud services, revisions, settings, credentials and domains. Their automatic game triggers were disabled on 2026-10-03. Never re-enable triggers, deploy to Cloud Run, alter traffic or remove the fallback unless the user specifically requests that operation. Cloud files may remain as historical recovery material; they are not the active release workflow.
+6. Google Cloud billing was disabled on both game projects on 2026-10-04; their automatic game triggers were disabled on 2026-10-03. Treat remaining Cloud configuration as historical recovery material, not an available running fallback. Preserve remaining resources/settings/credentials/domains. Never re-enable billing or triggers, deploy to Cloud Run, alter traffic or delete remaining resources unless the user specifically requests that operation. Current releases and PC updates must not depend on paid Google Cloud services.
 
 ## Verify and finish
 
@@ -28,6 +28,6 @@ Run the repository's relevant checks and production build. Do not start a local 
 
 For a frontend, verify the exact main commit has a successful Vercel deployment, public HTTP load and the requested behavior. For an enabled backend, verify the PC updater reports the same SHA, localhost/public health, Socket.IO polling and WebSocket, and room create/join/start/relay. A build/probe failure must retain the running release; activation failure must restore the previous one. Restart/crash recovery must remain enabled.
 
-Record the verified repository-specific contract in `AGENTS.md`: branch/remote, manifest, Vercel project/production URL, optional backend port/address/runtime, checks and known limitations, update/recovery commands, and frozen Cloud fallback. Preserve unrelated instructions. The user's migration request resolves old Cloud-deployment instructions in favor of this workflow; do not ask again about that known conflict.
+Record the verified repository-specific contract in `AGENTS.md`: branch/remote, manifest, Vercel project/production URL, optional backend port/address/runtime, checks and known limitations, update/recovery commands, and disabled Cloud billing/triggers. Preserve unrelated instructions. The user's migration request resolves old Cloud-deployment instructions in favor of this workflow; do not ask again about that known conflict.
 
 Report the production URL, deployed short SHA, meaningful verification results and any concrete limitation. If the PC is off, asleep, logged out, or offline, its backend is unavailable; the Vercel frontend remains available.

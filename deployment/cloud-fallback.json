@@ -1,7 +1,10 @@
 {
   "frozenAt": "2026-10-03",
   "automaticUpdates": "disabled",
-  "servicesRetained": true,
+  "billing": "disabled",
+  "billingDisabledAt": "2026-10-04",
+  "availability": "historical-recovery-only",
+  "servicesRetainedAtFreeze": true,
   "games": [
     { "repository": "yigitefeoktar/Ricochet-Arena", "project": "gen-lang-client-0375824487", "service": "the-ricochet-arena", "region": "us-west1", "trigger": "8486727b-150d-411e-ab44-ab0303ee6dec", "url": "https://the-ricochet-arena.ai.studio", "preservedRevision": "the-ricochet-arena-00076-5nt" },
     { "repository": "yigitefeoktar/Memory-Arena", "project": "gen-lang-client-0375824487", "service": "memory-arena", "region": "us-west1", "trigger": "244dfc1a-0a64-4f50-a4b0-6f3f172422ca", "url": "https://memory-arena-823233237078.us-west1.run.app", "pcBackend": "deferred" },

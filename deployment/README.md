@@ -16,6 +16,6 @@ To reproduce the Windows setup, copy `pc/` to a dedicated runtime bootstrap fold
 
 Pause with `Stop-Backend.ps1 -ConfigFile <config.json>`; the pause flag prevents updater activation and watcher restart. Resume with `Resume-Backend.ps1 -ConfigFile <config.json>`. An actual Windows reboot has not been tested; these are interactive sign-in tasks, not a system backend service. If stopping the updater task for maintenance, inspect `updater-process.json` and ensure its recorded Node process has exited before a manual retry; the lock refuses concurrent updaters.
 
-Google Cloud is a frozen fallback: its four game Cloud Build triggers were disabled on 2026-10-03; existing services and revisions were retained. See `cloud-fallback.json`. Do not deploy there or re-enable a trigger during ordinary releases.
+Google Cloud billing was disabled on both game projects on 2026-10-04; the four game Cloud Build triggers were disabled on 2026-10-03. Remaining configuration is historical recovery material, not an available running fallback. See `cloud-fallback.json`. Do not re-enable billing/triggers, deploy there or modify/delete remaining Cloud resources during ordinary releases.
 
 Verification limitation: the original game suite has a reproduced baseline failure in `gateMapLayouts.test.ts` for closed-gate connectivity in `crush_circuit`. This migration does not alter map gameplay. Lint, builds, deployment guard tests and the multiplayer protocol smoke test are the release checks for this infrastructure change; do not report the original full suite as passing.

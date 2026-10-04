@@ -21,6 +21,6 @@ The original `npm test` baseline is 83/84 passing: closed-gate player-sized conn
 
 Wait for a successful Vercel deployment tied to the pushed SHA and PC updater success for that same SHA; fix relevant failures before claiming completion. Report the production URL, short SHA and check results. Verify single-player remains usable when the backend is unavailable.
 
-## Google Cloud fallback
+## Google Cloud historical recovery
 
-Cloud Run `the-ricochet-arena` in `gen-lang-client-0375824487`, us-west1, remains at the saved revision. Cloud Build trigger `8486727b-150d-411e-ab44-ab0303ee6dec` was disabled on 2026-10-03. Ordinary main pushes must never deploy there. Preserve service/revision/settings/secrets/domains and `https://the-ricochet-arena.ai.studio`. Do not re-enable or redeploy without an explicit user request. Historical build/start files are fallback material only. The other three frozen game triggers are recorded in `deployment/cloud-fallback.json`.
+Billing was disabled on `gen-lang-client-0375824487` and `arena-growth-io` on 2026-10-04. Cloud is historical recovery material, not an available running fallback. Preserve remaining resources/settings/secrets/domains; do not re-enable billing or triggers, redeploy, alter traffic or delete remaining resources without a specific user request. Cloud Run `the-ricochet-arena` in `gen-lang-client-0375824487`, us-west1, was retained at the saved revision before billing was disabled. Its historical URL is `https://the-ricochet-arena.ai.studio`. Cloud Build trigger `8486727b-150d-411e-ab44-ab0303ee6dec` was disabled on 2026-10-03. The other game projects/triggers and billing state are recorded in `deployment/cloud-fallback.json`.

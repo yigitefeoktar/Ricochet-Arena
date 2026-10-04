@@ -16,6 +16,8 @@ The updater fetches the exact main SHA into an isolated cache and inspects the m
 
 An independent Windows watcher restarts the active backend after a crash and starts at user sign-in. The updater also starts at sign-in. This installation does not run the game backend before Windows sign-in or after logout. Do not claim a system service is installed. Intentional pause prevents updates/recovery until the user resumes. Failed commits are recorded and retried on a new main SHA or a manual one-shot retry; avoid endless failed builds every minute.
 
+Synchronization failures are retried on the next poll. Once GitHub main matches the active release again, the updater verifies local health and clears the transient failure without rebuilding or restarting that release. An unhealthy active release remains failed until health recovers. Build/probe/activation failures remain separate from synchronization failures.
+
 Keep the small installed bootstrap stable during backend releases. If its code changes on GitHub, validate and explicitly refresh the installed copy as part of that task; backend polling does not replace its own running code.
 
 ## Public access and limits
